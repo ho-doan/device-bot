@@ -1,0 +1,52 @@
+version: 1
+name: example_counter_cross_platform
+
+defaults:
+  timeout_ms: 15000
+  poll_interval_ms: 150
+  enable_logs: true
+
+platforms:
+  android:
+    kind: native
+    target: com.example.example_app
+  ios:
+    kind: native
+    target: com.example.exampleApp
+  macos:
+    kind: native
+    target: com.example.exampleApp
+  windows:
+    kind: native
+    # Override with EXAMPLE_APP_WINDOWS_TARGET when the executable is not on PATH.
+    target: example_app.exe
+  web:
+    kind: web
+    target: http://127.0.0.1:0/
+
+steps:
+  - start:
+      session_id: ex-scenario-1
+
+  - launch: {}
+
+  - wait_for:
+      selector:
+        all:
+          - id: counter_value
+          - value: '0'
+
+  - tap:
+      selector:
+        id: increment_button
+
+  - wait_for:
+      selector:
+        all:
+          - id: counter_value
+          - value: '1'
+
+  - screenshot:
+      path: example_app/tests/images/08_${platform}_scenario_counter_1.png
+
+  - stop: {}

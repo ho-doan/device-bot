@@ -4,6 +4,7 @@ members = [
     "crates/mcp-server",
     "crates/robot-core",
     "crates/robot-android",
+    "crates/robot-ios-real",
     "crates/robot-ios-sim",
 ]
 resolver = "2"

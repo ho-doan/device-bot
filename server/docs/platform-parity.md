@@ -14,6 +14,11 @@ by `xcrun simctl io recordVideo` for iOS Simulator. The Android driver does
 not yet implement the equivalent `adb shell screenrecord` lifecycle and
 therefore returns the portable `Unsupported` result for these operations.
 
+The real iOS driver currently exposes `go-ios` install/launch and UI-runner
+control, but leaves uninstall explicitly unsupported because `go-ios` has no
+stable uninstall command in its current CLI surface. The parity pass must
+resolve this shared app-lifecycle contract.
+
 ## Required parity pass
 
 After the planned feature phases are implemented, before project completion:

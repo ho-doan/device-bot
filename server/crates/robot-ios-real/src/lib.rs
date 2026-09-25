@@ -1,0 +1,370 @@
+//! Real iOS device driver backed by `go-ios` and its WDA/DeviceKit UI runner.
+//!
+//! The driver never operates the host UI. `go-ios ui` must already have a
+//! connected automation backend; command failures are returned to MCP callers.
+
+use std::{collections::HashMap, process::Stdio};
+
+use async_trait::async_trait;
+use mobile_robot_core::{
+    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
+};
+use quick_xml::{Reader, events::Event};
+use serde_json::Value;
+use tokio::process::Command;
+use url::Url;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandOutput {
+    pub success: bool,
+    pub exit_code: Option<i32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+#[async_trait]
+pub trait CommandRunner: Send + Sync {
+    async fn run(&self, executable: &str, args: &[String]) -> Result<CommandOutput, RobotError>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TokioCommandRunner;
+
+#[async_trait]
+impl CommandRunner for TokioCommandRunner {
+    async fn run(&self, executable: &str, args: &[String]) -> Result<CommandOutput, RobotError> {
+        let output = Command::new(executable)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .await
+            .map_err(|error| {
+                RobotError::CommandFailed(format!("could not start {executable}: {error}"))
+            })?;
+        Ok(CommandOutput {
+            success: output.status.success(),
+            exit_code: output.status.code(),
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
+    }
+}
+
+/// `go-ios` driver for a USB- or tunnel-connected real device.
+#[derive(Debug, Clone)]
+pub struct IosRealRobot<R = TokioCommandRunner> {
+    ios_path: String,
+    runner: R,
+}
+
+impl IosRealRobot<TokioCommandRunner> {
+    pub fn new(ios_path: impl Into<String>) -> Self {
+        Self::with_runner(ios_path, TokioCommandRunner)
+    }
+}
+
+impl<R> IosRealRobot<R> {
+    pub fn with_runner(ios_path: impl Into<String>, runner: R) -> Self {
+        Self {
+            ios_path: ios_path.into(),
+            runner,
+        }
+    }
+}
+
+impl<R: CommandRunner> IosRealRobot<R> {
+    async fn go_ios(&self, args: Vec<String>) -> Result<Vec<u8>, RobotError> {
+        let output = self.runner.run(&self.ios_path, &args).await?;
+        if output.success {
+            return Ok(output.stdout);
+        }
+        Err(RobotError::CommandFailed(format!(
+            "go-ios exited with status {}: {}",
+            output
+                .exit_code
+                .map_or_else(|| "unknown".to_owned(), |code| code.to_string()),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
+    }
+
+    fn device_args(prefix: &[&str], device_id: &str) -> Result<Vec<String>, RobotError> {
+        validate_device_id(device_id)?;
+        Ok(prefix
+            .iter()
+            .map(|value| (*value).to_owned())
+            .chain(std::iter::once(format!("--udid={device_id}")))
+            .collect())
+    }
+}
+
+#[async_trait]
+impl<R: CommandRunner> Robot for IosRealRobot<R> {
+    async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
+        let output = self.go_ios(vec!["list".into(), "--details".into()]).await?;
+        parse_go_ios_devices(&String::from_utf8(output).map_err(|error| {
+            RobotError::CommandFailed(format!("go-ios returned invalid UTF-8: {error}"))
+        })?)
+    }
+
+    async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
+        let image = self
+            .go_ios(Self::device_args(&["ui", "screenshot"], device_id)?)
+            .await?;
+        if image.starts_with(b"\x89PNG\r\n\x1a\n") {
+            Ok(image)
+        } else {
+            Err(RobotError::CommandFailed(
+                "go-ios UI runner returned a non-PNG screenshot; start DeviceKit or WDA first"
+                    .into(),
+            ))
+        }
+    }
+
+    async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
+        let (x, y) = screen_coordinates(point)?;
+        let mut args = Self::device_args(&["ui", "tap"], device_id)?;
+        args.extend([format!("--x={x}"), format!("--y={y}")]);
+        self.go_ios(args).await.map(|_| ())
+    }
+
+    async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
+        validate_app_id(app_id)?;
+        let mut args = Self::device_args(&["ui", "app", "launch"], device_id)?;
+        args.push(app_id.into());
+        self.go_ios(args).await.map(|_| ())
+    }
+
+    async fn open_url(
+        &self,
+        device_id: &str,
+        url: &str,
+        app_id: Option<&str>,
+    ) -> Result<(), RobotError> {
+        let parsed = Url::parse(url).map_err(|_| RobotError::InvalidInput("invalid URL".into()))?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err(RobotError::InvalidInput(
+                "URL scheme must be http or https".into(),
+            ));
+        }
+        let mut args = Self::device_args(&["webinspector", "launch", url], device_id)?;
+        if let Some(app_id) = app_id {
+            validate_app_id(app_id)?;
+            args.push(format!("--bundle-id={app_id}"));
+        }
+        self.go_ios(args).await.map(|_| ())
+    }
+
+    async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {
+        if text.is_empty() {
+            return Err(RobotError::InvalidInput("text must not be empty".into()));
+        }
+        let mut args = Self::device_args(&["ui", "type"], device_id)?;
+        args.push(format!("--text={text}"));
+        self.go_ios(args).await.map(|_| ())
+    }
+
+    async fn swipe(
+        &self,
+        device_id: &str,
+        start: Point,
+        end: Point,
+        _: Option<u64>,
+    ) -> Result<(), RobotError> {
+        let (start_x, start_y) = screen_coordinates(start)?;
+        let (end_x, end_y) = screen_coordinates(end)?;
+        let mut args = Self::device_args(&["ui", "swipe"], device_id)?;
+        args.extend([
+            format!("--from-x={start_x}"),
+            format!("--from-y={start_y}"),
+            format!("--to-x={end_x}"),
+            format!("--to-y={end_y}"),
+        ]);
+        self.go_ios(args).await.map(|_| ())
+    }
+
+    async fn install_app(&self, device_id: &str, path: &str) -> Result<(), RobotError> {
+        if path.trim().is_empty() {
+            return Err(RobotError::InvalidInput(
+                "app path must not be empty".into(),
+            ));
+        }
+        let mut args = Self::device_args(&["install"], device_id)?;
+        args.push(format!("--path={path}"));
+        self.go_ios(args).await.map(|_| ())
+    }
+
+    async fn uninstall_app(&self, _: &str, _: &str) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported(
+            "go-ios does not expose a stable uninstall command; parity pass will add it".into(),
+        ))
+    }
+
+    async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        let output = self
+            .go_ios(Self::device_args(&["ui", "source"], device_id)?)
+            .await?;
+        parse_wda_source(&String::from_utf8(output).map_err(|error| {
+            RobotError::CommandFailed(format!("go-ios returned invalid UI XML: {error}"))
+        })?)
+    }
+}
+
+pub fn parse_go_ios_devices(json: &str) -> Result<Vec<RobotDevice>, RobotError> {
+    let value: Value = serde_json::from_str(json).map_err(|error| {
+        RobotError::CommandFailed(format!("could not parse go-ios device list: {error}"))
+    })?;
+    let entries = value
+        .get("deviceList")
+        .and_then(Value::as_array)
+        .or_else(|| value.as_array())
+        .ok_or_else(|| RobotError::CommandFailed("go-ios device list was not an array".into()))?;
+    Ok(entries
+        .iter()
+        .filter_map(|entry| match entry {
+            Value::String(id) if !id.is_empty() => Some(RobotDevice {
+                id: id.clone(),
+                name: "iOS device".into(),
+                platform: Platform::Ios,
+                state: DeviceState::Available,
+            }),
+            Value::Object(details) => details
+                .get("UniqueDeviceID")
+                .or_else(|| details.get("udid"))
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(|id| RobotDevice {
+                    id: id.into(),
+                    name: details
+                        .get("DeviceName")
+                        .or_else(|| details.get("name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("iOS device")
+                        .into(),
+                    platform: Platform::Ios,
+                    state: DeviceState::Available,
+                }),
+            _ => None,
+        })
+        .collect())
+}
+
+pub fn parse_wda_source(xml: &str) -> Result<Vec<UiElement>, RobotError> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut elements = vec![];
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(node)) | Ok(Event::Empty(node)) => {
+                let attributes: HashMap<_, _> = node
+                    .attributes()
+                    .filter_map(Result::ok)
+                    .filter_map(|attribute| {
+                        let key = std::str::from_utf8(attribute.key.as_ref()).ok()?;
+                        let value = attribute.unescape_value().ok()?.into_owned();
+                        Some((key.to_owned(), value))
+                    })
+                    .collect();
+                if let Some(element) = wda_element(&attributes) {
+                    elements.push(element);
+                }
+            }
+            Ok(Event::Eof) => return Ok(elements),
+            Err(error) => {
+                return Err(RobotError::CommandFailed(format!(
+                    "could not parse WDA UI source: {error}"
+                )));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn wda_element(attributes: &HashMap<String, String>) -> Option<UiElement> {
+    let class_name = attributes.get("type")?.clone();
+    let bounds = Bounds {
+        left: attributes.get("x")?.parse().ok()?,
+        top: attributes.get("y")?.parse().ok()?,
+        right: attributes.get("x")?.parse::<i32>().ok()?
+            + attributes.get("width")?.parse::<i32>().ok()?,
+        bottom: attributes.get("y")?.parse::<i32>().ok()?
+            + attributes.get("height")?.parse::<i32>().ok()?,
+    };
+    Some(UiElement {
+        class_name,
+        resource_id: attributes
+            .get("name")
+            .filter(|value| !value.is_empty())
+            .cloned(),
+        text: attributes
+            .get("label")
+            .filter(|value| !value.is_empty())
+            .cloned(),
+        content_description: attributes
+            .get("value")
+            .filter(|value| !value.is_empty())
+            .cloned(),
+        bounds,
+        clickable: attributes
+            .get("enabled")
+            .is_some_and(|value| value == "true"),
+        enabled: attributes
+            .get("enabled")
+            .is_none_or(|value| value == "true"),
+    })
+}
+
+fn validate_device_id(device_id: &str) -> Result<(), RobotError> {
+    if device_id.is_empty()
+        || !device_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err(RobotError::InvalidInput("invalid iOS device id".into()));
+    }
+    Ok(())
+}
+
+fn validate_app_id(app_id: &str) -> Result<(), RobotError> {
+    if app_id.len() < 3
+        || !app_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-')
+    {
+        return Err(RobotError::InvalidInput("invalid app id".into()));
+    }
+    Ok(())
+}
+
+fn screen_coordinates(point: Point) -> Result<(i64, i64), RobotError> {
+    if !point.x.is_finite() || !point.y.is_finite() || point.x < 0.0 || point.y < 0.0 {
+        return Err(RobotError::InvalidInput(
+            "screen coordinates must be finite and non-negative".into(),
+        ));
+    }
+    Ok((point.x.round() as i64, point.y.round() as i64))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_detailed_and_compact_go_ios_device_lists() {
+        let detailed = parse_go_ios_devices(
+            r#"{"deviceList":[{"UniqueDeviceID":"real-id","DeviceName":"Alice iPhone"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(detailed[0].id, "real-id");
+        assert_eq!(detailed[0].name, "Alice iPhone");
+        let compact = parse_go_ios_devices(r#"{"deviceList":["second-id"]}"#).unwrap();
+        assert_eq!(compact[0].id, "second-id");
+    }
+
+    #[test]
+    fn normalizes_wda_xml_to_portable_elements() {
+        let elements = parse_wda_source(r#"<App><XCUIElementTypeButton type="XCUIElementTypeButton" name="save" label="Save" value="" enabled="true" x="10" y="20" width="30" height="40"/></App>"#).unwrap();
+        assert_eq!(elements[0].class_name, "XCUIElementTypeButton");
+        assert_eq!(elements[0].bounds.right, 40);
+        assert_eq!(elements[0].text.as_deref(), Some("Save"));
+    }
+}

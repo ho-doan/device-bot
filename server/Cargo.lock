@@ -435,6 +435,7 @@ dependencies = [
  "mobile-mcp-protocol",
  "mobile-robot-android",
  "mobile-robot-core",
+ "mobile-robot-ios-real",
  "mobile-robot-ios-sim",
  "serde",
  "serde_json",
@@ -462,6 +463,18 @@ dependencies = [
  "serde",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "mobile-robot-ios-real"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "mobile-robot-core",
+ "quick-xml",
+ "serde_json",
+ "tokio",
+ "url",
 ]
 
 [[package]]

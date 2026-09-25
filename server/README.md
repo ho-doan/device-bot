@@ -29,8 +29,9 @@ cargo run -p mobile-mcp-server
 ```
 
 The binary executes `adb` and `xcrun` from `PATH`. Set `ANDROID_ADB_PATH` or
-`XCRUN_PATH` to use a specific installation. Recording artifacts are written
-to `artifacts/` by default; set `MOBILE_MCP_ARTIFACT_DIR` to override it.
+`XCRUN_PATH` to use a specific installation. Set `GO_IOS_PATH` when the
+`go-ios` binary is not named `ios`. Recording artifacts are written to
+`artifacts/` by default; set `MOBILE_MCP_ARTIFACT_DIR` to override it.
 
 The process accepts one JSON-RPC message per stdin line and writes one response
 per stdout line. Diagnostic output is reserved for stderr.
@@ -84,6 +85,15 @@ For example:
 | `mobile_take_screenshot` | `{ "deviceId": "iOS-simulator-UDID" }` | MCP `image` content (`image/png`, Base64) |
 | `mobile_start_screen_recording` | `{ "deviceId": "iOS-simulator-UDID" }` | Starts a simulator MP4 artifact |
 | `mobile_stop_screen_recording` | `{ "deviceId": "iOS-simulator-UDID" }` | Stops recording and returns the saved MP4 path |
+
+## Real iOS devices
+
+`robot-ios-real` uses `go-ios` for discovery and for a pre-running DeviceKit
+or WebDriverAgent UI backend. It supports device discovery, screenshots, UI
+source normalization, tap/swipe/text input, app launch, installation, and URL
+launching through the existing MCP tools. A real-device run requires a paired,
+trusted iPhone plus the signed automation runner; absent prerequisites produce
+an MCP driver error and never fall back to controlling the host UI.
 
 Device-driver failures and invalid tool arguments return a normal MCP tool
 result with `isError: true`, so clients can present actionable retry feedback.

@@ -34,6 +34,10 @@ driver-specific tests. `robot-android` may depend on `robot-core`, but no
 platform driver may depend on `mcp-server`; tool-to-driver adaptation belongs
 in narrowly scoped server handler modules added with each tool family.
 
+`robot-ios-real` owns the `go-ios` command boundary and WDA/DeviceKit XML
+normalization. It is intentionally independent of `robot-ios-sim`, whose
+`simctl` lifecycle and recording state have different failure modes.
+
 Tool definitions live in `mcp-server::tools`; each family (device, app,
 screen, input, crash) gets its own handler module. The initial Android slice
 uses `tools/device.rs`, `tools/app.rs`, `tools/navigation.rs`,

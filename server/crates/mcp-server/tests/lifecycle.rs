@@ -48,6 +48,39 @@ impl Robot for NoopRobot {
             "not used by lifecycle tests".into(),
         ))
     }
+
+    async fn swipe(
+        &self,
+        _device_id: &str,
+        _start: Point,
+        _end: Point,
+        _duration_ms: Option<u64>,
+    ) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported(
+            "not used by lifecycle tests".into(),
+        ))
+    }
+
+    async fn install_app(&self, _device_id: &str, _apk_path: &str) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported(
+            "not used by lifecycle tests".into(),
+        ))
+    }
+
+    async fn uninstall_app(&self, _device_id: &str, _app_id: &str) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported(
+            "not used by lifecycle tests".into(),
+        ))
+    }
+
+    async fn list_elements(
+        &self,
+        _device_id: &str,
+    ) -> Result<Vec<mobile_robot_core::UiElement>, RobotError> {
+        Err(RobotError::Unsupported(
+            "not used by lifecycle tests".into(),
+        ))
+    }
 }
 
 fn request(id: u64, method: &str, params: Value) -> JsonRpcRequest {
@@ -102,7 +135,7 @@ async fn initialization_and_tools_list_follow_the_lifecycle() {
         .handle(request(2, "tools/list", json!({})))
         .await
         .unwrap();
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 6);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 10);
 }
 
 #[tokio::test]

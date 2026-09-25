@@ -3,7 +3,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use mobile_mcp_protocol::{JsonRpcRequest, PROTOCOL_VERSION};
 use mobile_mcp_server::Server;
-use mobile_robot_core::{DeviceState, Platform, Point, Robot, RobotDevice, RobotError};
+use mobile_robot_core::{
+    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
+};
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -64,6 +66,57 @@ impl Robot for RecordingRobot {
             .push(format!("type:{device_id}:{text}"));
         Ok(())
     }
+
+    async fn swipe(
+        &self,
+        device_id: &str,
+        start: Point,
+        end: Point,
+        duration_ms: Option<u64>,
+    ) -> Result<(), RobotError> {
+        self.actions.lock().unwrap().push(format!(
+            "swipe:{device_id}:{},{},{},{}:{}",
+            start.x,
+            start.y,
+            end.x,
+            end.y,
+            duration_ms.unwrap_or(300)
+        ));
+        Ok(())
+    }
+
+    async fn install_app(&self, device_id: &str, apk_path: &str) -> Result<(), RobotError> {
+        self.actions
+            .lock()
+            .unwrap()
+            .push(format!("install:{device_id}:{apk_path}"));
+        Ok(())
+    }
+
+    async fn uninstall_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
+        self.actions
+            .lock()
+            .unwrap()
+            .push(format!("uninstall:{device_id}:{app_id}"));
+        Ok(())
+    }
+
+    async fn list_elements(&self, _device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        Ok(vec![UiElement {
+            class_name: "android.widget.Button".into(),
+            resource_id: Some("com.example:id/submit".into()),
+            text: Some("Submit".into()),
+            content_description: None,
+            bounds: Bounds {
+                left: 10,
+                top: 20,
+                right: 100,
+                bottom: 70,
+            },
+            clickable: true,
+            enabled: true,
+        }])
+    }
 }
 
 fn request(id: u64, method: &str, params: Value) -> JsonRpcRequest {
@@ -98,7 +151,7 @@ async fn ready(server: &mut Server) {
 }
 
 #[tokio::test]
-async fn android_vertical_slice_exposes_and_routes_all_six_tools() {
+async fn android_vertical_slice_exposes_and_routes_all_ten_tools() {
     let robot = Arc::new(RecordingRobot::default());
     let mut server = Server::new(robot.clone());
     ready(&mut server).await;
@@ -117,11 +170,15 @@ async fn android_vertical_slice_exposes_and_routes_all_six_tools() {
         tool_names,
         [
             "mobile_list_available_devices",
-            "mobile_launch_app",
             "mobile_open_url",
             "mobile_type_keys",
+            "mobile_list_elements_on_screen",
+            "mobile_launch_app",
+            "mobile_install_app",
+            "mobile_uninstall_app",
             "mobile_take_screenshot",
-            "mobile_click_on_screen_at_coordinates"
+            "mobile_click_on_screen_at_coordinates",
+            "mobile_swipe_on_screen"
         ]
     );
 
@@ -226,6 +283,82 @@ async fn android_vertical_slice_exposes_and_routes_all_six_tools() {
             "launch:emulator-5554:com.android.chrome",
             "open:emulator-5554:https://www.youtube.com:com.android.chrome",
             "type:emulator-5554:babyshake"
+        ]
+    );
+
+    let elements = server
+        .handle(request(
+            9,
+            "tools/call",
+            json!({
+                "name": "mobile_list_elements_on_screen",
+                "arguments": { "deviceId": "emulator-5554" }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        elements["result"]["structuredContent"]["elements"][0]["text"],
+        "Submit"
+    );
+
+    let swipe = server
+        .handle(request(
+            10,
+            "tools/call",
+            json!({
+                "name": "mobile_swipe_on_screen",
+                "arguments": {
+                    "deviceId": "emulator-5554",
+                    "startX": 10,
+                    "startY": 20,
+                    "endX": 30,
+                    "endY": 40,
+                    "durationMs": 500
+                }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(swipe["result"]["content"][0]["text"], "Swipe completed");
+
+    let install = server
+        .handle(request(
+            11,
+            "tools/call",
+            json!({
+                "name": "mobile_install_app",
+                "arguments": { "deviceId": "emulator-5554", "apkPath": "/tmp/example.apk" }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        install["result"]["content"][0]["text"],
+        "Installed /tmp/example.apk"
+    );
+
+    let uninstall = server
+        .handle(request(
+            12,
+            "tools/call",
+            json!({
+                "name": "mobile_uninstall_app",
+                "arguments": { "deviceId": "emulator-5554", "appId": "com.example.app" }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        uninstall["result"]["content"][0]["text"],
+        "Uninstalled com.example.app"
+    );
+    assert_eq!(
+        &robot.actions.lock().unwrap()[3..],
+        [
+            "swipe:emulator-5554:10,20,30,40:500",
+            "install:emulator-5554:/tmp/example.apk",
+            "uninstall:emulator-5554:com.example.app"
         ]
     );
 }

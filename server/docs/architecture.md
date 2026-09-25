@@ -35,6 +35,6 @@ in narrowly scoped server handler modules added with each tool family.
 Tool definitions live in `mcp-server::tools`; each family (device, app,
 screen, input, crash) gets its own handler module. The initial Android slice
 uses `tools/device.rs`, `tools/app.rs`, `tools/navigation.rs`,
-`tools/input.rs`, and `tools/screen.rs`, with generic request parsing in
-`tools/arguments.rs`. The router stays a small method-to-handler dispatch
-table rather than a business-logic container.
+`tools/input.rs`, `tools/screen.rs`, and `tools/ui.rs`, with generic request
+parsing in `tools/arguments.rs`. The router stays a small method-to-handler
+dispatch table rather than a business-logic container.

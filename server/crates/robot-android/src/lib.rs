@@ -3,12 +3,24 @@
 //! Process execution is isolated behind [`CommandRunner`], letting the ADB
 //! parser and command construction be tested without an emulator or `adb`.
 
-use std::process::Stdio;
+use std::{
+    collections::HashMap,
+    process::Stdio,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use async_trait::async_trait;
-use mobile_robot_core::{DeviceState, Platform, Point, Robot, RobotDevice, RobotError};
+use mobile_robot_core::{
+    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
+};
+use quick_xml::{
+    Reader,
+    events::{BytesStart, Event},
+};
 use tokio::process::Command;
 use url::Url;
+
+static TREE_DUMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandOutput {
@@ -184,6 +196,110 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
         .await?;
         Ok(())
     }
+
+    async fn swipe(
+        &self,
+        device_id: &str,
+        start: Point,
+        end: Point,
+        duration_ms: Option<u64>,
+    ) -> Result<(), RobotError> {
+        ensure_device_id(device_id)?;
+        let start_x = android_coordinate(start.x, "startX")?;
+        let start_y = android_coordinate(start.y, "startY")?;
+        let end_x = android_coordinate(end.x, "endX")?;
+        let end_y = android_coordinate(end.y, "endY")?;
+        let duration = duration_ms.unwrap_or(300);
+        if !(1..=60_000).contains(&duration) {
+            return Err(RobotError::InvalidInput(
+                "durationMs must be between 1 and 60000".into(),
+            ));
+        }
+        self.run_adb(&[
+            "-s".into(),
+            device_id.into(),
+            "shell".into(),
+            "input".into(),
+            "swipe".into(),
+            start_x.to_string(),
+            start_y.to_string(),
+            end_x.to_string(),
+            end_y.to_string(),
+            duration.to_string(),
+        ])
+        .await?;
+        Ok(())
+    }
+
+    async fn install_app(&self, device_id: &str, apk_path: &str) -> Result<(), RobotError> {
+        ensure_device_id(device_id)?;
+        ensure_apk_path(apk_path)?;
+        self.run_adb(&[
+            "-s".into(),
+            device_id.into(),
+            "install".into(),
+            "-r".into(),
+            apk_path.into(),
+        ])
+        .await?;
+        Ok(())
+    }
+
+    async fn uninstall_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
+        ensure_device_id(device_id)?;
+        ensure_app_id(app_id)?;
+        self.run_adb(&[
+            "-s".into(),
+            device_id.into(),
+            "uninstall".into(),
+            app_id.into(),
+        ])
+        .await?;
+        Ok(())
+    }
+
+    async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        ensure_device_id(device_id)?;
+        let sequence = TREE_DUMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let remote_path = format!("/sdcard/mobile-mcp-{sequence}.xml");
+        self.run_adb(&[
+            "-s".into(),
+            device_id.into(),
+            "shell".into(),
+            "uiautomator".into(),
+            "dump".into(),
+            "--compressed".into(),
+            remote_path.clone(),
+        ])
+        .await?;
+
+        let xml_output = self
+            .run_adb(&[
+                "-s".into(),
+                device_id.into(),
+                "exec-out".into(),
+                "cat".into(),
+                remote_path.clone(),
+            ])
+            .await;
+        // Always attempt cleanup once the dump has been created; a cleanup
+        // failure must not hide an otherwise usable accessibility snapshot.
+        let _ = self
+            .run_adb(&[
+                "-s".into(),
+                device_id.into(),
+                "shell".into(),
+                "rm".into(),
+                "-f".into(),
+                remote_path,
+            ])
+            .await;
+
+        let xml = String::from_utf8(xml_output?.stdout).map_err(|error| {
+            RobotError::CommandFailed(format!("uiautomator dump returned invalid UTF-8: {error}"))
+        })?;
+        parse_uiautomator_xml(&xml)
+    }
 }
 
 impl<R: CommandRunner> AndroidRobot<R> {
@@ -253,6 +369,103 @@ fn encode_input_text(text: &str) -> Result<String, RobotError> {
         ));
     }
     Ok(text.replace(' ', "%s"))
+}
+
+fn ensure_apk_path(apk_path: &str) -> Result<(), RobotError> {
+    if apk_path.trim().is_empty() || !apk_path.ends_with(".apk") {
+        return Err(RobotError::InvalidInput(
+            "apk path must name a non-empty .apk file".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Parses an Android `uiautomator dump` XML document into portable elements.
+pub fn parse_uiautomator_xml(xml: &str) -> Result<Vec<UiElement>, RobotError> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut elements = vec![];
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Eof) => break,
+            Ok(Event::Empty(node)) | Ok(Event::Start(node)) if node.name().as_ref() == b"node" => {
+                elements.push(parse_node(&node, reader.decoder())?);
+            }
+            Ok(_) => {}
+            Err(error) => {
+                return Err(RobotError::CommandFailed(format!(
+                    "could not parse uiautomator XML: {error}"
+                )));
+            }
+        }
+    }
+    Ok(elements)
+}
+
+fn parse_node(
+    node: &BytesStart<'_>,
+    decoder: quick_xml::encoding::Decoder,
+) -> Result<UiElement, RobotError> {
+    let mut attributes = HashMap::new();
+    for attribute in node.attributes().with_checks(false) {
+        let attribute = attribute.map_err(|error| {
+            RobotError::CommandFailed(format!("could not parse uiautomator attribute: {error}"))
+        })?;
+        let key = std::str::from_utf8(attribute.key.as_ref()).map_err(|error| {
+            RobotError::CommandFailed(format!("invalid attribute name: {error}"))
+        })?;
+        let value = attribute
+            .decode_and_unescape_value(decoder)
+            .map_err(|error| {
+                RobotError::CommandFailed(format!("invalid attribute value: {error}"))
+            })?;
+        attributes.insert(key.to_owned(), value.into_owned());
+    }
+
+    let bounds = attributes
+        .get("bounds")
+        .ok_or_else(|| RobotError::CommandFailed("uiautomator node has no bounds".into()))
+        .and_then(|value| parse_bounds(value))?;
+    Ok(UiElement {
+        class_name: attributes.remove("class").unwrap_or_default(),
+        resource_id: optional_attribute(&mut attributes, "resource-id"),
+        text: optional_attribute(&mut attributes, "text"),
+        content_description: optional_attribute(&mut attributes, "content-desc"),
+        bounds,
+        clickable: attributes
+            .get("clickable")
+            .is_some_and(|value| value == "true"),
+        enabled: attributes
+            .get("enabled")
+            .is_none_or(|value| value == "true"),
+    })
+}
+
+fn optional_attribute(attributes: &mut HashMap<String, String>, key: &str) -> Option<String> {
+    attributes.remove(key).filter(|value| !value.is_empty())
+}
+
+fn parse_bounds(value: &str) -> Result<Bounds, RobotError> {
+    let values: Result<Vec<i32>, _> = value
+        .split(['[', ']', ','])
+        .filter(|part| !part.is_empty())
+        .map(str::parse)
+        .collect();
+    let values = values.map_err(|error| {
+        RobotError::CommandFailed(format!("invalid uiautomator bounds {value:?}: {error}"))
+    })?;
+    match values.as_slice() {
+        [left, top, right, bottom] => Ok(Bounds {
+            left: *left,
+            top: *top,
+            right: *right,
+            bottom: *bottom,
+        }),
+        _ => Err(RobotError::CommandFailed(format!(
+            "invalid uiautomator bounds: {value:?}"
+        ))),
+    }
 }
 
 fn android_coordinate(value: f64, axis: &str) -> Result<i32, RobotError> {
@@ -360,6 +573,34 @@ mod tests {
         assert_eq!(devices[0].state, DeviceState::Available);
         assert_eq!(devices[1].state, DeviceState::Unauthorized);
         assert_eq!(devices[2].state, DeviceState::Offline);
+    }
+
+    #[test]
+    fn parses_uiautomator_nodes_without_losing_accessibility_metadata() {
+        let elements = parse_uiautomator_xml(
+            r#"<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+            <hierarchy rotation="0">
+              <node index="0" text="Search" resource-id="com.android.chrome:id/search_box" class="android.widget.EditText" package="com.android.chrome" content-desc="Search query" clickable="true" enabled="true" bounds="[10,20][300,80]" />
+            </hierarchy>"#,
+        )
+        .unwrap();
+
+        assert_eq!(elements.len(), 1);
+        assert_eq!(elements[0].text.as_deref(), Some("Search"));
+        assert_eq!(
+            elements[0].resource_id.as_deref(),
+            Some("com.android.chrome:id/search_box")
+        );
+        assert_eq!(
+            elements[0].bounds,
+            Bounds {
+                left: 10,
+                top: 20,
+                right: 300,
+                bottom: 80,
+            }
+        );
+        assert!(elements[0].clickable);
     }
 
     #[tokio::test]

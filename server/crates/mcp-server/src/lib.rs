@@ -5,6 +5,7 @@
 //! - [`response`] owns JSON-RPC response encoding.
 //! - [`stdio`] owns newline-delimited stdio I/O.
 
+pub mod http;
 mod lifecycle;
 mod response;
 mod server;

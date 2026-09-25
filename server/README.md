@@ -7,10 +7,12 @@ part of the MCP request path.
 
 ## Current milestone
 
-Phases 0–2 are implemented:
+Phases 0–3 are implemented:
 
 - a Cargo workspace with protocol, server, core robot, Android-driver, and iOS Simulator-driver crates;
 - newline-delimited JSON-RPC 2.0 over stdio;
+- Streamable HTTP on an explicit `--listen HOST:PORT` endpoint, with JSON or
+  single-message SSE responses and optional bearer authentication;
 - MCP `initialize` / `notifications/initialized` lifecycle enforcement;
 - an ADB driver with a mockable command runner and deterministic `adb devices -l` parser;
 - Android device/app/input/screen/accessibility tools, plus iOS Simulator boot, screenshot, and MP4 screen-recording support.
@@ -32,6 +34,24 @@ to `artifacts/` by default; set `MOBILE_MCP_ARTIFACT_DIR` to override it.
 
 The process accepts one JSON-RPC message per stdin line and writes one response
 per stdout line. Diagnostic output is reserved for stderr.
+
+## HTTP transport and auth
+
+Run an HTTP listener explicitly; prefer a loopback address unless a reverse
+proxy supplies the network boundary:
+
+```bash
+MOBILEMCP_AUTH=replace-with-a-secret \
+  cargo run -p mobile-mcp-server -- --listen 127.0.0.1:3337
+```
+
+`POST /mcp` implements the `2025-11-25` session lifecycle. Send the token as
+`Authorization: Bearer <token>` when `MOBILEMCP_AUTH` is non-empty. An
+`initialize` response returns `Mcp-Session-Id`; repeat it for subsequent calls,
+send `notifications/initialized`, then call tools. Responses are JSON by
+default, or one SSE `message` event when the client sends
+`Accept: text/event-stream`. `DELETE /mcp` with the same session header closes
+the in-memory session.
 
 For example:
 

@@ -23,6 +23,8 @@ device. It owns JSON-RPC/MCP serde types and protocol constants.
 - `lifecycle.rs`: valid state transitions only.
 - `response.rs`: JSON-RPC response construction only.
 - `main.rs`: process entrypoint only.
+- `http.rs`: Streamable HTTP session ownership, bearer-token validation, and
+  JSON/SSE response encoding; it delegates every protocol request to `Server`.
 
 `robot-core` owns portable `Robot`, device, point, and error contracts. It
 must not refer to `adb`, `simctl`, HTTP, or MCP message types.
@@ -38,3 +40,8 @@ uses `tools/device.rs`, `tools/app.rs`, `tools/navigation.rs`,
 `tools/input.rs`, `tools/recording.rs`, `tools/screen.rs`, and `tools/ui.rs`, with generic request
 parsing in `tools/arguments.rs`. The router stays a small method-to-handler
 dispatch table rather than a business-logic container.
+
+Temporary platform capability gaps are tracked in
+[platform-parity.md](platform-parity.md). The final parity pass owns alignment
+of shared MCP behavior rather than making a phase-specific handler a
+cross-platform policy container.

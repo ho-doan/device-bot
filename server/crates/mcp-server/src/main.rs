@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use mobile_mcp_server::Server;
 use mobile_robot_android::AndroidRobot;
@@ -15,5 +15,37 @@ async fn main() -> std::io::Result<()> {
         Arc::new(AndroidRobot::new(adb_path)),
         Arc::new(IosSimulatorRobot::new(xcrun_path, artifact_dir)),
     ];
-    mobile_mcp_server::stdio::serve(Server::new(Arc::new(RobotRegistry::new(drivers)))).await
+    let robot = Arc::new(RobotRegistry::new(drivers));
+    let mut arguments = std::env::args().skip(1);
+    match arguments.next().as_deref() {
+        None => mobile_mcp_server::stdio::serve(Server::new(robot)).await,
+        Some("--listen") => {
+            let address = arguments.next().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "--listen requires HOST:PORT",
+                )
+            })?;
+            if arguments.next().is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "unexpected command-line argument",
+                ));
+            }
+            let address: SocketAddr = address.parse().map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("invalid listen address: {error}"),
+                )
+            })?;
+            let bearer_token = std::env::var("MOBILEMCP_AUTH")
+                .ok()
+                .filter(|token| !token.is_empty());
+            mobile_mcp_server::http::serve(address, robot, bearer_token).await
+        }
+        Some(argument) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("unknown argument: {argument}"),
+        )),
+    }
 }

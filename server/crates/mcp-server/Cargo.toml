@@ -10,6 +10,7 @@ base64 = "0.22.1"
 mobile-mcp-protocol = { path = "../mcp-protocol" }
 mobile-robot-android = { path = "../robot-android" }
 mobile-robot-core = { path = "../robot-core" }
+mobile-robot-ios-sim = { path = "../robot-ios-sim" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

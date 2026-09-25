@@ -170,6 +170,7 @@ async fn android_vertical_slice_exposes_and_routes_all_ten_tools() {
         tool_names,
         [
             "mobile_list_available_devices",
+            "mobile_boot_device",
             "mobile_open_url",
             "mobile_type_keys",
             "mobile_list_elements_on_screen",

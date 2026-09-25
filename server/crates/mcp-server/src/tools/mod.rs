@@ -24,7 +24,8 @@ impl ToolRegistry {
 
     pub(crate) fn definitions(&self) -> Vec<ToolDefinition> {
         let mut definitions = vec![
-            device::definition(),
+            device::definitions()[0].clone(),
+            device::definitions()[1].clone(),
             navigation::definition(),
             input::definition(),
             ui::definition(),
@@ -40,6 +41,7 @@ impl ToolRegistry {
     ) -> Result<ToolResult, mobile_mcp_protocol::RpcError> {
         let result = match params.name.as_str() {
             device::NAME => device::call(&self.robot).await,
+            device::BOOT_NAME => device::boot(&self.robot, &params.arguments).await,
             app::LAUNCH_NAME => app::launch(&self.robot, &params.arguments).await,
             app::INSTALL_NAME => app::install(&self.robot, &params.arguments).await,
             app::UNINSTALL_NAME => app::uninstall(&self.robot, &params.arguments).await,

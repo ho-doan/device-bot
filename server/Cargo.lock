@@ -211,6 +211,7 @@ dependencies = [
  "mobile-mcp-protocol",
  "mobile-robot-android",
  "mobile-robot-core",
+ "mobile-robot-ios-sim",
  "serde",
  "serde_json",
  "tokio",

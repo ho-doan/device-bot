@@ -78,6 +78,28 @@ impl Robot for IosSimulatorRobot {
         })?)
     }
 
+    async fn boot_device(&self, device_id: &str) -> Result<(), RobotError> {
+        Self::valid_id(device_id, "device id")?;
+        if self
+            .list_devices()
+            .await?
+            .iter()
+            .any(|device| device.id == device_id && device.state == DeviceState::Available)
+        {
+            return Ok(());
+        }
+        self.simctl(&["simctl".into(), "boot".into(), device_id.into()])
+            .await?;
+        self.simctl(&[
+            "simctl".into(),
+            "bootstatus".into(),
+            device_id.into(),
+            "-b".into(),
+        ])
+        .await?;
+        Ok(())
+    }
+
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
         Self::valid_id(device_id, "device id")?;
         tokio::fs::create_dir_all(&self.artifact_dir)

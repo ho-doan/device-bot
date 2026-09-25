@@ -1,0 +1,15 @@
+[package]
+name = "mobile-mcp-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mobile-mcp-protocol = { path = "../mcp-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

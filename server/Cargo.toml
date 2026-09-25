@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "crates/mcp-protocol",
+    "crates/mcp-server",
+    "crates/robot-core",
+    "crates/robot-android",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/hodoan/device_robot"
+rust-version = "1.85"
+
+[workspace.dependencies]
+async-trait = "0.1.89"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+tokio = { version = "1.50.0", features = ["io-std", "io-util", "macros", "process", "rt-multi-thread"] }

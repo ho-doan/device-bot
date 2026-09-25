@@ -5,6 +5,7 @@ mod arguments;
 mod device;
 mod input;
 mod navigation;
+mod recording;
 mod screen;
 mod ui;
 
@@ -31,6 +32,7 @@ impl ToolRegistry {
             ui::definition(),
         ];
         definitions.extend(app::definitions());
+        definitions.extend(recording::definitions());
         definitions.extend(screen::definitions());
         definitions
     }
@@ -42,6 +44,8 @@ impl ToolRegistry {
         let result = match params.name.as_str() {
             device::NAME => device::call(&self.robot).await,
             device::BOOT_NAME => device::boot(&self.robot, &params.arguments).await,
+            recording::START_NAME => recording::start(&self.robot, &params.arguments).await,
+            recording::STOP_NAME => recording::stop(&self.robot, &params.arguments).await,
             app::LAUNCH_NAME => app::launch(&self.robot, &params.arguments).await,
             app::INSTALL_NAME => app::install(&self.robot, &params.arguments).await,
             app::UNINSTALL_NAME => app::uninstall(&self.robot, &params.arguments).await,

@@ -79,6 +79,16 @@ pub trait Robot: Send + Sync {
             "boot is not supported for device {device_id}"
         )))
     }
+    async fn start_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "screen recording is not supported for device {device_id}"
+        )))
+    }
+    async fn stop_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "screen recording is not supported for device {device_id}"
+        )))
+    }
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError>;
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError>;
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError>;
@@ -116,12 +126,10 @@ impl RobotRegistry {
 
     async fn driver_for(&self, device_id: &str) -> Result<Arc<dyn Robot>, RobotError> {
         for driver in &self.drivers {
-            if driver
-                .list_devices()
-                .await?
-                .iter()
-                .any(|device| device.id == device_id)
-            {
+            let Ok(devices) = driver.list_devices().await else {
+                continue;
+            };
+            if devices.iter().any(|device| device.id == device_id) {
                 return Ok(Arc::clone(driver));
             }
         }
@@ -133,13 +141,26 @@ impl RobotRegistry {
 impl Robot for RobotRegistry {
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
         let mut devices = vec![];
+        let mut errors = vec![];
         for driver in &self.drivers {
-            devices.extend(driver.list_devices().await?);
+            match driver.list_devices().await {
+                Ok(found) => devices.extend(found),
+                Err(error) => errors.push(error),
+            }
+        }
+        if devices.is_empty() && !errors.is_empty() {
+            return Err(errors.remove(0));
         }
         Ok(devices)
     }
     async fn boot_device(&self, id: &str) -> Result<(), RobotError> {
         self.driver_for(id).await?.boot_device(id).await
+    }
+    async fn start_screen_recording(&self, id: &str) -> Result<String, RobotError> {
+        self.driver_for(id).await?.start_screen_recording(id).await
+    }
+    async fn stop_screen_recording(&self, id: &str) -> Result<String, RobotError> {
+        self.driver_for(id).await?.stop_screen_recording(id).await
     }
     async fn take_screenshot(&self, id: &str) -> Result<Vec<u8>, RobotError> {
         self.driver_for(id).await?.take_screenshot(id).await
@@ -176,5 +197,89 @@ impl Robot for RobotRegistry {
     }
     async fn list_elements(&self, id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.driver_for(id).await?.list_elements(id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct StubRobot {
+        device: Option<RobotDevice>,
+        list_error: bool,
+    }
+
+    #[async_trait]
+    impl Robot for StubRobot {
+        async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
+            if self.list_error {
+                return Err(RobotError::CommandFailed("driver unavailable".into()));
+            }
+            Ok(self.device.clone().into_iter().collect())
+        }
+
+        async fn take_screenshot(&self, _: &str) -> Result<Vec<u8>, RobotError> {
+            Ok(vec![7])
+        }
+
+        async fn tap(&self, _: &str, _: Point) -> Result<(), RobotError> {
+            Ok(())
+        }
+
+        async fn launch_app(&self, _: &str, _: &str) -> Result<(), RobotError> {
+            Ok(())
+        }
+
+        async fn open_url(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), RobotError> {
+            Ok(())
+        }
+
+        async fn type_text(&self, _: &str, _: &str) -> Result<(), RobotError> {
+            Ok(())
+        }
+
+        async fn swipe(
+            &self,
+            _: &str,
+            _: Point,
+            _: Point,
+            _: Option<u64>,
+        ) -> Result<(), RobotError> {
+            Ok(())
+        }
+
+        async fn install_app(&self, _: &str, _: &str) -> Result<(), RobotError> {
+            Ok(())
+        }
+
+        async fn uninstall_app(&self, _: &str, _: &str) -> Result<(), RobotError> {
+            Ok(())
+        }
+
+        async fn list_elements(&self, _: &str) -> Result<Vec<UiElement>, RobotError> {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn routes_to_a_healthy_driver_when_another_driver_is_unavailable() {
+        let registry = RobotRegistry::new(vec![
+            Arc::new(StubRobot {
+                device: None,
+                list_error: true,
+            }) as Arc<dyn Robot>,
+            Arc::new(StubRobot {
+                device: Some(RobotDevice {
+                    id: "ios-sim".into(),
+                    name: "iPhone".into(),
+                    platform: Platform::Ios,
+                    state: DeviceState::Available,
+                }),
+                list_error: false,
+            }),
+        ]);
+
+        assert_eq!(registry.list_devices().await.unwrap().len(), 1);
+        assert_eq!(registry.take_screenshot("ios-sim").await.unwrap(), vec![7]);
     }
 }

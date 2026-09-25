@@ -4,20 +4,32 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     process::Stdio,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use async_trait::async_trait;
 use mobile_robot_core::{DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
 use serde::Deserialize;
-use tokio::process::Command;
+use tokio::{
+    process::{Child, Command},
+    sync::Mutex,
+};
 
 static ARTIFACT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct IosSimulatorRobot {
     xcrun_path: String,
     artifact_dir: PathBuf,
+    recordings: Arc<Mutex<HashMap<String, ActiveRecording>>>,
+}
+
+struct ActiveRecording {
+    child: Child,
+    path: PathBuf,
 }
 
 impl IosSimulatorRobot {
@@ -25,6 +37,7 @@ impl IosSimulatorRobot {
         Self {
             xcrun_path: xcrun_path.into(),
             artifact_dir: artifact_dir.into(),
+            recordings: Arc::default(),
         }
     }
 
@@ -58,6 +71,13 @@ impl IosSimulatorRobot {
         } else {
             Ok(())
         }
+    }
+
+    fn next_recording_path(&self, device_id: &str) -> PathBuf {
+        self.artifact_dir.join(format!(
+            "mobile-mcp-ios-recording-{device_id}-{}.mp4",
+            ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ))
     }
 }
 
@@ -98,6 +118,65 @@ impl Robot for IosSimulatorRobot {
         ])
         .await?;
         Ok(())
+    }
+
+    async fn start_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
+        Self::valid_id(device_id, "device id")?;
+        tokio::fs::create_dir_all(&self.artifact_dir)
+            .await
+            .map_err(|error| {
+                RobotError::CommandFailed(format!("could not create recording directory: {error}"))
+            })?;
+
+        let mut recordings = self.recordings.lock().await;
+        if recordings.contains_key(device_id) {
+            return Err(RobotError::InvalidInput(format!(
+                "a screen recording is already running for device {device_id}"
+            )));
+        }
+        let path = self.next_recording_path(device_id);
+        let child = Command::new(&self.xcrun_path)
+            .args([
+                "simctl",
+                "io",
+                device_id,
+                "recordVideo",
+                &path.to_string_lossy(),
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| {
+                RobotError::CommandFailed(format!(
+                    "could not start simctl screen recording: {error}"
+                ))
+            })?;
+        recordings.insert(
+            device_id.into(),
+            ActiveRecording {
+                child,
+                path: path.clone(),
+            },
+        );
+        Ok(path.to_string_lossy().into_owned())
+    }
+
+    async fn stop_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
+        Self::valid_id(device_id, "device id")?;
+        let Some(mut recording) = self.recordings.lock().await.remove(device_id) else {
+            return Err(RobotError::InvalidInput(format!(
+                "no screen recording is running for device {device_id}"
+            )));
+        };
+        if let Some(pid) = recording.child.id() {
+            // `simctl io recordVideo` finalizes its MP4 when it receives SIGINT.
+            unsafe { libc::kill(pid as i32, libc::SIGINT) };
+        }
+        recording.child.wait().await.map_err(|error| {
+            RobotError::CommandFailed(format!("could not stop simctl screen recording: {error}"))
+        })?;
+        Ok(recording.path.to_string_lossy().into_owned())
     }
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
@@ -248,5 +327,18 @@ mod tests {
         assert_eq!(devices.len(), 2);
         assert_eq!(devices[0].state, DeviceState::Available);
         assert_eq!(devices[1].state, DeviceState::Offline);
+    }
+
+    #[test]
+    fn recording_paths_are_unique_and_stay_in_the_artifact_directory() {
+        let robot = IosSimulatorRobot::new("xcrun", "artifacts");
+        let first = robot.next_recording_path("test-device");
+        let second = robot.next_recording_path("test-device");
+        assert!(first.starts_with("artifacts"));
+        assert_eq!(
+            first.extension().and_then(|value| value.to_str()),
+            Some("mp4")
+        );
+        assert_ne!(first, second);
     }
 }

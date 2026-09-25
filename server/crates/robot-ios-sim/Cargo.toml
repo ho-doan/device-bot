@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+libc.workspace = true
 mobile-robot-core = { path = "../robot-core" }
 serde.workspace = true
 serde_json.workspace = true

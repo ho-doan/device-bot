@@ -1,0 +1,1 @@
+Cargo workspace, Rust 2024 edition. Async via Tokio; trait async dispatch via async-trait; JSON/serde; errors via thiserror. Platform adapters include Android adb and iOS Simulator xcrun/simctl.

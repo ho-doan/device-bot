@@ -1,0 +1,1 @@
+Before handing off a code change run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` from `server/`. For device work, also run an end-to-end MCP stdio request and save resulting evidence in `server/artifacts/` when requested.

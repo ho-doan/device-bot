@@ -1,0 +1,1 @@
+Tool names use `mobile_<verb>_<noun>` and each tool family belongs in a focused `mcp-server/src/tools/*.rs` module. Drivers implement `Robot`; `RobotRegistry` is the only cross-platform router. User-visible errors stay as `RobotError`; platform command details stay inside platform crates. Keep platform test parsing/helpers close to their driver.

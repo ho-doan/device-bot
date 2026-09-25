@@ -7,13 +7,13 @@ part of the MCP request path.
 
 ## Current milestone
 
-Phases 0 and the initial Android vertical slice (Phase 1) are implemented:
+Phases 0–2 are implemented:
 
-- a Cargo workspace with protocol, server, core robot, and Android-driver crates;
+- a Cargo workspace with protocol, server, core robot, Android-driver, and iOS Simulator-driver crates;
 - newline-delimited JSON-RPC 2.0 over stdio;
 - MCP `initialize` / `notifications/initialized` lifecycle enforcement;
 - an ADB driver with a mockable command runner and deterministic `adb devices -l` parser;
-- ten MCP tools: device list, app launch/install/uninstall, URL navigation, text input, screenshot, tap/swipe, and accessibility-tree listing.
+- Android device/app/input/screen/accessibility tools, plus iOS Simulator boot, screenshot, and MP4 screen-recording support.
 
 The supported MCP protocol version is `2025-11-25`.
 
@@ -26,8 +26,9 @@ a central "god file" are documented in [architecture.md](docs/architecture.md).
 cargo run -p mobile-mcp-server
 ```
 
-The binary executes `adb` from `PATH`. Set `ANDROID_ADB_PATH` to use a
-specific Android SDK installation.
+The binary executes `adb` and `xcrun` from `PATH`. Set `ANDROID_ADB_PATH` or
+`XCRUN_PATH` to use a specific installation. Recording artifacts are written
+to `artifacts/` by default; set `MOBILE_MCP_ARTIFACT_DIR` to override it.
 
 The process accepts one JSON-RPC message per stdin line and writes one response
 per stdout line. Diagnostic output is reserved for stderr.
@@ -45,6 +46,7 @@ For example:
 | Tool | Arguments | Result |
 | --- | --- | --- |
 | `mobile_list_available_devices` | `{}` | `structuredContent.devices` with id, name, platform, and state |
+| `mobile_boot_device` | `{ "deviceId": "iOS-simulator-UDID" }` | Boot an iOS Simulator and wait until ready |
 | `mobile_launch_app` | `{ "deviceId": "emulator-5554", "appId": "com.android.chrome" }` | Launch confirmation |
 | `mobile_install_app` | `{ "deviceId": "emulator-5554", "apkPath": "/host/app.apk" }` | Install/replace APK confirmation |
 | `mobile_uninstall_app` | `{ "deviceId": "emulator-5554", "appId": "com.example.app" }` | Uninstall confirmation |
@@ -54,6 +56,14 @@ For example:
 | `mobile_click_on_screen_at_coordinates` | `{ "deviceId": "emulator-5554", "x": 100, "y": 240 }` | Text confirmation |
 | `mobile_swipe_on_screen` | `{ "deviceId": "emulator-5554", "startX": 100, "startY": 800, "endX": 100, "endY": 200 }` | Swipe confirmation; optional `durationMs` |
 | `mobile_list_elements_on_screen` | `{ "deviceId": "emulator-5554" }` | `structuredContent.elements` from the current accessibility tree |
+
+## iOS Simulator tools
+
+| Tool | Arguments | Result |
+| --- | --- | --- |
+| `mobile_take_screenshot` | `{ "deviceId": "iOS-simulator-UDID" }` | MCP `image` content (`image/png`, Base64) |
+| `mobile_start_screen_recording` | `{ "deviceId": "iOS-simulator-UDID" }` | Starts a simulator MP4 artifact |
+| `mobile_stop_screen_recording` | `{ "deviceId": "iOS-simulator-UDID" }` | Stops recording and returns the saved MP4 path |
 
 Device-driver failures and invalid tool arguments return a normal MCP tool
 result with `isError: true`, so clients can present actionable retry feedback.

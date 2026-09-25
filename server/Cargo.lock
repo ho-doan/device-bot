@@ -235,6 +235,7 @@ dependencies = [
  "async-trait",
  "serde",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -242,6 +243,7 @@ name = "mobile-robot-ios-sim"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "libc",
  "mobile-robot-core",
  "serde",
  "serde_json",

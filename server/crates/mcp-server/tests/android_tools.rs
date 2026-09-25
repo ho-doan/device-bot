@@ -33,6 +33,22 @@ impl Robot for RecordingRobot {
         }
     }
 
+    async fn start_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
+        self.actions
+            .lock()
+            .unwrap()
+            .push(format!("record-start:{device_id}"));
+        Ok(format!("artifacts/{device_id}.mp4"))
+    }
+
+    async fn stop_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
+        self.actions
+            .lock()
+            .unwrap()
+            .push(format!("record-stop:{device_id}"));
+        Ok(format!("artifacts/{device_id}.mp4"))
+    }
+
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
         self.taps.lock().unwrap().push((device_id.into(), point));
         Ok(())
@@ -151,7 +167,7 @@ async fn ready(server: &mut Server) {
 }
 
 #[tokio::test]
-async fn android_vertical_slice_exposes_and_routes_all_ten_tools() {
+async fn android_vertical_slice_exposes_and_routes_all_tools() {
     let robot = Arc::new(RecordingRobot::default());
     let mut server = Server::new(robot.clone());
     ready(&mut server).await;
@@ -177,6 +193,8 @@ async fn android_vertical_slice_exposes_and_routes_all_ten_tools() {
             "mobile_launch_app",
             "mobile_install_app",
             "mobile_uninstall_app",
+            "mobile_start_screen_recording",
+            "mobile_stop_screen_recording",
             "mobile_take_screenshot",
             "mobile_click_on_screen_at_coordinates",
             "mobile_swipe_on_screen"
@@ -361,6 +379,42 @@ async fn android_vertical_slice_exposes_and_routes_all_ten_tools() {
             "install:emulator-5554:/tmp/example.apk",
             "uninstall:emulator-5554:com.example.app"
         ]
+    );
+
+    let recording_started = server
+        .handle(request(
+            13,
+            "tools/call",
+            json!({
+                "name": "mobile_start_screen_recording",
+                "arguments": { "deviceId": "emulator-5554" }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        recording_started["result"]["content"][0]["text"],
+        "Screen recording started: artifacts/emulator-5554.mp4"
+    );
+
+    let recording_stopped = server
+        .handle(request(
+            14,
+            "tools/call",
+            json!({
+                "name": "mobile_stop_screen_recording",
+                "arguments": { "deviceId": "emulator-5554" }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        recording_stopped["result"]["content"][0]["text"],
+        "Screen recording saved: artifacts/emulator-5554.mp4"
+    );
+    assert_eq!(
+        &robot.actions.lock().unwrap()[6..],
+        ["record-start:emulator-5554", "record-stop:emulator-5554"]
     );
 }
 

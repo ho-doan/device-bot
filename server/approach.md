@@ -151,8 +151,8 @@ Với mỗi tool: định nghĩa input/output schema bằng `serde` struct + JSO
 - [ ] Nối `robot-android` vào `robot-core::Robot` trait, expose qua `mcp-server`.
 
 ### Phase 2 — iOS Simulator (cần macOS)
-- [ ] `robot-ios-sim`: wrapper `xcrun simctl` (list, boot, screenshot, `simctl io ... recordVideo`).
-- [ ] Accessibility tree cho simulator (cần nghiên cứu cách `mobilecli` lấy — có thể qua private API hoặc XCTest runner nhẹ).
+- [x] `robot-ios-sim`: wrapper `xcrun simctl` (list, boot, screenshot, `simctl io ... recordVideo`).
+- [x] Accessibility tree và input cho simulator qua XCTest runner nhúng trong repo, không cần private API hay dependency bên thứ ba.
 
 ### Phase 3 — HTTP/SSE transport + Auth
 - [ ] `axum` server, flag `--listen`.

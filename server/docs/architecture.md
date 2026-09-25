@@ -48,7 +48,11 @@ in narrowly scoped server handler modules added with each tool family.
 
 `robot-ios-real` owns the `go-ios` command boundary and WDA/DeviceKit XML
 normalization. It is intentionally independent of `robot-ios-sim`, whose
-`simctl` lifecycle and recording state have different failure modes.
+`simctl` lifecycle and recording state have different failure modes. The
+simulator driver invokes the repository's XCTest UI-test runner for synthesized
+input and accessibility-tree reads. The project at
+`crates/robot-ios-sim/xctest-runner` runs through `xcodebuild` and has no
+separately installed companion or client dependency.
 
 Tool definitions live in `mcp-server::tools`; each family (device, app,
 screen, input, crash) gets its own handler module. The initial Android slice

@@ -15,7 +15,8 @@ Phases 0–3 and the Phase 5 Flutter companion MVP are implemented:
   single-message SSE responses and optional bearer authentication;
 - MCP `initialize` / `notifications/initialized` lifecycle enforcement;
 - an ADB driver with a mockable command runner and deterministic `adb devices -l` parser;
-- Android device/app/input/screen/accessibility tools, plus iOS Simulator boot, screenshot, and MP4 screen-recording support.
+- Android device/app/input/screen/accessibility tools, plus iOS Simulator boot,
+  screenshot, MP4 screen-recording, and bundled-XCTest input/accessibility support.
 - a separate local admin API and Flutter companion source tree for inspecting
   connected devices, auth/configuration state, and recent MCP activity.
 
@@ -107,8 +108,23 @@ For example:
 | Tool | Arguments | Result |
 | --- | --- | --- |
 | `mobile_take_screenshot` | `{ "deviceId": "iOS-simulator-UDID" }` | MCP `image` content (`image/png`, Base64) |
+| `mobile_click_on_screen_at_coordinates` | `{ "deviceId": "iOS-simulator-UDID", "x": 100, "y": 240 }` | Bundled XCTest touch at the screen point |
+| `mobile_type_keys` | `{ "deviceId": "iOS-simulator-UDID", "text": "hello" }` | Bundled XCTest keyboard input |
+| `mobile_swipe_on_screen` | `{ "deviceId": "iOS-simulator-UDID", "startX": 100, "startY": 700, "endX": 100, "endY": 200 }` | Bundled XCTest touch swipe; optional `durationMs` |
+| `mobile_list_elements_on_screen` | `{ "deviceId": "iOS-simulator-UDID" }` | Normalized XCTest accessibility elements |
 | `mobile_start_screen_recording` | `{ "deviceId": "iOS-simulator-UDID" }` | Starts a simulator MP4 artifact |
 | `mobile_stop_screen_recording` | `{ "deviceId": "iOS-simulator-UDID" }` | Stops recording and returns the saved MP4 path |
+
+### Simulator UI automation
+
+`simctl` does not expose touch, keyboard, swipe, or accessibility-tree
+operations. The repository includes a small XCTest UI-test runner at
+`crates/robot-ios-sim/xctest-runner`, so no external client, companion, or
+Homebrew tap is required. It runs through the host's `xcodebuild`; lifecycle, app
+management, screenshots, and recording continue to use `xcrun simctl`.
+
+Launch the target app with `mobile_launch_app` before the UI tools. The runner
+targets that bundle ID and returns normalized accessibility elements.
 
 ## Real iOS devices (adapter foundation only)
 

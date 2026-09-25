@@ -9,5 +9,6 @@ mod lifecycle;
 mod response;
 mod server;
 pub mod stdio;
+mod tools;
 
 pub use server::Server;

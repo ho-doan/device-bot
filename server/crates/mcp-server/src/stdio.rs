@@ -8,11 +8,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use crate::{Server, response};
 
 /// Serve one MCP connection through process stdin/stdout.
-pub async fn serve() -> io::Result<()> {
+pub async fn serve(mut server: Server) -> io::Result<()> {
     let stdin = tokio::io::stdin();
     let mut lines = BufReader::new(stdin).lines();
     let mut stdout = tokio::io::stdout();
-    let mut server = Server::default();
 
     while let Some(line) = lines.next_line().await? {
         if line.trim().is_empty() {
@@ -20,7 +19,7 @@ pub async fn serve() -> io::Result<()> {
         }
 
         let response = match serde_json::from_str::<JsonRpcRequest>(&line) {
-            Ok(request) => server.handle(request),
+            Ok(request) => server.handle(request).await,
             Err(_) => Some(response::error_for_id(
                 serde_json::Value::Null,
                 RpcError::parse_error(),

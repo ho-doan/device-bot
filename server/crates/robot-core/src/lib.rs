@@ -12,6 +12,8 @@ pub enum RobotError {
     DeviceNotFound(String),
     #[error("unsupported operation: {0}")]
     Unsupported(String),
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -35,6 +37,7 @@ pub enum DeviceState {
     Available,
     Offline,
     Unauthorized,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -49,4 +52,12 @@ pub trait Robot: Send + Sync {
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError>;
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError>;
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError>;
+    async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError>;
+    async fn open_url(
+        &self,
+        device_id: &str,
+        url: &str,
+        app_id: Option<&str>,
+    ) -> Result<(), RobotError>;
+    async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError>;
 }

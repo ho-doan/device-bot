@@ -9,3 +9,4 @@ rust-version.workspace = true
 async-trait.workspace = true
 mobile-robot-core = { path = "../robot-core" }
 tokio.workspace = true
+url = "2.5.8"

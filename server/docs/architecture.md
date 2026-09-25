@@ -32,7 +32,9 @@ driver-specific tests. `robot-android` may depend on `robot-core`, but no
 platform driver may depend on `mcp-server`; tool-to-driver adaptation belongs
 in narrowly scoped server handler modules added with each tool family.
 
-When a tool catalogue is introduced, its definitions go in a dedicated
-`mcp-server::tools` module and each family (device, app, screen, input,
-crash) gets a separate handler module. The router stays a small method-to-
-handler dispatch table rather than a business-logic container.
+Tool definitions live in `mcp-server::tools`; each family (device, app,
+screen, input, crash) gets its own handler module. The initial Android slice
+uses `tools/device.rs`, `tools/app.rs`, `tools/navigation.rs`,
+`tools/input.rs`, and `tools/screen.rs`, with generic request parsing in
+`tools/arguments.rs`. The router stays a small method-to-handler dispatch
+table rather than a business-logic container.

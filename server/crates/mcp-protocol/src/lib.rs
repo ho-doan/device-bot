@@ -156,6 +156,86 @@ pub struct ToolDefinition {
     pub input_schema: Value,
 }
 
+/// Parameters supplied to `tools/call`.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct CallToolParams {
+    pub name: String,
+    #[serde(default = "empty_object")]
+    pub arguments: Value,
+}
+
+fn empty_object() -> Value {
+    Value::Object(Default::default())
+}
+
+/// Result of a successful or failed tool execution.
+///
+/// Execution failures are deliberately represented here rather than as a
+/// JSON-RPC error so the MCP client can show the model actionable feedback.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolResult {
+    pub content: Vec<ToolContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structured_content: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_error: Option<bool>,
+}
+
+impl ToolResult {
+    pub fn structured(value: Value) -> Self {
+        let text = serde_json::to_string(&value).expect("serializable structured tool output");
+        Self {
+            content: vec![ToolContent::Text { text }],
+            structured_content: Some(value),
+            is_error: None,
+        }
+    }
+
+    pub fn image(data: String, mime_type: impl Into<String>) -> Self {
+        Self {
+            content: vec![ToolContent::Image {
+                data,
+                mime_type: mime_type.into(),
+            }],
+            structured_content: None,
+            is_error: None,
+        }
+    }
+
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            content: vec![ToolContent::Text { text: text.into() }],
+            structured_content: None,
+            is_error: None,
+        }
+    }
+
+    pub fn execution_error(message: impl Into<String>) -> Self {
+        Self {
+            content: vec![ToolContent::Text {
+                text: message.into(),
+            }],
+            structured_content: None,
+            is_error: Some(true),
+        }
+    }
+}
+
+/// MCP content types used by the initial Android vertical slice.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolContent {
+    Text {
+        text: String,
+    },
+    Image {
+        data: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +261,18 @@ mod tests {
         assert_eq!(
             serde_json::to_value(result).unwrap(),
             json!({ "tools": [] })
+        );
+    }
+
+    #[test]
+    fn serializes_a_structured_tool_result_with_text_fallback() {
+        let result = ToolResult::structured(json!({ "devices": [] }));
+        assert_eq!(
+            serde_json::to_value(result).unwrap(),
+            json!({
+                "content": [{ "type": "text", "text": "{\"devices\":[]}" }],
+                "structuredContent": { "devices": [] }
+            })
         );
     }
 }

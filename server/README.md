@@ -7,12 +7,13 @@ part of the MCP request path.
 
 ## Current milestone
 
-Phase 0 is implemented:
+Phases 0 and the initial Android vertical slice (Phase 1) are implemented:
 
 - a Cargo workspace with protocol, server, core robot, and Android-driver crates;
 - newline-delimited JSON-RPC 2.0 over stdio;
 - MCP `initialize` / `notifications/initialized` lifecycle enforcement;
-- a `tools/list` response with a valid, initially empty tool catalogue.
+- an ADB driver with a mockable command runner and deterministic `adb devices -l` parser;
+- six MCP tools: device list, app launch, URL navigation, text input, PNG screenshot, and coordinate tap.
 
 The supported MCP protocol version is `2025-11-25`.
 
@@ -25,6 +26,9 @@ a central "god file" are documented in [architecture.md](docs/architecture.md).
 cargo run -p mobile-mcp-server
 ```
 
+The binary executes `adb` from `PATH`. Set `ANDROID_ADB_PATH` to use a
+specific Android SDK installation.
+
 The process accepts one JSON-RPC message per stdin line and writes one response
 per stdout line. Diagnostic output is reserved for stderr.
 
@@ -35,6 +39,20 @@ For example:
 {"jsonrpc":"2.0","method":"notifications/initialized"}
 {"jsonrpc":"2.0","id":2,"method":"tools/list"}
 ```
+
+## Android tools
+
+| Tool | Arguments | Result |
+| --- | --- | --- |
+| `mobile_list_available_devices` | `{}` | `structuredContent.devices` with id, name, platform, and state |
+| `mobile_launch_app` | `{ "deviceId": "emulator-5554", "appId": "com.android.chrome" }` | Launch confirmation |
+| `mobile_open_url` | `{ "deviceId": "emulator-5554", "url": "https://…", "appId": "com.android.chrome" }` | URL-open confirmation; `appId` is optional |
+| `mobile_type_keys` | `{ "deviceId": "emulator-5554", "text": "babyshake" }` | Text-input confirmation |
+| `mobile_take_screenshot` | `{ "deviceId": "emulator-5554" }` | MCP `image` content (`image/png`, Base64) |
+| `mobile_click_on_screen_at_coordinates` | `{ "deviceId": "emulator-5554", "x": 100, "y": 240 }` | Text confirmation |
+
+Device-driver failures and invalid tool arguments return a normal MCP tool
+result with `isError: true`, so clients can present actionable retry feedback.
 
 ## Validate
 

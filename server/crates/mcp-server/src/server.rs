@@ -1,23 +1,33 @@
+use std::sync::Arc;
+
 use mobile_mcp_protocol::{
-    Implementation, InitializeParams, InitializeResult, JsonRpcRequest, ListToolsResult,
-    PROTOCOL_VERSION, RpcError, ServerCapabilities, ToolsCapability,
+    CallToolParams, Implementation, InitializeParams, InitializeResult, JsonRpcRequest,
+    ListToolsResult, PROTOCOL_VERSION, RpcError, ServerCapabilities, ToolsCapability,
 };
+use mobile_robot_core::Robot;
 use serde_json::{Value, json};
 
-use crate::{lifecycle::Lifecycle, response};
+use crate::{lifecycle::Lifecycle, response, tools::ToolRegistry};
 
 /// Stateful MCP dispatcher for one transport connection.
-#[derive(Debug, Default)]
 pub struct Server {
     lifecycle: Lifecycle,
+    tools: ToolRegistry,
 }
 
 impl Server {
+    pub fn new(robot: Arc<dyn Robot>) -> Self {
+        Self {
+            lifecycle: Lifecycle::default(),
+            tools: ToolRegistry::new(robot),
+        }
+    }
+
     /// Dispatch one syntactically valid JSON-RPC message.
     ///
     /// `None` means a JSON-RPC notification was handled and must not receive a
     /// response. Returned values are complete JSON-RPC response objects.
-    pub fn handle(&mut self, request: JsonRpcRequest) -> Option<Value> {
+    pub async fn handle(&mut self, request: JsonRpcRequest) -> Option<Value> {
         if !request.has_valid_version() {
             return response::error(&request, RpcError::invalid_request());
         }
@@ -27,7 +37,7 @@ impl Server {
             "notifications/initialized" => self.initialized(),
             "ping" => response::success(&request, json!({})),
             "tools/list" => self.list_tools(request),
-            "tools/call" => self.call_tool(request),
+            "tools/call" => self.call_tool(request).await,
             _ => response::error(&request, RpcError::method_not_found(&request.method)),
         }
     }
@@ -86,28 +96,37 @@ impl Server {
         if let Err(error) = self.require_ready(&request) {
             return Some(error);
         }
-        response::success(&request, ListToolsResult { tools: vec![] })
+        response::success(
+            &request,
+            ListToolsResult {
+                tools: self.tools.definitions(),
+            },
+        )
     }
 
-    fn call_tool(&self, request: JsonRpcRequest) -> Option<Value> {
+    async fn call_tool(&self, request: JsonRpcRequest) -> Option<Value> {
         if let Err(error) = self.require_ready(&request) {
             return Some(error);
         }
 
-        let name = request
-            .params
-            .as_ref()
-            .and_then(|params| params.get("name"))
-            .and_then(Value::as_str);
-        match name {
-            Some(name) => response::error(
-                &request,
-                RpcError::invalid_params(format!("Unknown tool: {name}")),
-            ),
-            None => response::error(
-                &request,
-                RpcError::invalid_params("Missing tools/call parameter: name"),
-            ),
+        let params = match request.params.clone() {
+            Some(params) => match serde_json::from_value::<CallToolParams>(params) {
+                Ok(params) => params,
+                Err(error) => {
+                    return response::error(&request, RpcError::invalid_params(error.to_string()));
+                }
+            },
+            None => {
+                return response::error(
+                    &request,
+                    RpcError::invalid_params("Missing tools/call params"),
+                );
+            }
+        };
+
+        match self.tools.call(params).await {
+            Ok(result) => response::success(&request, result),
+            Err(error) => response::error(&request, error),
         }
     }
 

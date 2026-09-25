@@ -162,8 +162,8 @@ Với mỗi tool: định nghĩa input/output schema bằng `serde` struct + JSO
 - [ ] Tích hợp `go-ios` (gọi qua process hoặc port logic Go sang Rust nếu cần) + WebDriverAgent client (HTTP tới WDA đang chạy trên device) + device tunnel.
 
 ### Phase 5 — Flutter companion app MVP
-- [ ] `admin-api` crate: `/devices`, `/logs` (SSE), `/config`.
-- [ ] Flutter app: màn hình danh sách device, log viewer, nút start/stop server, cấu hình token.
+- [x] `admin-api` crate: `/devices`, `/logs` (SSE), `/config`.
+- [x] Flutter app: màn hình danh sách device, log viewer thời gian thực, nút start/stop server, cấu hình token.
 
 ### Phase 6 — Hoàn thiện
 - [ ] Crash reports (`mobile_list_crashes`, `mobile_get_crash`) — đọc log hệ thống (`adb logcat` / `xcrun simctl spawn ... log`).

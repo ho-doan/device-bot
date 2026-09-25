@@ -2,6 +2,7 @@
 members = [
     "crates/mcp-protocol",
     "crates/mcp-server",
+    "crates/admin-api",
     "crates/robot-core",
     "crates/robot-android",
     "crates/robot-ios-real",
@@ -24,4 +25,5 @@ thiserror = "2.0.18"
 libc = "0.2.180"
 tokio = { version = "1.50.0", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "sync"] }
 tower = "0.5.2"
+tokio-stream = { version = "0.1.18", features = ["sync"] }
 uuid = { version = "1.21.0", features = ["v4"] }

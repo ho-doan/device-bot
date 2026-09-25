@@ -9,6 +9,7 @@ rust-version.workspace = true
 axum.workspace = true
 base64 = "0.22.1"
 mobile-mcp-protocol = { path = "../mcp-protocol" }
+mobile-admin-api = { path = "../admin-api" }
 mobile-robot-android = { path = "../robot-android" }
 mobile-robot-core = { path = "../robot-core" }
 mobile-robot-ios-real = { path = "../robot-ios-real" }

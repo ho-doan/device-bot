@@ -8,6 +8,7 @@ responsibilities.
 mcp-server (binary + connection orchestration)
         │
         ├── mcp-protocol (wire types only)
+        ├── admin-api (local operator read models + SSE only)
         └── robot-core (device contracts only)
                 │
                 └── robot-android / robot-ios-sim / future platform drivers
@@ -25,6 +26,17 @@ device. It owns JSON-RPC/MCP serde types and protocol constants.
 - `main.rs`: process entrypoint only.
 - `http.rs`: Streamable HTTP session ownership, bearer-token validation, and
   JSON/SSE response encoding; it delegates every protocol request to `Server`.
+
+`admin-api` owns the local `/admin/*` read-model boundary: device snapshots,
+on-demand PNG screenshots, safe configuration status, and bounded activity
+events. It may invoke the platform-neutral screenshot capability through the
+robot registry, but it does not route MCP methods or depend on a concrete
+platform driver. `mcp-server::http` composes this router at the HTTP edge and
+records only transport-level activity.
+
+`flutter_app/` is a separate client, not a Cargo member and not a device
+controller. It consumes the admin API over HTTP; it has no dependency on ADB,
+simctl, go-ios, or the MCP request path.
 
 `robot-core` owns portable `Robot`, device, point, and error contracts. It
 must not refer to `adb`, `simctl`, HTTP, or MCP message types.

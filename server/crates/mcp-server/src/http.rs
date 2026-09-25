@@ -13,6 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
+use mobile_admin_api::{ActivityLog, AdminState};
 use mobile_mcp_protocol::{JsonRpcRequest, RpcError};
 use mobile_robot_core::Robot;
 use serde_json::Value;
@@ -28,6 +29,7 @@ struct HttpState {
     robot: Arc<dyn Robot>,
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<Server>>>>>,
     bearer_token: Option<Arc<str>>,
+    activity_log: ActivityLog,
 }
 
 /// Build the Streamable HTTP endpoint at `POST /mcp`.
@@ -35,14 +37,21 @@ struct HttpState {
 /// Clients receive JSON by default. When `Accept: text/event-stream` is sent,
 /// the same response is emitted as a single SSE `message` event.
 pub fn router(robot: Arc<dyn Robot>, bearer_token: Option<String>) -> Router {
+    let activity_log = ActivityLog::new(200);
     let state = HttpState {
-        robot,
+        robot: Arc::clone(&robot),
         sessions: Arc::default(),
-        bearer_token: bearer_token.map(Arc::from),
+        bearer_token: bearer_token.clone().map(Arc::from),
+        activity_log: activity_log.clone(),
     };
     Router::new()
         .route("/mcp", post(handle_post).delete(handle_delete))
         .with_state(state)
+        .merge(mobile_admin_api::router(AdminState::new(
+            robot,
+            activity_log,
+            bearer_token,
+        )))
 }
 
 /// Bind and serve Streamable HTTP.
@@ -80,6 +89,11 @@ async fn handle_post(State(state): State<HttpState>, headers: HeaderMap, body: B
             );
         }
     };
+
+    state
+        .activity_log
+        .record("mcp.request", request.method.clone())
+        .await;
 
     if request.method == "initialize" {
         initialize_session(state, headers, request).await

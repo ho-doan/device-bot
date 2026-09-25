@@ -7,7 +7,7 @@ part of the MCP request path.
 
 ## Current milestone
 
-Phases 0–3 are implemented:
+Phases 0–3 and the Phase 5 Flutter companion MVP are implemented:
 
 - a Cargo workspace with protocol, server, core robot, Android-driver, and iOS Simulator-driver crates;
 - newline-delimited JSON-RPC 2.0 over stdio;
@@ -16,6 +16,12 @@ Phases 0–3 are implemented:
 - MCP `initialize` / `notifications/initialized` lifecycle enforcement;
 - an ADB driver with a mockable command runner and deterministic `adb devices -l` parser;
 - Android device/app/input/screen/accessibility tools, plus iOS Simulator boot, screenshot, and MP4 screen-recording support.
+- a separate local admin API and Flutter companion source tree for inspecting
+  connected devices, auth/configuration state, and recent MCP activity.
+
+Real iOS-device deployment is intentionally deferred until the final phase.
+The existing `robot-ios-real` crate is only an isolated adapter foundation; it
+is not part of the current deployment target.
 
 The supported MCP protocol version is `2025-11-25`.
 
@@ -54,6 +60,24 @@ default, or one SSE `message` event when the client sends
 `Accept: text/event-stream`. `DELETE /mcp` with the same session header closes
 the in-memory session.
 
+## Local admin API and Flutter companion
+
+The same explicit HTTP listener also exposes local operator endpoints:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /admin/devices` | Current devices from the robot registry |
+| `GET /admin/devices/{device_id}/screenshot` | Current device PNG for the companion viewer |
+| `GET /admin/config` | Safe-to-display auth and log-buffer status |
+| `GET /admin/logs` | Bounded, recent MCP request activity |
+| `GET /admin/logs/stream` | Future activity as server-sent events |
+
+They share the HTTP listener's bearer-token policy. The Flutter companion
+source lives in [`flutter_app/`](flutter_app/); it talks only to these admin
+endpoints, never to a platform driver or directly to ADB. It can also launch
+and stop a local `mobile-mcp-server` child process for convenience, but never
+stops an existing server it did not create.
+
 For example:
 
 ```text
@@ -86,9 +110,9 @@ For example:
 | `mobile_start_screen_recording` | `{ "deviceId": "iOS-simulator-UDID" }` | Starts a simulator MP4 artifact |
 | `mobile_stop_screen_recording` | `{ "deviceId": "iOS-simulator-UDID" }` | Stops recording and returns the saved MP4 path |
 
-## Real iOS devices
+## Real iOS devices (adapter foundation only)
 
-`robot-ios-real` uses `go-ios` for discovery and for a pre-running DeviceKit
+`robot-ios-real` is reserved for the final real-iOS phase. It uses `go-ios` for discovery and for a pre-running DeviceKit
 or WebDriverAgent UI backend. It supports device discovery, screenshots, UI
 source normalization, tap/swipe/text input, app launch, installation, and URL
 launching through the existing MCP tools. A real-device run requires a paired,

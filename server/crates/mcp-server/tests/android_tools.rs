@@ -321,6 +321,22 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
         "Submit"
     );
 
+    let filtered_elements = server
+        .handle(request(
+            15,
+            "tools/call",
+            json!({
+                "name": "mobile_list_elements_on_screen",
+                "arguments": { "deviceId": "emulator-5554", "filter": "sUbMiT" }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        filtered_elements["result"]["structuredContent"]["elements"][0]["text"],
+        "Submit"
+    );
+
     let swipe = server
         .handle(request(
             10,

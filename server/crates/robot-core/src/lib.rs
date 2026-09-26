@@ -109,6 +109,37 @@ pub trait Robot: Send + Sync {
     async fn install_app(&self, device_id: &str, apk_path: &str) -> Result<(), RobotError>;
     async fn uninstall_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError>;
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError>;
+    /// Lists elements whose visible accessibility fields contain `filter`.
+    ///
+    /// Drivers with native query support should override this so the platform can
+    /// avoid materializing an entire UI tree. The default preserves support for
+    /// drivers that can only return their complete tree.
+    async fn list_elements_filtered(
+        &self,
+        device_id: &str,
+        filter: Option<&str>,
+        max_results: Option<usize>,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        let mut elements = self.list_elements(device_id).await?;
+        if let Some(filter) = filter {
+            let filter = filter.to_lowercase();
+            elements.retain(|element| {
+                [
+                    Some(&element.class_name),
+                    element.resource_id.as_ref(),
+                    element.text.as_ref(),
+                    element.content_description.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|value| value.to_lowercase().contains(&filter))
+            });
+        }
+        if let Some(max_results) = max_results {
+            elements.truncate(max_results);
+        }
+        Ok(elements)
+    }
 }
 
 /// Routes a device operation to the driver which currently owns that ID.
@@ -197,6 +228,18 @@ impl Robot for RobotRegistry {
     }
     async fn list_elements(&self, id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.driver_for(id).await?.list_elements(id).await
+    }
+
+    async fn list_elements_filtered(
+        &self,
+        id: &str,
+        filter: Option<&str>,
+        max_results: Option<usize>,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        self.driver_for(id)
+            .await?
+            .list_elements_filtered(id, filter, max_results)
+            .await
     }
 }
 

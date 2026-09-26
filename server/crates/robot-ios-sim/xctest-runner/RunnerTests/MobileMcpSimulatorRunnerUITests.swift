@@ -36,7 +36,11 @@ final class MobileMcpSimulatorRunnerUITests: XCTestCase {
         start.press(forDuration: max(duration, 0.01), thenDragTo: end)
         result = ["ok": true]
       case "list-elements":
-        result = ["ok": true, "elements": elements(from: app)]
+        result = ["ok": true, "elements": elements(
+          from: app,
+          matching: environment["MOBILE_MCP_ELEMENT_FILTER"],
+          maxResults: Int(environment["MOBILE_MCP_MAX_RESULTS"] ?? "")
+        )]
       default:
         throw RunnerError.unsupported(action)
       }
@@ -61,8 +65,26 @@ final class MobileMcpSimulatorRunnerUITests: XCTestCase {
       .withOffset(CGVector(dx: x, dy: y))
   }
 
-  private func elements(from app: XCUIApplication) -> [[String: Any]] {
-    app.descendants(matching: .any).allElementsBoundByIndex.map { element in
+  private func elements(
+    from app: XCUIApplication,
+    matching filter: String?,
+    maxResults: Int?
+  ) -> [[String: Any]] {
+    let query: XCUIElementQuery
+    if let filter, !filter.isEmpty {
+      let predicate = NSPredicate(
+        format: "identifier CONTAINS[c] %@ OR label CONTAINS[c] %@ OR value CONTAINS[c] %@",
+        filter,
+        filter,
+        filter
+      )
+      query = app.descendants(matching: .any).matching(predicate)
+    } else {
+      query = app.descendants(matching: .any)
+    }
+    let count = min(query.count, max(maxResults ?? query.count, 1))
+    return (0..<count).map { index in
+      let element = query.element(boundBy: index)
       let frame = element.frame
       return [
         "className": String(describing: element.elementType),

@@ -101,7 +101,7 @@ For example:
 | `mobile_take_screenshot` | `{ "deviceId": "emulator-5554" }` | MCP `image` content (`image/png`, Base64) |
 | `mobile_click_on_screen_at_coordinates` | `{ "deviceId": "emulator-5554", "x": 100, "y": 240 }` | Text confirmation |
 | `mobile_swipe_on_screen` | `{ "deviceId": "emulator-5554", "startX": 100, "startY": 800, "endX": 100, "endY": 200 }` | Swipe confirmation; optional `durationMs` |
-| `mobile_list_elements_on_screen` | `{ "deviceId": "emulator-5554" }` | `structuredContent.elements` from the current accessibility tree |
+| `mobile_list_elements_on_screen` | `{ "deviceId": "emulator-5554", "filter": "Save", "maxResults": 20 }` | `structuredContent.elements` matching the optional case-insensitive filter, bounded by `maxResults` |
 
 ## iOS Simulator tools
 
@@ -111,7 +111,7 @@ For example:
 | `mobile_click_on_screen_at_coordinates` | `{ "deviceId": "iOS-simulator-UDID", "x": 100, "y": 240 }` | Bundled XCTest touch at the screen point |
 | `mobile_type_keys` | `{ "deviceId": "iOS-simulator-UDID", "text": "hello" }` | Bundled XCTest keyboard input |
 | `mobile_swipe_on_screen` | `{ "deviceId": "iOS-simulator-UDID", "startX": 100, "startY": 700, "endX": 100, "endY": 200 }` | Bundled XCTest touch swipe; optional `durationMs` |
-| `mobile_list_elements_on_screen` | `{ "deviceId": "iOS-simulator-UDID" }` | Normalized XCTest accessibility elements |
+| `mobile_list_elements_on_screen` | `{ "deviceId": "iOS-simulator-UDID", "filter": "Baby Shark", "maxResults": 10 }` | XCTest query is filtered natively and bounded before element materialization for fast web-view queries |
 | `mobile_start_screen_recording` | `{ "deviceId": "iOS-simulator-UDID" }` | Starts a simulator MP4 artifact |
 | `mobile_stop_screen_recording` | `{ "deviceId": "iOS-simulator-UDID" }` | Stops recording and returns the saved MP4 path |
 

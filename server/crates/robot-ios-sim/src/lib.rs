@@ -8,6 +8,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -196,7 +197,8 @@ impl IosSimulatorRobot {
         // Xcode uses a shared DerivedData directory, so concurrent UI calls must not
         // build or test against it at the same time.
         let _xctest_lock = self.xctest_lock.lock().await;
-        let output = Command::new(&self.xcodebuild_path)
+        let mut command = Command::new(&self.xcodebuild_path);
+        command
             .args([
                 "test",
                 "-project",
@@ -214,8 +216,15 @@ impl IosSimulatorRobot {
             .env("TEST_RUNNER_MOBILE_MCP_TARGET_APP_ID", target_app_id)
             .envs(runner_env)
             .stdin(Stdio::null())
-            .output()
+            .kill_on_drop(true);
+        let output = tokio::time::timeout(Duration::from_secs(45), command.output())
             .await
+            .map_err(|_| {
+                RobotError::CommandFailed(
+                    "XCTest runner timed out after 45 seconds; use filter and maxResults for web views"
+                        .into(),
+                )
+            })?
             .map_err(|error| {
                 RobotError::CommandFailed(format!(
                     "could not start bundled XCTest runner at {}: {error}",
@@ -534,9 +543,25 @@ impl Robot for IosSimulatorRobot {
         .map(|_| ())
     }
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        self.list_elements_filtered(device_id, None, None).await
+    }
+
+    async fn list_elements_filtered(
+        &self,
+        device_id: &str,
+        filter: Option<&str>,
+        max_results: Option<usize>,
+    ) -> Result<Vec<UiElement>, RobotError> {
         let app_id = self.active_app(device_id).await?;
+        let mut values = Vec::new();
+        if let Some(filter) = filter {
+            values.push(("MOBILE_MCP_ELEMENT_FILTER", filter.to_owned()));
+        }
+        if let Some(max_results) = max_results {
+            values.push(("MOBILE_MCP_MAX_RESULTS", max_results.to_string()));
+        }
         let result = self
-            .run_xctest(device_id, &app_id, "list-elements", &[])
+            .run_xctest(device_id, &app_id, "list-elements", &values)
             .await?;
         Ok(result
             .elements

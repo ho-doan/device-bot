@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::{
         Arc,
@@ -129,6 +129,24 @@ impl IosSimulatorRobot {
         ))
     }
 
+    /// Resolves an artifact path before passing it into the XCTest process.
+    ///
+    /// XCTest runs in a different working directory from the MCP server, so a
+    /// relative result path would be resolved inside the test runner instead of
+    /// the server's artifact directory.
+    fn absolute_path(path: &Path) -> Result<PathBuf, RobotError> {
+        if path.is_absolute() {
+            return Ok(path.to_owned());
+        }
+        std::env::current_dir()
+            .map(|working_directory| working_directory.join(path))
+            .map_err(|error| {
+                RobotError::CommandFailed(format!(
+                    "could not resolve XCTest artifact directory: {error}"
+                ))
+            })
+    }
+
     async fn active_app(&self, device_id: &str) -> Result<String, RobotError> {
         self.active_apps
             .lock()
@@ -163,11 +181,11 @@ impl IosSimulatorRobot {
                     "could not create XCTest artifact directory: {error}"
                 ))
             })?;
+        let artifact_dir = Self::absolute_path(&self.artifact_dir)?;
         let sequence = ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let result_path = self
-            .artifact_dir
-            .join(format!("mobile-mcp-ios-xctest-{device_id}-{sequence}.json"));
-        let derived_data = self.artifact_dir.join("xctest-derived-data");
+        let result_path =
+            artifact_dir.join(format!("mobile-mcp-ios-xctest-{device_id}-{sequence}.json"));
+        let derived_data = artifact_dir.join("xctest-derived-data");
         let project = self.xctest_project.to_string_lossy().into_owned();
         let destination = format!("platform=iOS Simulator,id={device_id}");
         let derived_data = derived_data.to_string_lossy().into_owned();
@@ -602,6 +620,14 @@ mod tests {
             Some("mp4")
         );
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn resolves_relative_xctest_artifact_paths_to_absolute_paths() {
+        let path = IosSimulatorRobot::absolute_path(Path::new("artifacts")).unwrap();
+
+        assert!(path.is_absolute());
+        assert!(path.ends_with("artifacts"));
     }
 
     #[test]

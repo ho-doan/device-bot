@@ -39,7 +39,6 @@ language_servers:
   - cpp
   - dart
   - swift
-  - typescript
   - yaml
   - kotlin
   - markdown

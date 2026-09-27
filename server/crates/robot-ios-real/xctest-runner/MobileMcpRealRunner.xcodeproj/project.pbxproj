@@ -239,7 +239,9 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = B7289UDFM4;
+				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Mobile MCP needs local network access to receive automation commands from this Mac.";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.hodoan.mobilemcp.realrunner.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -255,7 +257,9 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = B7289UDFM4;
+				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Mobile MCP needs local network access to receive automation commands from this Mac.";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.hodoan.mobilemcp.realrunner.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";

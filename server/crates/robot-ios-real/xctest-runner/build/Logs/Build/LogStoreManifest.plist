@@ -6,7 +6,7 @@
 	<integer>11</integer>
 	<key>logs</key>
 	<dict>
-		<key>AB3014C6-512D-425C-AB96-209C9490840C</key>
+		<key>5CB8C014-E1A7-4B4F-BBD5-A8F615B32604</key>
 		<dict>
 			<key>className</key>
 			<string>IDECommandLineBuildLog</string>
@@ -15,7 +15,7 @@
 			<key>domainType</key>
 			<string>Xcode.IDEActivityLogDomainType.BuildLog</string>
 			<key>fileName</key>
-			<string>AB3014C6-512D-425C-AB96-209C9490840C.xcactivitylog</string>
+			<string>5CB8C014-E1A7-4B4F-BBD5-A8F615B32604.xcactivitylog</string>
 			<key>hasPrimaryLog</key>
 			<true/>
 			<key>primaryObservable</key>
@@ -25,7 +25,7 @@
 				<key>totalNumberOfAnalyzerIssues</key>
 				<integer>0</integer>
 				<key>totalNumberOfErrors</key>
-				<integer>4</integer>
+				<integer>1</integer>
 				<key>totalNumberOfTestFailures</key>
 				<integer>0</integer>
 				<key>totalNumberOfWarnings</key>
@@ -40,55 +40,13 @@
 			<key>signature</key>
 			<string>Building project MobileMcpRealRunner for testing with scheme MobileMcpRealRunner</string>
 			<key>timeStartedRecording</key>
-			<real>812177199.52828097</real>
+			<real>812177249.22249198</real>
 			<key>timeStoppedRecording</key>
-			<real>812177206.54612398</real>
+			<real>812177258.44348097</real>
 			<key>title</key>
 			<string>Building project MobileMcpRealRunner for testing with scheme MobileMcpRealRunner</string>
 			<key>uniqueIdentifier</key>
-			<string>AB3014C6-512D-425C-AB96-209C9490840C</string>
-		</dict>
-		<key>EC3E6D80-32CA-45AB-9BD5-33B8F49E3B29</key>
-		<dict>
-			<key>className</key>
-			<string>IDECommandLineBuildLog</string>
-			<key>documentTypeString</key>
-			<string>&lt;nil&gt;</string>
-			<key>domainType</key>
-			<string>Xcode.IDEActivityLogDomainType.BuildLog</string>
-			<key>fileName</key>
-			<string>EC3E6D80-32CA-45AB-9BD5-33B8F49E3B29.xcactivitylog</string>
-			<key>hasPrimaryLog</key>
-			<true/>
-			<key>primaryObservable</key>
-			<dict>
-				<key>highLevelStatus</key>
-				<string>E</string>
-				<key>totalNumberOfAnalyzerIssues</key>
-				<integer>0</integer>
-				<key>totalNumberOfErrors</key>
-				<integer>4</integer>
-				<key>totalNumberOfTestFailures</key>
-				<integer>0</integer>
-				<key>totalNumberOfWarnings</key>
-				<integer>0</integer>
-			</dict>
-			<key>schemeIdentifier-containerName</key>
-			<string>MobileMcpRealRunner project</string>
-			<key>schemeIdentifier-schemeName</key>
-			<string>MobileMcpRealRunner</string>
-			<key>schemeIdentifier-sharedScheme</key>
-			<integer>1</integer>
-			<key>signature</key>
-			<string>Building project MobileMcpRealRunner for testing with scheme MobileMcpRealRunner</string>
-			<key>timeStartedRecording</key>
-			<real>812177161.54687405</real>
-			<key>timeStoppedRecording</key>
-			<real>812177167.890365</real>
-			<key>title</key>
-			<string>Building project MobileMcpRealRunner for testing with scheme MobileMcpRealRunner</string>
-			<key>uniqueIdentifier</key>
-			<string>EC3E6D80-32CA-45AB-9BD5-33B8F49E3B29</string>
+			<string>5CB8C014-E1A7-4B4F-BBD5-A8F615B32604</string>
 		</dict>
 	</dict>
 </dict>

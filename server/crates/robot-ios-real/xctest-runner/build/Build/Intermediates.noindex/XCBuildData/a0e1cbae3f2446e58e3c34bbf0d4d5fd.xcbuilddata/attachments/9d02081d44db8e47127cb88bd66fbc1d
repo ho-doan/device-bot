@@ -1,4 +1,0 @@
-module device_kit_lib_xctest {
-header "device_kit_lib_xctest-Swift.h"
-export *
-}

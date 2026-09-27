@@ -30,7 +30,10 @@ pub struct RobotDevice {
 #[serde(rename_all = "lowercase")]
 pub enum Platform {
     Android,
+    Chrome,
     Ios,
+    Macos,
+    Windows,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

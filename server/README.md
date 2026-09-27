@@ -9,7 +9,7 @@ part of the MCP request path.
 
 Phases 0–3 and the Phase 5 Flutter companion MVP are implemented:
 
-- a Cargo workspace with protocol, server, core robot, Android-driver, and iOS Simulator-driver crates;
+- a Cargo workspace with protocol, server, core robot, Android/iOS drivers, native macOS/Windows drivers, and a Chrome DevTools driver;
 - newline-delimited JSON-RPC 2.0 over stdio;
 - Streamable HTTP on an explicit `--listen HOST:PORT` endpoint, with JSON or
   single-message SSE responses and optional bearer authentication;
@@ -137,6 +137,41 @@ an MCP driver error and never fall back to controlling the host UI.
 
 Device-driver failures and invalid tool arguments return a normal MCP tool
 result with `isError: true`, so clients can present actionable retry feedback.
+
+## Desktop and Chrome robots
+
+The macOS and Windows drivers expose their local host only on their respective
+operating systems. They support screenshots, tap/keyboard input, application
+launching, and opening URLs; Windows additionally supports drag gestures. The
+operating system may require accessibility or UI-automation permission for input.
+Chrome is exposed only when a DevTools endpoint is available. Start Chrome with
+remote debugging, for example:
+
+```sh
+google-chrome --remote-debugging-port=9222
+```
+
+Set `MOBILE_MCP_CHROME_DEBUG_ADDRESS` to use a different endpoint. Each debuggable
+page appears as a `chrome:<target-id>` device and supports screenshots, mouse/keyboard
+input, URL navigation, and DOM-backed element discovery.
+
+`mobile_start_screen_recording` on macOS writes an MP4 from AVFoundation and
+requests Screen Recording permission automatically. The first request can require
+the user to approve macOS's prompt and retry. Chrome recording also writes an MP4
+from DevTools screenshots. Both recording drivers require `ffmpeg` (set
+`MOBILE_MCP_FFMPEG_PATH` when it is not on `PATH`).
+
+Install the Chrome video dependency through the server itself on macOS:
+
+```sh
+cargo run -p mobile-mcp-server -- --install-chrome-recording-tools
+```
+
+You can request the macOS permission before starting the server:
+
+```sh
+cargo run -p mobile-mcp-server -- --request-screen-recording-permission
+```
 
 ## Validate
 

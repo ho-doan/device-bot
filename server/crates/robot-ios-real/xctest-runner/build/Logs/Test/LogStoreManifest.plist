@@ -5,6 +5,49 @@
 	<key>logFormatVersion</key>
 	<integer>11</integer>
 	<key>logs</key>
-	<dict/>
+	<dict>
+		<key>FF1AB41F-CEDF-4CAF-AE08-13FB16B44743</key>
+		<dict>
+			<key>className</key>
+			<string>IDESchemeActionsInvocationRecord</string>
+			<key>documentTypeString</key>
+			<string>&lt;nil&gt;</string>
+			<key>domainType</key>
+			<string>com.apple.dt.unit.cocoaUnitTest</string>
+			<key>fileName</key>
+			<string>Test-MobileMcpRealRunner-2026.09.27_12-05-20-+0700.xcresult</string>
+			<key>hasPrimaryLog</key>
+			<true/>
+			<key>primaryObservable</key>
+			<dict>
+				<key>highLevelStatus</key>
+				<string>E</string>
+				<key>totalNumberOfAnalyzerIssues</key>
+				<integer>0</integer>
+				<key>totalNumberOfErrors</key>
+				<integer>1</integer>
+				<key>totalNumberOfTestFailures</key>
+				<integer>0</integer>
+				<key>totalNumberOfWarnings</key>
+				<integer>0</integer>
+			</dict>
+			<key>schemeIdentifier-containerName</key>
+			<string>MobileMcpRealRunner project</string>
+			<key>schemeIdentifier-schemeName</key>
+			<string>MobileMcpRealRunner</string>
+			<key>schemeIdentifier-sharedScheme</key>
+			<integer>1</integer>
+			<key>signature</key>
+			<string>Test MobileMcpRealRunner</string>
+			<key>timeStartedRecording</key>
+			<real>812178320.56021297</real>
+			<key>timeStoppedRecording</key>
+			<real>0.0</real>
+			<key>title</key>
+			<string>Test MobileMcpRealRunner</string>
+			<key>uniqueIdentifier</key>
+			<string>FF1AB41F-CEDF-4CAF-AE08-13FB16B44743</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

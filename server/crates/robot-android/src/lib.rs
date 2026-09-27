@@ -5,8 +5,12 @@
 
 use std::{
     collections::HashMap,
+    path::PathBuf,
     process::Stdio,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use async_trait::async_trait;
@@ -17,10 +21,18 @@ use quick_xml::{
     Reader,
     events::{BytesStart, Event},
 };
-use tokio::process::Command;
+use tokio::{process::Command, sync::Mutex};
 use url::Url;
 
 static TREE_DUMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone)]
+struct ActiveRecording {
+    device_path: String,
+    artifact_path: PathBuf,
+    pid: u32,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandOutput {
@@ -65,25 +77,58 @@ impl CommandRunner for TokioCommandRunner {
 #[derive(Debug, Clone)]
 pub struct AndroidRobot<R = TokioCommandRunner> {
     adb_path: String,
+    artifact_dir: PathBuf,
+    recordings: Arc<Mutex<HashMap<String, ActiveRecording>>>,
     runner: R,
 }
 
 impl AndroidRobot<TokioCommandRunner> {
-    pub fn new(adb_path: impl Into<String>) -> Self {
-        Self::with_runner(adb_path, TokioCommandRunner)
+    pub fn new(adb_path: impl Into<String>, artifact_dir: impl Into<PathBuf>) -> Self {
+        Self::with_runner_and_artifact_dir(adb_path, artifact_dir, TokioCommandRunner)
     }
 }
 
 impl<R> AndroidRobot<R> {
     pub fn with_runner(adb_path: impl Into<String>, runner: R) -> Self {
+        Self::with_runner_and_artifact_dir(adb_path, "artifacts", runner)
+    }
+
+    pub fn with_runner_and_artifact_dir(
+        adb_path: impl Into<String>,
+        artifact_dir: impl Into<PathBuf>,
+        runner: R,
+    ) -> Self {
         Self {
             adb_path: adb_path.into(),
+            artifact_dir: artifact_dir.into(),
+            recordings: Arc::default(),
             runner,
         }
     }
 
     pub fn adb_path(&self) -> &str {
         &self.adb_path
+    }
+
+    fn next_recording(&self, device_id: &str) -> ActiveRecording {
+        let sequence = RECORDING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let safe_device_id = device_id
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        ActiveRecording {
+            device_path: format!("/sdcard/mobile-mcp-{sequence}.mp4"),
+            artifact_path: self.artifact_dir.join(format!(
+                "mobile-mcp-android-recording-{safe_device_id}-{sequence}.mp4"
+            )),
+            pid: 0,
+        }
     }
 }
 
@@ -95,6 +140,98 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
             RobotError::CommandFailed(format!("adb devices returned invalid UTF-8: {error}"))
         })?;
         Ok(parse_adb_devices(&text))
+    }
+
+    async fn start_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
+        ensure_device_id(device_id)?;
+        tokio::fs::create_dir_all(&self.artifact_dir)
+            .await
+            .map_err(|error| {
+                RobotError::CommandFailed(format!("could not create recording directory: {error}"))
+            })?;
+
+        let mut recordings = self.recordings.lock().await;
+        if recordings.contains_key(device_id) {
+            return Err(RobotError::InvalidInput(format!(
+                "a screen recording is already running for device {device_id}"
+            )));
+        }
+
+        let mut recording = self.next_recording(device_id);
+        self.run_adb(&[
+            "-s".into(),
+            device_id.into(),
+            "shell".into(),
+            "rm".into(),
+            "-f".into(),
+            recording.device_path.clone(),
+        ])
+        .await?;
+        let output = self
+            .run_adb(&[
+                "-s".into(),
+                device_id.into(),
+                "shell".into(),
+                format!(
+                    "setsid screenrecord --time-limit 1800 {} >/dev/null 2>&1 & echo $!",
+                    recording.device_path
+                ),
+            ])
+            .await?;
+        let pid = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| {
+                RobotError::CommandFailed(
+                    "adb did not return a screenrecord process id; device may not support screenrecord"
+                        .into(),
+                )
+            })?;
+        recording.pid = pid;
+        let artifact_path = recording.artifact_path.to_string_lossy().into_owned();
+        recordings.insert(device_id.into(), recording);
+        Ok(artifact_path)
+    }
+
+    async fn stop_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
+        ensure_device_id(device_id)?;
+        let Some(recording) = self.recordings.lock().await.remove(device_id) else {
+            return Err(RobotError::InvalidInput(format!(
+                "no screen recording is running for device {device_id}"
+            )));
+        };
+        self.run_adb(&[
+            "-s".into(),
+            device_id.into(),
+            "shell".into(),
+            format!(
+                "kill -INT {}; i=0; while kill -0 {} 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done",
+                recording.pid, recording.pid
+            ),
+        ])
+        .await?;
+        let device_path = recording.device_path.clone();
+        self.run_adb(&[
+            "-s".into(),
+            device_id.into(),
+            "pull".into(),
+            device_path.clone(),
+            recording.artifact_path.to_string_lossy().into_owned(),
+        ])
+        .await?;
+        // The transferred MP4 is now durable on the host. Best-effort cleanup
+        // avoids accumulating recordings on a physical device.
+        let _ = self
+            .run_adb(&[
+                "-s".into(),
+                device_id.into(),
+                "shell".into(),
+                "rm".into(),
+                "-f".into(),
+                device_path,
+            ])
+            .await;
+        Ok(recording.artifact_path.to_string_lossy().into_owned())
     }
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
@@ -731,5 +868,34 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn records_with_a_device_pid_and_pulls_the_final_mp4() {
+        let runner = FakeRunner::new([
+            successful(vec![]),
+            successful("4242\n"),
+            successful(vec![]),
+            successful(vec![]),
+            successful(vec![]),
+        ]);
+        let artifact_dir = std::env::temp_dir().join("mobile-robot-android-recording-test");
+        let robot = AndroidRobot::with_runner_and_artifact_dir("adb-test", &artifact_dir, runner);
+
+        let started = robot.start_screen_recording("emulator-5554").await.unwrap();
+        let stopped = robot.stop_screen_recording("emulator-5554").await.unwrap();
+
+        assert_eq!(started, stopped);
+        assert!(stopped.ends_with(".mp4"));
+        let calls = robot.runner.calls.lock().unwrap();
+        assert_eq!(calls.len(), 5);
+        assert_eq!(calls[0].1[2..5], ["shell", "rm", "-f"]);
+        assert_eq!(calls[1].1[2], "shell");
+        assert!(calls[1].1[3].starts_with("setsid screenrecord --time-limit 1800 /sdcard/"));
+        assert_eq!(calls[2].1[2], "shell");
+        assert!(calls[2].1[3].starts_with("kill -INT 4242"));
+        assert_eq!(calls[3].1[2], "pull");
+        assert_eq!(calls[3].1[4], stopped);
+        assert_eq!(calls[4].1[2..5], ["shell", "rm", "-f"]);
     }
 }

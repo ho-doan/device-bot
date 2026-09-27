@@ -1,0 +1,4 @@
+Target dependency graph (2 targets)
+Target 'MobileMcpSimulatorRunnerUITests' in project 'MobileMcpSimulatorRunner'
+➜ Explicit dependency on target 'MobileMcpSimulatorRunnerHost' in project 'MobileMcpSimulatorRunner'
+Target 'MobileMcpSimulatorRunnerHost' in project 'MobileMcpSimulatorRunner' (no dependencies)

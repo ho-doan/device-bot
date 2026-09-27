@@ -41,6 +41,12 @@ final class MobileMcpSimulatorRunnerUITests: XCTestCase {
           matching: environment["MOBILE_MCP_ELEMENT_FILTER"],
           maxResults: Int(environment["MOBILE_MCP_MAX_RESULTS"] ?? "")
         )]
+      case "batch":
+        guard let encoded = environment["MOBILE_MCP_BATCH"],
+              let actions = try? JSONDecoder().decode([BatchAction].self, from: Data(encoded.utf8))
+        else { throw RunnerError.missing("batch") }
+        for action in actions { try execute(action, in: app) }
+        result = ["ok": true]
       default:
         throw RunnerError.unsupported(action)
       }
@@ -63,6 +69,23 @@ final class MobileMcpSimulatorRunnerUITests: XCTestCase {
     }
     return app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
       .withOffset(CGVector(dx: x, dy: y))
+  }
+
+  private func execute(_ action: BatchAction, in app: XCUIApplication) throws {
+    switch action.type {
+    case "tap":
+      guard let x = action.x, let y = action.y else { throw RunnerError.invalidCoordinate }
+      app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: x, dy: y)).tap()
+    case "type":
+      guard let text = action.text, !text.isEmpty else { throw RunnerError.missing("text") }
+      app.typeText(text)
+    case "swipe":
+      guard let startX = action.startX, let startY = action.startY, let endX = action.endX, let endY = action.endY else { throw RunnerError.invalidCoordinate }
+      let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: startX, dy: startY))
+      let end = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: endX, dy: endY))
+      start.press(forDuration: max(Double(action.durationMs ?? 100) / 1000, 0.01), thenDragTo: end)
+    default: throw RunnerError.unsupported(action.type)
+    }
   }
 
   private func elements(
@@ -105,6 +128,18 @@ final class MobileMcpSimulatorRunnerUITests: XCTestCase {
     let data = try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
     try data.write(to: URL(fileURLWithPath: path), options: .atomic)
   }
+}
+
+private struct BatchAction: Decodable {
+  let type: String
+  let x: Double?
+  let y: Double?
+  let text: String?
+  let startX: Double?
+  let startY: Double?
+  let endX: Double?
+  let endY: Double?
+  let durationMs: UInt64?
 }
 
 private enum RunnerError: LocalizedError {

@@ -6,15 +6,47 @@ use mobile_robot_core::RobotRegistry;
 use mobile_robot_ios_real::IosRealRobot;
 use mobile_robot_ios_sim::IosSimulatorRobot;
 
+fn android_adb_path() -> String {
+    if let Ok(path) = std::env::var("ANDROID_ADB_PATH") {
+        return path;
+    }
+    let executable = if cfg!(windows) { "adb.exe" } else { "adb" };
+    for variable in ["ANDROID_SDK_ROOT", "ANDROID_HOME"] {
+        if let Some(path) = std::env::var_os(variable)
+            .map(std::path::PathBuf::from)
+            .map(|path| path.join("platform-tools").join(executable))
+            .filter(|path| path.is_file())
+        {
+            return path.to_string_lossy().into_owned();
+        }
+    }
+    executable.into()
+}
+
+fn go_ios_path() -> String {
+    if let Ok(path) = std::env::var("GO_IOS_PATH") {
+        return path;
+    }
+
+    let local_tool = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("tools/go/bin/go-ios");
+    if local_tool.is_file() {
+        return local_tool.to_string_lossy().into_owned();
+    }
+
+    "ios".into()
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let adb_path = std::env::var("ANDROID_ADB_PATH").unwrap_or_else(|_| "adb".into());
+    let adb_path = android_adb_path();
     let xcrun_path = std::env::var("XCRUN_PATH").unwrap_or_else(|_| "xcrun".into());
-    let go_ios_path = std::env::var("GO_IOS_PATH").unwrap_or_else(|_| "ios".into());
+    let go_ios_path = go_ios_path();
     let artifact_dir =
         std::env::var("MOBILE_MCP_ARTIFACT_DIR").unwrap_or_else(|_| "artifacts".into());
     let drivers: Vec<Arc<dyn mobile_robot_core::Robot>> = vec![
-        Arc::new(AndroidRobot::new(adb_path)),
+        Arc::new(AndroidRobot::new(adb_path, artifact_dir.clone())),
         Arc::new(IosRealRobot::new(go_ios_path)),
         Arc::new(IosSimulatorRobot::new(xcrun_path, artifact_dir)),
     ];

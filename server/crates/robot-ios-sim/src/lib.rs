@@ -13,7 +13,8 @@ use std::{
 
 use async_trait::async_trait;
 use mobile_robot_core::{
-    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
+    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiAction, UiElement,
+    UiRunnerStatus,
 };
 use serde::Deserialize;
 use tokio::{
@@ -186,7 +187,10 @@ impl IosSimulatorRobot {
         let sequence = ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let result_path =
             artifact_dir.join(format!("mobile-mcp-ios-xctest-{device_id}-{sequence}.json"));
-        let derived_data = artifact_dir.join("xctest-derived-data");
+        // Keep DerivedData independent from request artifacts so every MCP server
+        // process can reuse the compiled XCTest runner. The mutex below serializes
+        // access to this shared cache.
+        let derived_data = std::env::temp_dir().join("mobile-mcp-ios-xctest-derived-data");
         let project = self.xctest_project.to_string_lossy().into_owned();
         let destination = format!("platform=iOS Simulator,id={device_id}");
         let derived_data = derived_data.to_string_lossy().into_owned();
@@ -200,7 +204,7 @@ impl IosSimulatorRobot {
         let mut command = Command::new(&self.xcodebuild_path);
         command
             .args([
-                "test",
+                "test-without-building",
                 "-project",
                 &project,
                 "-scheme",
@@ -544,6 +548,47 @@ impl Robot for IosSimulatorRobot {
     }
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.list_elements_filtered(device_id, None, None).await
+    }
+
+    async fn execute_ui_actions(
+        &self,
+        device_id: &str,
+        actions: &[UiAction],
+    ) -> Result<(), RobotError> {
+        if actions.is_empty() {
+            return Err(RobotError::InvalidInput("actions must not be empty".into()));
+        }
+        let app_id = self.active_app(device_id).await?;
+        let batch = serde_json::to_string(actions)
+            .map_err(|error| RobotError::InvalidInput(error.to_string()))?;
+        self.run_xctest(device_id, &app_id, "batch", &[("MOBILE_MCP_BATCH", batch)])
+            .await
+            .map(|_| ())
+    }
+
+    async fn ui_runner_status(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
+        Self::valid_device_id(device_id)?;
+        let products =
+            std::env::temp_dir().join("mobile-mcp-ios-xctest-derived-data/Build/Products");
+        let ready = std::fs::read_dir(&products)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "xctestrun")
+            });
+        Ok(UiRunnerStatus {
+            ready,
+            detail: if ready {
+                "XCTest cache ready for test-without-building".into()
+            } else {
+                "XCTest cache missing; prewarm before recording".into()
+            },
+        })
     }
 
     async fn list_elements_filtered(

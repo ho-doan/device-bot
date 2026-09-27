@@ -1,0 +1,18 @@
+{
+  "" : {
+    "diagnostics" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/build/MobileMcpSimulatorRunner.build/Release-iphonesimulator/MobileMcpSimulatorRunnerUITests.build/Objects-normal/arm64/MobileMcpSimulatorRunnerUITests-master.dia",
+    "emit-module-dependencies" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/build/MobileMcpSimulatorRunner.build/Release-iphonesimulator/MobileMcpSimulatorRunnerUITests.build/Objects-normal/arm64/MobileMcpSimulatorRunnerUITests-master-emit-module.d",
+    "emit-module-diagnostics" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/build/MobileMcpSimulatorRunner.build/Release-iphonesimulator/MobileMcpSimulatorRunnerUITests.build/Objects-normal/arm64/MobileMcpSimulatorRunnerUITests-master-emit-module.dia",
+    "swift-dependencies" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/build/MobileMcpSimulatorRunner.build/Release-iphonesimulator/MobileMcpSimulatorRunnerUITests.build/Objects-normal/arm64/MobileMcpSimulatorRunnerUITests-master.swiftdeps"
+  },
+  "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/RunnerTests/MobileMcpSimulatorRunnerUITests.swift" : {
+    "const-values" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/build/MobileMcpSimulatorRunner.build/Release-iphonesimulator/MobileMcpSimulatorRunnerUITests.build/Objects-normal/arm64/MobileMcpSimulatorRunnerUITests.swiftconstvalues",
+    "dependencies" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/build/MobileMcpSimulatorRunner.build/Release-iphonesimulator/MobileMcpSimulatorRunnerUITests.build/Objects-normal/arm64/MobileMcpSimulatorRunnerUITests.d",
+    "diagnostics" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/build/MobileMcpSimulatorRunner.build/Release-iphonesimulator/MobileMcpSimulatorRunnerUITests.build/Objects-normal/arm64/MobileMcpSimulatorRunnerUITests.dia",
+    "index-unit-output-path" : "/MobileMcpSimulatorRunner.build/Release-iphonesimulator/MobileMcpSimulatorRunnerUITests.build/Objects-normal/arm64/MobileMcpSimulatorRunnerUITests.o",
+    "llvm-bc" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/build/MobileMcpSimulatorRunner.build/Release-iphonesimulator/MobileMcpSimulatorRunnerUITests.build/Objects-normal/arm64/MobileMcpSimulatorRunnerUITests.bc",
+    "object" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/build/MobileMcpSimulatorRunner.build/Release-iphonesimulator/MobileMcpSimulatorRunnerUITests.build/Objects-normal/arm64/MobileMcpSimulatorRunnerUITests.o",
+    "swift-dependencies" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/build/MobileMcpSimulatorRunner.build/Release-iphonesimulator/MobileMcpSimulatorRunnerUITests.build/Objects-normal/arm64/MobileMcpSimulatorRunnerUITests.swiftdeps",
+    "swiftmodule" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/build/MobileMcpSimulatorRunner.build/Release-iphonesimulator/MobileMcpSimulatorRunnerUITests.build/Objects-normal/arm64/MobileMcpSimulatorRunnerUITests~partial.swiftmodule"
+  }
+}

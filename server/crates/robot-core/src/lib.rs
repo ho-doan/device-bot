@@ -70,6 +70,32 @@ pub struct UiElement {
     pub enabled: bool,
 }
 
+/// A UI input operation that can be executed in one driver session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum UiAction {
+    Tap {
+        x: f64,
+        y: f64,
+    },
+    Type {
+        text: String,
+    },
+    Swipe {
+        start_x: f64,
+        start_y: f64,
+        end_x: f64,
+        end_y: f64,
+        duration_ms: Option<u64>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiRunnerStatus {
+    pub ready: bool,
+    pub detail: String,
+}
+
 /// Async, platform-independent device control boundary.
 #[async_trait]
 pub trait Robot: Send + Sync {
@@ -108,6 +134,45 @@ pub trait Robot: Send + Sync {
     ) -> Result<(), RobotError>;
     async fn install_app(&self, device_id: &str, apk_path: &str) -> Result<(), RobotError>;
     async fn uninstall_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError>;
+    async fn execute_ui_actions(
+        &self,
+        device_id: &str,
+        actions: &[UiAction],
+    ) -> Result<(), RobotError> {
+        for action in actions {
+            match action {
+                UiAction::Tap { x, y } => self.tap(device_id, Point { x: *x, y: *y }).await?,
+                UiAction::Type { text } => self.type_text(device_id, text).await?,
+                UiAction::Swipe {
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    duration_ms,
+                } => {
+                    self.swipe(
+                        device_id,
+                        Point {
+                            x: *start_x,
+                            y: *start_y,
+                        },
+                        Point {
+                            x: *end_x,
+                            y: *end_y,
+                        },
+                        *duration_ms,
+                    )
+                    .await?
+                }
+            }
+        }
+        Ok(())
+    }
+    async fn ui_runner_status(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "UI runner status is not supported for device {device_id}"
+        )))
+    }
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError>;
     /// Lists elements whose visible accessibility fields contain `filter`.
     ///
@@ -225,6 +290,15 @@ impl Robot for RobotRegistry {
     }
     async fn uninstall_app(&self, id: &str, app: &str) -> Result<(), RobotError> {
         self.driver_for(id).await?.uninstall_app(id, app).await
+    }
+    async fn execute_ui_actions(&self, id: &str, actions: &[UiAction]) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .execute_ui_actions(id, actions)
+            .await
+    }
+    async fn ui_runner_status(&self, id: &str) -> Result<UiRunnerStatus, RobotError> {
+        self.driver_for(id).await?.ui_runner_status(id).await
     }
     async fn list_elements(&self, id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.driver_for(id).await?.list_elements(id).await

@@ -2,10 +2,12 @@
 
 mod app;
 mod arguments;
+mod batch;
 mod device;
 mod input;
 mod navigation;
 mod recording;
+mod runner_status;
 mod screen;
 mod ui;
 
@@ -30,6 +32,8 @@ impl ToolRegistry {
             navigation::definition(),
             input::definition(),
             ui::definition(),
+            batch::definition(),
+            runner_status::definition(),
         ];
         definitions.extend(app::definitions());
         definitions.extend(recording::definitions());
@@ -55,6 +59,8 @@ impl ToolRegistry {
             screen::TAP_NAME => screen::tap(&self.robot, &params.arguments).await,
             screen::SWIPE_NAME => screen::swipe(&self.robot, &params.arguments).await,
             ui::LIST_ELEMENTS_NAME => ui::list_elements(&self.robot, &params.arguments).await,
+            batch::NAME => batch::execute(&self.robot, &params.arguments).await,
+            runner_status::NAME => runner_status::get(&self.robot, &params.arguments).await,
             name => {
                 return Err(mobile_mcp_protocol::RpcError::invalid_params(format!(
                     "Unknown tool: {name}"

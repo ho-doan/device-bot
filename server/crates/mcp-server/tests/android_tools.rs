@@ -190,6 +190,8 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
             "mobile_open_url",
             "mobile_type_keys",
             "mobile_list_elements_on_screen",
+            "mobile_execute_ui_actions",
+            "mobile_get_ui_runner_status",
             "mobile_launch_app",
             "mobile_install_app",
             "mobile_uninstall_app",

@@ -1,0 +1,10 @@
+---
+triple:          'x86_64-apple-darwin'
+binary-path:     '/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-sim/xctest-runner/build/Release-iphonesimulator/MobileMcpSimulatorRunnerHost.app/MobileMcpSimulatorRunnerHost'
+relocations:
+  - { offset: 0x5C377, size: 0x8, addend: 0x0, symName: '_$s28MobileMcpSimulatorRunnerHost0dE11AppDelegateCMa', symObjAddr: 0x1E0, symBinAddr: 0x100000EF0, symSize: 0x14 }
+  - { offset: 0x5C3E4, size: 0x8, addend: 0x0, symName: '_$s28MobileMcpSimulatorRunnerHost0dE11AppDelegateC11application_29didFinishLaunchingWithOptionsSbSo13UIApplicationC_SDySo0n6LaunchM3KeyaypGSgtFTo', symObjAddr: 0x10, symBinAddr: 0x100000DF0, symSize: 0x10 }
+  - { offset: 0x5C41D, size: 0x8, addend: 0x0, symName: '_$s28MobileMcpSimulatorRunnerHost0dE11AppDelegateCACycfcTo', symObjAddr: 0x70, symBinAddr: 0x100000E00, symSize: 0x30 }
+  - { offset: 0x5C472, size: 0x8, addend: 0x0, symName: '_$s28MobileMcpSimulatorRunnerHost0dE11AppDelegateCfD', symObjAddr: 0x120, symBinAddr: 0x100000E30, symSize: 0x30 }
+  - { offset: 0x5C4AC, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x150, symBinAddr: 0x100000E60, symSize: 0x90 }
+...

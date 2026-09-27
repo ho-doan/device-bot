@@ -278,9 +278,12 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
         ))
         .await
         .unwrap();
-    assert_eq!(
-        opened["result"]["content"][0]["text"],
-        "Opened https://www.youtube.com"
+    assert_eq!(opened["result"]["isError"], true);
+    assert!(
+        opened["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("only for a chrome:<target-id>")
     );
 
     let typed = server
@@ -302,7 +305,6 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
         robot.actions.lock().unwrap().as_slice(),
         [
             "launch:emulator-5554:com.android.chrome",
-            "open:emulator-5554:https://www.youtube.com:com.android.chrome",
             "type:emulator-5554:babyshake"
         ]
     );
@@ -391,7 +393,7 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
         "Uninstalled com.example.app"
     );
     assert_eq!(
-        &robot.actions.lock().unwrap()[3..],
+        &robot.actions.lock().unwrap()[2..],
         [
             "swipe:emulator-5554:10,20,30,40:500",
             "install:emulator-5554:/tmp/example.apk",
@@ -431,7 +433,7 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
         "Screen recording saved: artifacts/emulator-5554.mp4"
     );
     assert_eq!(
-        &robot.actions.lock().unwrap()[6..],
+        &robot.actions.lock().unwrap()[5..],
         ["record-start:emulator-5554", "record-stop:emulator-5554"]
     );
 }

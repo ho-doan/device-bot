@@ -20,9 +20,9 @@ Phases 0–3 and the Phase 5 Flutter companion MVP are implemented:
 - a separate local admin API and Flutter companion source tree for inspecting
   connected devices, auth/configuration state, and recent MCP activity.
 
-Real iOS-device deployment is intentionally deferred until the final phase.
-The existing `robot-ios-real` crate is only an isolated adapter foundation; it
-is not part of the current deployment target.
+The server also registers the real-iOS XCTest, macOS, Windows, and Chrome
+drivers. Registration does **not** mean that every driver has feature parity;
+the platform matrix below is the source of truth.
 
 The supported MCP protocol version is `2025-11-25`.
 
@@ -87,6 +87,39 @@ For example:
 {"jsonrpc":"2.0","id":2,"method":"tools/list"}
 ```
 
+## Platform support and known gaps
+
+`mobile_launch_app` is the platform operation: use it to launch an installed
+application (including Chrome) on Android, iOS, macOS, or Windows. Browser
+navigation belongs to the **Chrome DevTools** robot, not to an operating-system
+platform robot. In particular, a client should not use `mobile_open_url` as a
+claim that macOS, Windows, Android, or iOS browser automation is supported.
+
+| Target | Implemented operations | Not implemented / prerequisite |
+| --- | --- | --- |
+| Android device or emulator | discovery, app install/uninstall/launch, screenshot, MP4 recording, tap, text, swipe, accessibility elements | Requires ADB and a connected or booted device. Chrome UI flow still requires the Chrome DevTools robot. |
+| iOS Simulator | boot, app install/uninstall/launch, screenshot, MP4 recording, tap, text, swipe, XCTest elements | Requires Xcode and the bundled XCTest runner to be buildable for the target app. Chrome UI flow still requires the Chrome DevTools robot. |
+| Real iOS device | CoreDevice discovery, install/uninstall, app launch, and XCTest screenshot/input/swipe/elements when the signed XCTest agent is reachable | No real-device screen recording. A wireless device is discoverable, but its XCTest agent must bind to a LAN-reachable MCP host; the default loopback bind is not sufficient. |
+| macOS host | screenshot, MP4 recording, launch app, tap, text, accessibility elements | No installer/uninstaller or drag. Requires Screen Recording permission for recording and Accessibility permission for input. |
+| Windows host | screenshot, launch app, tap, text, drag | No recording, installer/uninstaller, or accessibility-tree discovery. The temporary OmniParser coordinate fallback for Flutter is not implemented. Requires an interactive Windows session and UI-automation access. |
+| Chrome DevTools page | screenshot, MP4 recording, click, text, drag, DOM elements, navigate the attached page | It requires a reachable DevTools endpoint. |
+
+The compatibility methods named `open_url` still exist in several platform
+drivers while this migration is underway. They are outside the supported
+platform contract above and must not be relied on; only a `chrome:<target-id>`
+device is the supported destination for `mobile_open_url`.
+
+### Required Chrome workflow
+
+The intended end-to-end sequence is:
+
+1. Call `mobile_launch_app` on the platform device to open Chrome.
+2. Ensure that the browser exposes its configured DevTools endpoint, then
+   select its `chrome:<target-id>` device from `mobile_list_available_devices`.
+3. Use the platform accessibility tree for Chrome's native controls such as
+   **New Tab** and the address bar; use the Chrome robot for page DOM elements,
+   search results, links, playback controls, and Chrome recording.
+
 ## Android tools
 
 | Tool | Arguments | Result |
@@ -96,7 +129,6 @@ For example:
 | `mobile_launch_app` | `{ "deviceId": "emulator-5554", "appId": "com.android.chrome" }` | Launch confirmation |
 | `mobile_install_app` | `{ "deviceId": "emulator-5554", "apkPath": "/host/app.apk" }` | Install/replace APK confirmation |
 | `mobile_uninstall_app` | `{ "deviceId": "emulator-5554", "appId": "com.example.app" }` | Uninstall confirmation |
-| `mobile_open_url` | `{ "deviceId": "emulator-5554", "url": "https://…", "appId": "com.android.chrome" }` | URL-open confirmation; `appId` is optional |
 | `mobile_type_keys` | `{ "deviceId": "emulator-5554", "text": "babyshake" }` | Text-input confirmation |
 | `mobile_take_screenshot` | `{ "deviceId": "emulator-5554" }` | MCP `image` content (`image/png`, Base64) |
 | `mobile_click_on_screen_at_coordinates` | `{ "deviceId": "emulator-5554", "x": 100, "y": 240 }` | Text confirmation |
@@ -126,14 +158,17 @@ management, screenshots, and recording continue to use `xcrun simctl`.
 Launch the target app with `mobile_launch_app` before the UI tools. The runner
 targets that bundle ID and returns normalized accessibility elements.
 
-## Real iOS devices (adapter foundation only)
+## Real iOS devices
 
-`robot-ios-real` is reserved for the final real-iOS phase. It uses `go-ios` for discovery and for a pre-running DeviceKit
-or WebDriverAgent UI backend. It supports device discovery, screenshots, UI
-source normalization, tap/swipe/text input, app launch, installation, and URL
-launching through the existing MCP tools. A real-device run requires a paired,
-trusted iPhone plus the signed automation runner; absent prerequisites produce
-an MCP driver error and never fall back to controlling the host UI.
+The registered real-device driver uses Apple CoreDevice for paired-device
+discovery and app lifecycle, plus the signed XCTest agent for screenshots and
+UI automation. A real-device run requires a paired, trusted iPhone and an
+agent connection back to the MCP host. For wireless devices, configure
+`MOBILE_MCP_IOS_AGENT_BIND` with a LAN-reachable address and ensure the phone
+can reach that address; `127.0.0.1` only works for a local host process, not an
+iPhone.
+
+Screen recording is not yet implemented for real iOS devices.
 
 Device-driver failures and invalid tool arguments return a normal MCP tool
 result with `isError: true`, so clients can present actionable retry feedback.
@@ -141,10 +176,13 @@ result with `isError: true`, so clients can present actionable retry feedback.
 ## Desktop and Chrome robots
 
 The macOS and Windows drivers expose their local host only on their respective
-operating systems. They support screenshots, tap/keyboard input, application
-launching, and opening URLs; Windows additionally supports drag gestures. The
-operating system may require accessibility or UI-automation permission for input.
-Chrome is exposed only when a DevTools endpoint is available. Start Chrome with
+operating systems. `mobile_launch_app` opens an installed native application;
+Windows also supports drag gestures. macOS requires Accessibility permission
+for pointer/keyboard input. Neither desktop driver currently installs apps.
+Windows also lacks recording, native element discovery, and the planned
+OmniParser coordinate fallback.
+
+Chrome is exposed when a DevTools endpoint is available. Start Chrome with
 remote debugging, for example:
 
 ```sh
@@ -161,7 +199,7 @@ the user to approve macOS's prompt and retry. Chrome recording also writes an MP
 from DevTools screenshots. Both recording drivers require `ffmpeg` (set
 `MOBILE_MCP_FFMPEG_PATH` when it is not on `PATH`).
 
-Install the Chrome video dependency through the server itself on macOS:
+Install the recording dependency through the server itself on macOS:
 
 ```sh
 cargo run -p mobile-mcp-server -- --install-chrome-recording-tools

@@ -157,9 +157,11 @@ impl Robot for WindowsRobot {
         _app_id: Option<&str>,
     ) -> Result<(), RobotError> {
         self.require_device(device_id)?;
-        self.powershell(format!("Start-Process {}", ps_quote(url)))
-            .await
-            .map(|_| ())
+        let _ = url;
+        Err(RobotError::Unsupported(
+            "URL navigation belongs to the Chrome DevTools robot; use a chrome:<target-id> device"
+                .into(),
+        ))
     }
 
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {

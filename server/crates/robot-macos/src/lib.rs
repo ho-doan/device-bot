@@ -56,6 +56,7 @@ pub struct MacosRobot {
     open_path: String,
     screencapture_path: String,
     recording: Arc<Mutex<Option<ActiveRecording>>>,
+    active_application: Arc<Mutex<Option<String>>>,
 }
 
 impl MacosRobot {
@@ -67,6 +68,7 @@ impl MacosRobot {
             open_path: "open".into(),
             screencapture_path: "screencapture".into(),
             recording: Arc::new(Mutex::new(None)),
+            active_application: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -127,6 +129,187 @@ impl MacosRobot {
         args.extend(values.iter().cloned());
         self.run(&self.osascript_path, &args).await.map(|_| ())
     }
+
+    async fn apple_script_output(
+        &self,
+        script: &str,
+        values: &[String],
+    ) -> Result<String, RobotError> {
+        let mut args = vec!["-e".into(), script.into(), "--".into()];
+        args.extend(values.iter().cloned());
+        let output = self.run(&self.osascript_path, &args).await?;
+        String::from_utf8(output).map_err(|error| {
+            RobotError::CommandFailed(format!(
+                "macOS accessibility returned invalid UTF-8: {error}"
+            ))
+        })
+    }
+
+    async fn accessibility_elements(&self) -> Result<Vec<UiElement>, RobotError> {
+        // Use the focused application's AX tree. This keeps browser UI control
+        // on the macOS robot: Chrome DevTools is not required to find buttons,
+        // address fields, links, or page controls.
+        let script = r#"
+on safeText(theValue)
+    try
+        return theValue as text
+    on error
+        return ""
+    end try
+end safeText
+
+on cleanField(theText)
+    set AppleScript's text item delimiters to {character id 30, character id 31, return, linefeed}
+    set parts to text items of theText
+    set AppleScript's text item delimiters to " "
+    return parts as text
+end cleanField
+
+on run argv
+set targetApp to item 1 of argv
+tell application "System Events"
+    if targetApp is "" then
+        set frontProcess to first application process whose frontmost is true
+    else
+        set frontProcess to application process targetApp
+    end if
+    tell frontProcess
+        set resultLines to {}
+        try
+            set candidates to entire contents of front window
+        on error
+            set candidates to {}
+        end try
+        repeat with candidate in candidates
+            try
+                set {x, y} to position of candidate
+                set {w, h} to size of candidate
+                if w > 0 and h > 0 then
+                    set itemRole to my cleanField(my safeText(role of candidate))
+                    set itemTitle to my cleanField(my safeText(title of candidate))
+                    set itemDescription to my cleanField(my safeText(description of candidate))
+                    set itemValue to my cleanField(my safeText(value of candidate))
+                    set end of resultLines to itemRole & (character id 31) & itemTitle & (character id 31) & itemDescription & (character id 31) & itemValue & (character id 31) & x & (character id 31) & y & (character id 31) & w & (character id 31) & h
+                end if
+            end try
+        end repeat
+        set AppleScript's text item delimiters to character id 30
+        return resultLines as text
+    end tell
+end tell
+end run
+"#;
+        let application = self
+            .active_application
+            .lock()
+            .await
+            .clone()
+            .unwrap_or_default();
+        let output = self.apple_script_output(script, &[application]).await?;
+        Ok(parse_accessibility_elements(&output))
+    }
+
+    async fn accessibility_tap(&self, point: Point) -> Result<(), RobotError> {
+        // AXPress targets the smallest actionable element under the coordinate.
+        // It is more reliable than a synthetic desktop click for Chrome's tab
+        // strip and address field, while preserving coordinate-based MCP input.
+        self.apple_script(
+            r#"on run argv
+set targetX to item 2 of argv as real
+set targetY to item 3 of argv as real
+set targetApp to item 1 of argv
+tell application "System Events"
+    if targetApp is "" then
+        set frontProcess to first application process whose frontmost is true
+    else
+        set frontProcess to application process targetApp
+    end if
+    tell frontProcess
+        set bestCandidate to missing value
+        set bestArea to 0
+        try
+            set candidates to entire contents of front window
+        on error
+            set candidates to {}
+        end try
+        repeat with candidate in candidates
+            try
+                set {x, y} to position of candidate
+                set {w, h} to size of candidate
+                set candidateRole to role of candidate as text
+                set candidateArea to w * h
+                if targetX ≥ x and targetX ≤ (x + w) and targetY ≥ y and targetY ≤ (y + h) and candidateRole is in {"AXButton", "AXLink", "AXTextField", "AXRadioButton", "AXPopUpButton", "AXMenuItem"} then
+                    if bestArea is 0 or candidateArea < bestArea then
+                        set bestCandidate to candidate
+                        set bestArea to candidateArea
+                    end if
+                end if
+            end try
+        end repeat
+        if bestCandidate is not missing value then
+            try
+                perform action "AXPress" of bestCandidate
+            on error
+                click bestCandidate
+            end try
+        else
+            click at {targetX, targetY}
+        end if
+    end tell
+end tell
+end run"#,
+            &[
+                self.active_application.lock().await.clone().unwrap_or_default(),
+                point.x.round().to_string(),
+                point.y.round().to_string(),
+            ],
+        )
+        .await
+    }
+}
+
+fn parse_accessibility_elements(output: &str) -> Vec<UiElement> {
+    output
+        .trim()
+        .split('\x1e')
+        .filter_map(|line| {
+            let fields = line.split('\x1f').collect::<Vec<_>>();
+            if fields.len() != 8 {
+                return None;
+            }
+            let x = fields[4].trim().parse::<f64>().ok()?;
+            let y = fields[5].trim().parse::<f64>().ok()?;
+            let width = fields[6].trim().parse::<f64>().ok()?;
+            let height = fields[7].trim().parse::<f64>().ok()?;
+            let role = fields[0].trim();
+            let title = non_empty(fields[1]);
+            let description = non_empty(fields[2]);
+            let value = non_empty(fields[3]);
+            Some(UiElement {
+                class_name: if role.is_empty() {
+                    "AXUnknown".into()
+                } else {
+                    role.into()
+                },
+                resource_id: None,
+                text: title.or(value),
+                content_description: description,
+                bounds: mobile_robot_core::Bounds {
+                    left: x.round() as i32,
+                    top: y.round() as i32,
+                    right: (x + width).round() as i32,
+                    bottom: (y + height).round() as i32,
+                },
+                clickable: matches!(role, "AXButton" | "AXLink" | "AXMenuItem" | "AXPopUpButton"),
+                enabled: true,
+            })
+        })
+        .collect()
+}
+
+fn non_empty(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.into())
 }
 
 #[async_trait]
@@ -264,17 +447,32 @@ impl Robot for MacosRobot {
 
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
         self.require_device(device_id)?;
-        self.apple_script(
-            "on run argv\n tell application \"System Events\" to click at {(item 1 of argv as integer), (item 2 of argv as integer)}\nend run",
-            &[point.x.round().to_string(), point.y.round().to_string()],
-        ).await
+        self.accessibility_tap(point).await
     }
 
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
         self.run(&self.open_path, &["-a".into(), app_id.into()])
-            .await
-            .map(|_| ())
+            .await?;
+        let mut last_error = None;
+        for _ in 0..20 {
+            match self
+                .apple_script(
+                    "on run argv\n tell application (item 1 of argv) to activate\nend run",
+                    &[app_id.into()],
+                )
+                .await
+            {
+                Ok(()) => {
+                    *self.active_application.lock().await = Some(app_id.into());
+                    return Ok(());
+                }
+                Err(error) => last_error = Some(error),
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        Err(last_error
+            .unwrap_or_else(|| RobotError::CommandFailed(format!("could not activate {app_id}"))))
     }
 
     async fn open_url(
@@ -284,19 +482,21 @@ impl Robot for MacosRobot {
         app_id: Option<&str>,
     ) -> Result<(), RobotError> {
         self.require_device(device_id)?;
-        let mut args = vec![];
-        if let Some(app_id) = app_id {
-            args.extend(["-a".into(), app_id.into()]);
-        }
-        args.push(url.into());
-        self.run(&self.open_path, &args).await.map(|_| ())
+        let _ = (url, app_id);
+        Err(RobotError::Unsupported(
+            "URL navigation belongs to the Chrome DevTools robot; use a chrome:<target-id> device"
+                .into(),
+        ))
     }
 
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
         self.apple_script(
-            "on run argv\n tell application \"System Events\" to keystroke (item 1 of argv)\nend run",
-            &[text.into()],
+            "on run argv\n set targetApp to item 1 of argv\n set textToType to item 2 of argv\n if targetApp is not \"\" then tell application targetApp to activate\n set AppleScript's text item delimiters to linefeed\n set parts to text items of textToType\n tell application \"System Events\"\n  repeat with index from 1 to count of parts\n   keystroke (item index of parts)\n   if index is less than count of parts then key code 36\n  end repeat\n end tell\nend run",
+            &[
+                self.active_application.lock().await.clone().unwrap_or_default(),
+                text.into(),
+            ],
         ).await
     }
 
@@ -329,9 +529,7 @@ impl Robot for MacosRobot {
 
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.require_device(device_id)?;
-        Err(RobotError::Unsupported(
-            "accessibility-tree discovery is not supported by the macOS robot".into(),
-        ))
+        self.accessibility_elements().await
     }
 }
 
@@ -346,5 +544,16 @@ mod tests {
                 .require_device("another-device")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn parses_system_events_elements() {
+        let elements = parse_accessibility_elements(
+            "AXButton\x1fNew Tab\x1fOpen a new tab\x1f\x1f12\x1f34\x1f24\x1f24",
+        );
+        assert_eq!(elements.len(), 1);
+        assert_eq!(elements[0].text.as_deref(), Some("New Tab"));
+        assert_eq!(elements[0].bounds.right, 36);
+        assert!(elements[0].clickable);
     }
 }

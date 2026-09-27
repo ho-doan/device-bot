@@ -69,9 +69,16 @@ pub async fn provision_xctest_runner(
             project.display()
         )));
     }
+    let project_team = tokio::fs::read_to_string(project.join("project.pbxproj"))
+        .await
+        .ok()
+        .and_then(|contents| parse_xcode_project_team(&contents));
     let team = match development_team.filter(|team| !team.is_empty()) {
         Some(team) => team.to_owned(),
-        None => apple_development_team(identity_hint).await?,
+        None => match project_team {
+            Some(team) => team,
+            None => apple_development_team(identity_hint).await?,
+        },
     };
     let derived_data = project
         .parent()
@@ -134,6 +141,22 @@ pub async fn provision_xctest_runner(
         "iOS XCTest build failed:\n{}",
         diagnostic.trim()
     )))
+}
+
+fn parse_xcode_project_team(contents: &str) -> Option<String> {
+    let teams = contents
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("DEVELOPMENT_TEAM = "))
+        .filter_map(|value| value.strip_suffix(';'))
+        .map(str::trim)
+        .filter(|team| {
+            team.len() == 10
+                && team
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        })
+        .collect::<std::collections::HashSet<_>>();
+    (teams.len() == 1).then(|| teams.into_iter().next().unwrap().to_owned())
 }
 
 use std::{collections::HashMap, process::Stdio};

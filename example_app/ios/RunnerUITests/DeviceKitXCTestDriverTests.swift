@@ -2,7 +2,7 @@ import device_kit_lib_xctest
 import XCTest
 
 final class DeviceKitXCTestDriverTests: XCTestCase {
-  private let bundleIdentifier = "com.example.aiAutomationTestingProject"
+  private let bundleIdentifier = "com.hodoan.devicekit"
   private var driver: DeviceKitXCTestDriver!
 
   override func setUp() {

@@ -1,7 +1,140 @@
 //! Real iOS device driver backed by `go-ios` and its WDA/DeviceKit UI runner.
 //!
-//! The driver never operates the host UI. `go-ios ui` must already have a
-//! connected automation backend; command failures are returned to MCP callers.
+//! `IosRealRobot` retains the legacy `go-ios` adapter. `IosXCTestRobot` is the
+//! primary server-side real-device implementation and uses Apple CoreDevice plus
+//! a signed XCTest runner kept in this crate.
+
+pub mod xctest_agent;
+pub mod xctest_robot;
+
+pub use xctest_agent::XCTestAgentBridge;
+pub use xctest_robot::IosXCTestRobot;
+
+/// Finds the team ID belonging to the requested (or only) local Apple
+/// Development signing identity. Xcode still needs a valid login for that team
+/// to create provisioning profiles, but callers no longer need to copy its ID
+/// into build commands by hand.
+pub async fn apple_development_team(identity_hint: Option<&str>) -> Result<String, RobotError> {
+    let output = Command::new("security")
+        .args(["find-identity", "-v", "-p", "codesigning"])
+        .output()
+        .await
+        .map_err(|error| {
+            RobotError::CommandFailed(format!("could not read signing identities: {error}"))
+        })?;
+    if !output.status.success() {
+        return Err(RobotError::CommandFailed(format!(
+            "security could not list signing identities: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let identities = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| line.contains("Apple Development:"))
+        .filter(|line| identity_hint.is_none_or(|hint| line.contains(hint)))
+        .filter_map(|line| {
+            let team = line
+                .rsplit_once('(')?
+                .1
+                .chars()
+                .take_while(|character| character.is_ascii_alphanumeric())
+                .collect::<String>();
+            (team.len() == 10).then_some(team)
+        })
+        .collect::<Vec<_>>();
+    match identities.as_slice() {
+        [team] => Ok(team.clone()),
+        [] => Err(RobotError::CommandFailed(match identity_hint {
+            Some(hint) => format!("no Apple Development identity matched {hint:?}"),
+            None => "no Apple Development signing identity was found in Keychain".into(),
+        })),
+        _ => Err(RobotError::CommandFailed(
+            "multiple Apple Development identities found; set MOBILE_MCP_IOS_TEAM or MOBILE_MCP_IOS_SIGNING_IDENTITY".into(),
+        )),
+    }
+}
+
+/// Builds and provisions the server-owned XCTest runner for a connected iPhone.
+/// When the only failure is Apple-account provisioning, opens Xcode so the user
+/// can select or reauthenticate the intended account rather than guessing one.
+pub async fn provision_xctest_runner(
+    project: &std::path::Path,
+    device_id: &str,
+    development_team: Option<&str>,
+    identity_hint: Option<&str>,
+) -> Result<(), RobotError> {
+    if !project.is_dir() {
+        return Err(RobotError::CommandFailed(format!(
+            "iOS XCTest project was not found at {}",
+            project.display()
+        )));
+    }
+    let team = match development_team.filter(|team| !team.is_empty()) {
+        Some(team) => team.to_owned(),
+        None => apple_development_team(identity_hint).await?,
+    };
+    let derived_data = project
+        .parent()
+        .ok_or_else(|| {
+            RobotError::CommandFailed("iOS XCTest project has no parent directory".into())
+        })?
+        .join("build");
+    let output = Command::new("xcodebuild")
+        .args(["build-for-testing", "-allowProvisioningUpdates", "-project"])
+        .arg(project)
+        .args([
+            "-scheme",
+            "MobileMcpRealRunner",
+            "-destination",
+            &format!("platform=iOS,id={device_id}"),
+            "-derivedDataPath",
+        ])
+        .arg(derived_data)
+        .arg(format!("DEVELOPMENT_TEAM={team}"))
+        .output()
+        .await
+        .map_err(|error| {
+            RobotError::CommandFailed(format!("could not start xcodebuild: {error}"))
+        })?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let diagnostic = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let account_blocked = [
+        "No Account for Team",
+        "No profiles for",
+        "No signing certificate",
+        "Unable to log in with account",
+        "Invalid credentials in keychain",
+    ]
+    .iter()
+    .any(|needle| diagnostic.contains(needle));
+    if account_blocked {
+        let opened = Command::new("open")
+            .args(["-a", "Xcode"])
+            .arg(project)
+            .spawn()
+            .is_ok();
+        let action = if opened {
+            " Xcode was opened so you can select or reauthenticate the Apple account."
+        } else {
+            " Open the project in Xcode and select or reauthenticate the Apple account."
+        };
+        return Err(RobotError::CommandFailed(format!(
+            "automatic iOS provisioning failed for team {team}.{action}\n{}",
+            diagnostic.trim()
+        )));
+    }
+    Err(RobotError::CommandFailed(format!(
+        "iOS XCTest build failed:\n{}",
+        diagnostic.trim()
+    )))
+}
 
 use std::{collections::HashMap, process::Stdio};
 

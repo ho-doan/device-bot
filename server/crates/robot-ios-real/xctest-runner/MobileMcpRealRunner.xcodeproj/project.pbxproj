@@ -1,0 +1,315 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B20000000000000000000001 /* RunnerHostApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000011 /* RunnerHostApp.swift */; };
+		B20000000000000000000002 /* MobileMcpRealRunnerUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000012 /* MobileMcpRealRunnerUITests.swift */; };
+		B20000000000000000000003 /* device-kit-lib-xctest in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000090 /* device-kit-lib-xctest */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B20000000000000000000004 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B20000000000000000000020 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B20000000000000000000030;
+			remoteInfo = MobileMcpRealRunnerHost;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		B20000000000000000000010 /* MobileMcpRealRunnerHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MobileMcpRealRunnerHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B20000000000000000000011 /* RunnerHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerHostApp.swift; sourceTree = "<group>"; };
+		B20000000000000000000012 /* MobileMcpRealRunnerUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileMcpRealRunnerUITests.swift; sourceTree = "<group>"; };
+		B20000000000000000000013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B20000000000000000000014 /* MobileMcpRealRunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MobileMcpRealRunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B20000000000000000000040 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B20000000000000000000041 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B20000000000000000000003 /* device-kit-lib-xctest in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		B20000000000000000000021 = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000022 /* RunnerHost */,
+				B20000000000000000000023 /* RunnerTests */,
+				B20000000000000000000024 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B20000000000000000000022 /* RunnerHost */ = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000011 /* RunnerHostApp.swift */,
+				B20000000000000000000013 /* Info.plist */,
+			);
+			path = RunnerHost;
+			sourceTree = "<group>";
+		};
+		B20000000000000000000023 /* RunnerTests */ = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000012 /* MobileMcpRealRunnerUITests.swift */,
+			);
+			path = RunnerTests;
+			sourceTree = "<group>";
+		};
+		B20000000000000000000024 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000010 /* MobileMcpRealRunnerHost.app */,
+				B20000000000000000000014 /* MobileMcpRealRunnerUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B20000000000000000000030 /* MobileMcpRealRunnerHost */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B20000000000000000000050 /* Build configuration list for PBXNativeTarget "MobileMcpRealRunnerHost" */;
+			buildPhases = (
+				B20000000000000000000060 /* Sources */,
+				B20000000000000000000040 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MobileMcpRealRunnerHost;
+			productName = MobileMcpRealRunnerHost;
+			productReference = B20000000000000000000010 /* MobileMcpRealRunnerHost.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B20000000000000000000031 /* MobileMcpRealRunnerUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B20000000000000000000051 /* Build configuration list for PBXNativeTarget "MobileMcpRealRunnerUITests" */;
+			buildPhases = (
+				B20000000000000000000061 /* Sources */,
+				B20000000000000000000041 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B20000000000000000000070 /* PBXTargetDependency */,
+			);
+			name = MobileMcpRealRunnerUITests;
+			packageProductDependencies = (
+				B20000000000000000000090 /* device-kit-lib-xctest */,
+			);
+			productName = MobileMcpRealRunnerUITests;
+			productReference = B20000000000000000000014 /* MobileMcpRealRunnerUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B20000000000000000000020 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 1630;
+				LastUpgradeCheck = 1630;
+				TargetAttributes = {
+					B20000000000000000000031 = {
+						CreatedOnToolsVersion = 16.3;
+						TestTargetID = B20000000000000000000030;
+					};
+				};
+			};
+			buildConfigurationList = B20000000000000000000052 /* Build configuration list for PBXProject "MobileMcpRealRunner" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = B20000000000000000000021;
+			packageReferences = (
+				B20000000000000000000091 /* XCLocalSwiftPackageReference "../../../../darwin/device_kit_lib" */,
+			);
+			productRefGroup = B20000000000000000000024 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B20000000000000000000030 /* MobileMcpRealRunnerHost */,
+				B20000000000000000000031 /* MobileMcpRealRunnerUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B20000000000000000000060 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B20000000000000000000001 /* RunnerHostApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B20000000000000000000061 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B20000000000000000000002 /* MobileMcpRealRunnerUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B20000000000000000000070 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B20000000000000000000030 /* MobileMcpRealRunnerHost */;
+			targetProxy = B20000000000000000000004 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		B20000000000000000000080 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		B20000000000000000000081 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		B20000000000000000000082 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = B7289UDFM4;
+				INFOPLIST_FILE = RunnerHost/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hodoan.mobilemcp.realrunner.host;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B20000000000000000000083 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = B7289UDFM4;
+				INFOPLIST_FILE = RunnerHost/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hodoan.mobilemcp.realrunner.host;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B20000000000000000000084 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hodoan.mobilemcp.realrunner.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MobileMcpRealRunnerHost;
+			};
+			name = Debug;
+		};
+		B20000000000000000000085 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hodoan.mobilemcp.realrunner.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MobileMcpRealRunnerHost;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B20000000000000000000050 /* Build configuration list for PBXNativeTarget "MobileMcpRealRunnerHost" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B20000000000000000000082 /* Debug */,
+				B20000000000000000000083 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B20000000000000000000051 /* Build configuration list for PBXNativeTarget "MobileMcpRealRunnerUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B20000000000000000000084 /* Debug */,
+				B20000000000000000000085 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B20000000000000000000052 /* Build configuration list for PBXProject "MobileMcpRealRunner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B20000000000000000000080 /* Debug */,
+				B20000000000000000000081 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		B20000000000000000000091 /* XCLocalSwiftPackageReference "../../../../darwin/device_kit_lib" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../../../darwin/device_kit_lib;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B20000000000000000000090 /* device-kit-lib-xctest */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B20000000000000000000091 /* XCLocalSwiftPackageReference "../../../../darwin/device_kit_lib" */;
+			productName = "device-kit-lib-xctest";
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = B20000000000000000000020 /* Project object */;
+}

@@ -2,6 +2,10 @@ import 'dart:typed_data';
 
 import 'device_driver.dart' as native_driver;
 import 'ui_element.dart' as native_ui;
+import 'vision_locator.dart' as vision;
+import 'vision_locator_http_stub.dart'
+    if (dart.library.io) 'vision_locator_http.dart'
+    as vision_http;
 import 'web/automation_core/automation_core.dart' as core;
 
 /// Adapts a native plugin driver to the shared Automation Kit backend.
@@ -18,12 +22,20 @@ class DeviceKitAutomationBackend extends core.AutomationBackend {
     this.defaultTarget,
     this.sessionId = 'default',
     this.enableLogs = false,
-  });
+    this.includeVisionWithNativeElements = false,
+    vision.VisionLocator? visionLocator,
+  }) : visionLocator =
+           visionLocator ?? vision_http.visionLocatorFromEnvironment();
 
   final native_driver.DeviceDriver driver;
   final String? defaultTarget;
   final String sessionId;
   final bool enableLogs;
+
+  /// Also append screenshot regions when the native accessibility tree is
+  /// non-empty. Enable this for partial Windows UIA trees that omit the target.
+  final bool includeVisionWithNativeElements;
+  final vision.VisionLocator? visionLocator;
 
   native_ui.UiSnapshot? _nativeSnapshot;
   bool _connected = false;
@@ -41,6 +53,16 @@ class DeviceKitAutomationBackend extends core.AutomationBackend {
 
   @override
   Future<void> open(String target) async {
+    final uri = Uri.tryParse(target);
+    if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+      final result = await driver.openUrl(target, appId: defaultTarget);
+      if (!result.success) {
+        throw core.AutomationActionException(
+          result.message ?? 'Unable to open $target.',
+        );
+      }
+      return;
+    }
     final packageName = target.isNotEmpty ? target : defaultTarget;
     if (packageName == null || packageName.isEmpty) {
       throw core.AutomationActionException(
@@ -69,9 +91,18 @@ class DeviceKitAutomationBackend extends core.AutomationBackend {
         )
         .toList(growable: false);
     final source = roots.isEmpty ? snapshot.elements : roots;
-    final elements = source
+    var elements = source
         .map((element) => _toCoreElement(element, byId, <String>{}))
         .toList(growable: false);
+
+    if ((elements.isEmpty || includeVisionWithNativeElements) &&
+        visionLocator != null) {
+      final detected = await visionLocator!.locate(await driver.screenshot());
+      elements = <core.UiElement>[
+        ...elements,
+        ...detected.map(_toVisionCoreElement),
+      ];
+    }
 
     return core.UiSnapshot(generation: snapshot.generation, elements: elements);
   }
@@ -79,11 +110,16 @@ class DeviceKitAutomationBackend extends core.AutomationBackend {
   @override
   Future<void> tap(core.UiElement element) async {
     final snapshot = await _requireNativeSnapshot();
-    final semantic = await driver.performElementAction(
-      element.ref.key,
-      snapshot.generation,
-      native_driver.UiAction.press,
-    );
+    final semantic = _isVisionElement(element)
+        ? const native_ui.ActionResult(
+            success: false,
+            message: 'Vision regions have no native semantic action.',
+          )
+        : await driver.performElementAction(
+            element.ref.key,
+            snapshot.generation,
+            native_driver.UiAction.press,
+          );
     if (semantic.success) {
       return;
     }
@@ -105,12 +141,17 @@ class DeviceKitAutomationBackend extends core.AutomationBackend {
   @override
   Future<void> setValue(core.UiElement element, String value) async {
     final snapshot = await _requireNativeSnapshot();
-    final semantic = await driver.performElementAction(
-      element.ref.key,
-      snapshot.generation,
-      native_driver.UiAction.setValue,
-      value: value,
-    );
+    final semantic = _isVisionElement(element)
+        ? const native_ui.ActionResult(
+            success: false,
+            message: 'Vision regions have no native semantic action.',
+          )
+        : await driver.performElementAction(
+            element.ref.key,
+            snapshot.generation,
+            native_driver.UiAction.setValue,
+            value: value,
+          );
     if (semantic.success) {
       return;
     }
@@ -138,11 +179,16 @@ class DeviceKitAutomationBackend extends core.AutomationBackend {
   @override
   Future<void> typeText(core.UiElement element, String text) async {
     final snapshot = await _requireNativeSnapshot();
-    final focus = await driver.performElementAction(
-      element.ref.key,
-      snapshot.generation,
-      native_driver.UiAction.focus,
-    );
+    final focus = _isVisionElement(element)
+        ? const native_ui.ActionResult(
+            success: false,
+            message: 'Vision regions have no native focus action.',
+          )
+        : await driver.performElementAction(
+            element.ref.key,
+            snapshot.generation,
+            native_driver.UiAction.focus,
+          );
     if (!focus.success) {
       final bounds = element.bounds;
       if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
@@ -255,4 +301,23 @@ class DeviceKitAutomationBackend extends core.AutomationBackend {
       children: children,
     );
   }
+
+  core.UiElement _toVisionCoreElement(vision.VisionElement element) {
+    return core.UiElement(
+      ref: core.ElementRef('vision:${element.id}'),
+      automationId: element.id,
+      text: element.label,
+      label: element.label,
+      bounds: core.UiBounds(
+        x: element.bounds.x,
+        y: element.bounds.y,
+        width: element.bounds.width,
+        height: element.bounds.height,
+      ),
+      clickable: true,
+    );
+  }
+
+  bool _isVisionElement(core.UiElement element) =>
+      element.ref.key.startsWith('vision:');
 }

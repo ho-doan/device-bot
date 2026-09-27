@@ -80,6 +80,32 @@ internal class DeviceKitHostApiImplTest {
     }
 
     @Test
+    fun openUrl_usesViewIntentAndOptionalBrowserPackage() {
+        val context = Mockito.mock(Context::class.java)
+        val api = DeviceKitHostApiImpl(context)
+
+        val result = api.openUrl("https://example.com/path", "com.android.chrome")
+        val intent = ArgumentCaptor.forClass(Intent::class.java)
+
+        assertEquals(ActionResult(true, "url_opened", true), result)
+        Mockito.verify(context).startActivity(intent.capture())
+        assertEquals(Intent.ACTION_VIEW, intent.value.action)
+        assertEquals("https://example.com/path", intent.value.dataString)
+        assertEquals("com.android.chrome", intent.value.`package`)
+    }
+
+    @Test
+    fun openUrl_rejectsNonHttpUrls() {
+        val context = Mockito.mock(Context::class.java)
+        val api = DeviceKitHostApiImpl(context)
+
+        val error = assertFailsWith<FlutterError> { api.openUrl("file:///tmp/example", null) }
+
+        assertEquals("invalid_url", error.code)
+        Mockito.verifyNoInteractions(context)
+    }
+
+    @Test
     fun clipboard_roundTripsThroughAndroidClipboardCapability() {
         val context = Mockito.mock(Context::class.java)
         val clipboard = Mockito.mock(ClipboardManager::class.java)

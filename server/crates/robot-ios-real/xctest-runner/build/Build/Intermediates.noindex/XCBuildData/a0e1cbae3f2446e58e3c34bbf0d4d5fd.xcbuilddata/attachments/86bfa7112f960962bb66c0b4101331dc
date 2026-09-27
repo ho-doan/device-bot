@@ -1,0 +1,28 @@
+{
+  "" : {
+    "diagnostics" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/device_kit_lib_xctest-master.dia",
+    "emit-module-dependencies" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/device_kit_lib_xctest-master-emit-module.d",
+    "emit-module-diagnostics" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/device_kit_lib_xctest-master-emit-module.dia",
+    "swift-dependencies" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/device_kit_lib_xctest-master.swiftdeps"
+  },
+  "/Users/hodoan/Documents/code/rust/device_robot/darwin/device_kit_lib/Sources/device_kit_lib_xctest/DeviceKitXCTestDriver.swift" : {
+    "const-values" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestDriver.swiftconstvalues",
+    "dependencies" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestDriver.d",
+    "diagnostics" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestDriver.dia",
+    "index-unit-output-path" : "/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestDriver.o",
+    "llvm-bc" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestDriver.bc",
+    "object" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestDriver.o",
+    "swift-dependencies" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestDriver.swiftdeps",
+    "swiftmodule" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestDriver~partial.swiftmodule"
+  },
+  "/Users/hodoan/Documents/code/rust/device_robot/darwin/device_kit_lib/Sources/device_kit_lib_xctest/DeviceKitXCTestHostAgent.swift" : {
+    "const-values" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestHostAgent.swiftconstvalues",
+    "dependencies" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestHostAgent.d",
+    "diagnostics" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestHostAgent.dia",
+    "index-unit-output-path" : "/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestHostAgent.o",
+    "llvm-bc" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestHostAgent.bc",
+    "object" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestHostAgent.o",
+    "swift-dependencies" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestHostAgent.swiftdeps",
+    "swiftmodule" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/device_kit_lib.build/Debug-iphoneos/device_kit_lib_xctest.build/Objects-normal/arm64/DeviceKitXCTestHostAgent~partial.swiftmodule"
+  }
+}

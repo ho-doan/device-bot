@@ -490,11 +490,15 @@ name = "mobile-robot-ios-real"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
+ "base64",
  "mobile-robot-core",
  "quick-xml",
+ "serde",
  "serde_json",
  "tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]

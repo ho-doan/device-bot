@@ -1,0 +1,41 @@
+{
+  "object" : {
+    "artifacts" : [
+
+    ],
+    "dependencies" : [
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "device_kit_lib",
+          "kind" : "fileSystem",
+          "location" : "/Users/hodoan/Documents/code/rust/device_robot/darwin/device_kit_lib",
+          "name" : "device_kit_lib"
+        },
+        "state" : {
+          "name" : "fileSystem",
+          "path" : "/Users/hodoan/Documents/code/rust/device_robot/darwin/device_kit_lib"
+        },
+        "subpath" : "device_kit_lib"
+      },
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "flutterframework",
+          "kind" : "fileSystem",
+          "location" : "/Users/hodoan/Documents/code/rust/device_robot/darwin/FlutterFramework",
+          "name" : "FlutterFramework"
+        },
+        "state" : {
+          "name" : "fileSystem",
+          "path" : "/Users/hodoan/Documents/code/rust/device_robot/darwin/FlutterFramework"
+        },
+        "subpath" : "flutterframework"
+      }
+    ],
+    "prebuilts" : [
+
+    ]
+  },
+  "version" : 7
+}

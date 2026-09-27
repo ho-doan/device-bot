@@ -1,0 +1,74 @@
+{
+  "buildCommand" : {
+    "command" : "build",
+    "skipDependencies" : false,
+    "style" : "buildOnly"
+  },
+  "configuredTargets" : [
+    {
+      "guid" : "437c687628f5671009994f819819ad46263252179c69b338f78a75874e49e065"
+    },
+    {
+      "guid" : "437c687628f5671009994f819819ad461f29fe9b3a48d292750662d509a2ab7e"
+    }
+  ],
+  "containerPath" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/MobileMcpRealRunner.xcodeproj",
+  "continueBuildingAfterErrors" : false,
+  "dependencyScope" : "workspace",
+  "enableIndexBuildArena" : false,
+  "hideShellScriptEnvironment" : false,
+  "parameters" : {
+    "action" : "build",
+    "activeArchitecture" : "arm64",
+    "activeRunDestination" : {
+      "disableOnlyActiveArch" : false,
+      "platform" : "iphoneos",
+      "sdk" : "iphoneos18.4",
+      "sdkVariant" : "iphoneos",
+      "supportedArchitectures" : [
+        "arm64e",
+        "arm64v8",
+        "arm64",
+        "armv8"
+      ],
+      "targetArchitecture" : "arm64"
+    },
+    "arenaInfo" : {
+      "buildIntermediatesPath" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex",
+      "buildProductsPath" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Products",
+      "derivedDataPath" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build",
+      "indexDataStoreFolderPath" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Index.noindex/DataStore",
+      "indexEnableDataStore" : true,
+      "indexPCHPath" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Index.noindex/PrecompiledHeaders",
+      "pchPath" : "/Users/hodoan/Documents/code/rust/device_robot/server/crates/robot-ios-real/xctest-runner/build/Build/Intermediates.noindex/PrecompiledHeaders"
+    },
+    "configurationName" : "Debug",
+    "overrides" : {
+      "commandLine" : {
+        "table" : {
+          "DEVELOPMENT_TEAM" : "323Q345RC8"
+        }
+      },
+      "synthesized" : {
+        "table" : {
+          "ASSETCATALOG_FILTER_FOR_DEVICE_MODEL" : "iPhone16,2",
+          "ASSETCATALOG_FILTER_FOR_DEVICE_OS_VERSION" : "27.0",
+          "ASSETCATALOG_FILTER_FOR_THINNING_DEVICE_CONFIGURATION" : "iPhone16,2",
+          "BUILD_ACTIVE_RESOURCES_ONLY" : "YES",
+          "ENABLE_PREVIEWS" : "NO",
+          "ENABLE_XOJIT_PREVIEWS" : "YES",
+          "TARGET_DEVICE_IDENTIFIER" : "00008130-000959E43EDA001C",
+          "TARGET_DEVICE_MODEL" : "iPhone16,2",
+          "TARGET_DEVICE_OS_VERSION" : "27.0",
+          "TARGET_DEVICE_PLATFORM_NAME" : "iphoneos"
+        }
+      }
+    }
+  },
+  "schemeCommand" : "test",
+  "showNonLoggedProgress" : true,
+  "useDryRun" : false,
+  "useImplicitDependencies" : true,
+  "useLegacyBuildLocations" : false,
+  "useParallelTargets" : true
+}

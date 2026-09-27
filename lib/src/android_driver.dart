@@ -43,6 +43,10 @@ class AndroidDriver implements DeviceDriver {
       _toActionResult(await _hostApi.launchApp(packageName));
 
   @override
+  Future<ActionResult> openUrl(String url, {String? appId}) async =>
+      _toActionResult(await _hostApi.openUrl(url, appId));
+
+  @override
   Future<UiSnapshot> dumpUi() async {
     final snapshot = await _hostApi.dumpUi();
     return UiSnapshot(

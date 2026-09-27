@@ -1,6 +1,7 @@
 #if os(iOS)
 
 import Foundation
+import UIKit
 import XCTest
 
 /// Host-side XCTest agent. The UI-test process runs on the device and polls
@@ -22,12 +23,14 @@ public final class DeviceKitXCTestHostAgent {
   private let driver = DeviceKitXCTestDriver()
   private let hosts: [String]
   private let port: Int
+  private let token: String?
   private var currentBundleId: String?
   public private(set) var running = true
 
-  public init(hosts: [String], port: Int) {
+  public init(hosts: [String], port: Int, token: String? = nil) {
     self.hosts = hosts.filter { !$0.isEmpty }
     self.port = port
+    self.token = token?.isEmpty == false ? token : nil
   }
 
   public func run() {
@@ -56,6 +59,36 @@ public final class DeviceKitXCTestHostAgent {
       currentBundleId = bundleId
       driver.launch()
       return ["ok": true, "message": "app_launched"]
+    case "openUrl":
+      guard let rawUrl = string(command.params["url"]),
+            let httpUrl = URL(string: rawUrl),
+            ["http", "https"].contains(httpUrl.scheme?.lowercased()) else {
+        return ["ok": false, "message": "invalid_http_url"]
+      }
+      let appId = string(command.params["appId"])
+      let targetUrl: URL
+      switch appId {
+      case nil, "":
+        targetUrl = httpUrl
+      case "com.google.chrome.ios":
+        guard var components = URLComponents(url: httpUrl, resolvingAgainstBaseURL: false) else {
+          return ["ok": false, "message": "invalid_chrome_url"]
+        }
+        components.scheme = httpUrl.scheme?.lowercased() == "https" ? "googlechromes" : "googlechrome"
+        guard let chromeUrl = components.url else {
+          return ["ok": false, "message": "invalid_chrome_url"]
+        }
+        targetUrl = chromeUrl
+      default:
+        return [
+          "ok": false,
+          "message": "unsupported_browser_bundle; use com.google.chrome.ios or omit appId",
+        ]
+      }
+      DispatchQueue.main.async {
+        UIApplication.shared.open(targetUrl)
+      }
+      return ["ok": true, "message": "url_open_requested"]
     case "dump":
       ensureApp()
       let snapshot = driver.dumpUi()
@@ -102,7 +135,7 @@ public final class DeviceKitXCTestHostAgent {
         fromY: number(command.params["fromY"]) ?? 0,
         toX: number(command.params["toX"]) ?? 0,
         toY: number(command.params["toY"]) ?? 0,
-        duration: (number(command.params["durationMs"]) ?? 500) / 1000
+        duration: TimeInterval(number(command.params["durationMs"]) ?? 500) / 1000
       )
       return ["ok": ok, "message": ok ? "coordinate" : "swipe_failed"]
     case "text":
@@ -198,6 +231,7 @@ public final class DeviceKitXCTestHostAgent {
     request.httpMethod = method
     request.timeoutInterval = 20
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    if let token { request.setValue(token, forHTTPHeaderField: "X-MobileMcp-Token") }
     request.httpBody = body
 
     var result: Data?

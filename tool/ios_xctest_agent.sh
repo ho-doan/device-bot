@@ -28,11 +28,20 @@ scheme="${DEVICE_KIT_IOS_SCHEME:-Runner}"
 test="${DEVICE_KIT_IOS_TEST:-RunnerUITests/DeviceKitHttpAgentTests/testServe}"
 port="${DEVICE_KIT_AGENT_PORT:-18787}"
 deployment_target="${DEVICE_KIT_IOS_DEPLOYMENT_TARGET:-15.0}"
+allow_provisioning_updates="${DEVICE_KIT_ALLOW_PROVISIONING_UPDATES:-0}"
+development_team="${DEVICE_KIT_IOS_TEAM:-}"
 
 if [[ -n "${DEVICE_KIT_IOS_DESTINATION:-}" ]]; then
   destination="$DEVICE_KIT_IOS_DESTINATION"
 elif [[ -n "${DEVICE_KIT_DEVICE:-}" ]]; then
-  destination="platform=iOS,name=$DEVICE_KIT_DEVICE"
+  # `xcodebuild` exposes physical-device UDIDs as destination ids. Preserve
+  # friendly names for users who prefer `DEVICE_KIT_DEVICE=My iPhone`.
+  if xcodebuild -project "$project" -scheme "$scheme" -showdestinations 2>/dev/null \
+      | grep -Fq "id:$DEVICE_KIT_DEVICE,"; then
+    destination="platform=iOS,id=$DEVICE_KIT_DEVICE"
+  else
+    destination="platform=iOS,name=$DEVICE_KIT_DEVICE"
+  fi
 else
   destination="generic/platform=iOS"
   if dest_line="$(xcodebuild -project "$project" -scheme "$scheme" -showdestinations 2>/dev/null \
@@ -72,6 +81,16 @@ common=(
   -destination "$destination"
   IPHONEOS_DEPLOYMENT_TARGET="$deployment_target"
 )
+
+# Provisioning modifies state in the Apple Developer portal, so it is opt-in.
+# Use this only after the intended Apple Developer account/team is selected in
+# Xcode and authenticated on this Mac.
+if [[ "$allow_provisioning_updates" == "1" ]]; then
+  common+=( -allowProvisioningUpdates )
+fi
+if [[ -n "$development_team" ]]; then
+  common+=( DEVELOPMENT_TEAM="$development_team" )
+fi
 
 case "$command" in
   build)

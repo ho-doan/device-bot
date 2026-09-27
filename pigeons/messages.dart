@@ -4,8 +4,7 @@ import 'package:pigeon/pigeon.dart';
   PigeonOptions(
     dartPackageName: 'device_kit_lib',
     dartOut: 'lib/src/messages.g.dart',
-    swiftOut:
-        'darwin/device_kit_lib/Sources/device_kit_lib/Messages.g.swift',
+    swiftOut: 'darwin/device_kit_lib/Sources/device_kit_lib/Messages.g.swift',
     swiftOptions: SwiftOptions(),
     kotlinOut:
         'android/src/main/kotlin/com/hodoan/device_kit_lib/Messages.g.kt',
@@ -16,6 +15,7 @@ import 'package:pigeon/pigeon.dart';
   ),
 )
 enum UiAction { press, focus, setValue, scrollForward, scrollBackward }
+
 class DriverConfig {
   final String sessionId;
   final bool enableLogs;
@@ -114,6 +114,10 @@ abstract class DeviceKitHostApi {
   ActionResult openAccessibilitySettings();
 
   ActionResult launchApp(String packageName);
+
+  /// Opens an HTTP(S) URL. [appId] optionally selects a browser/app capable
+  /// of handling it (for example Chrome's package or bundle identifier).
+  ActionResult openUrl(String url, String? appId);
 
   UiSnapshot dumpUi();
 

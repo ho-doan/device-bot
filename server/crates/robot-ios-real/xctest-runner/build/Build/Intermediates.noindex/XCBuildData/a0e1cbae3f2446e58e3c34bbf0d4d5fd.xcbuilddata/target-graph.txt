@@ -1,0 +1,8 @@
+Target dependency graph (4 targets)
+Target 'MobileMcpRealRunnerUITests' in project 'MobileMcpRealRunner'
+➜ Explicit dependency on target 'MobileMcpRealRunnerHost' in project 'MobileMcpRealRunner'
+➜ Explicit dependency on target 'device-kit-lib-xctest' in project 'device_kit_lib'
+Target 'device-kit-lib-xctest' in project 'device_kit_lib'
+➜ Explicit dependency on target 'device_kit_lib_xctest' in project 'device_kit_lib'
+Target 'device_kit_lib_xctest' in project 'device_kit_lib' (no dependencies)
+Target 'MobileMcpRealRunnerHost' in project 'MobileMcpRealRunner' (no dependencies)

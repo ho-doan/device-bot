@@ -555,11 +555,17 @@ std::optional<uint32_t> DeviceKitLibPlugin::FindProcessId(
 
 std::optional<uint32_t> DeviceKitLibPlugin::StartTarget(
     const std::wstring& target) {
+  return StartTarget(target, L"");
+}
+
+std::optional<uint32_t> DeviceKitLibPlugin::StartTarget(
+    const std::wstring& target, const std::wstring& argument) {
   SHELLEXECUTEINFOW execute_info{};
   execute_info.cbSize = sizeof(execute_info);
   execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
   execute_info.lpVerb = L"open";
   execute_info.lpFile = target.c_str();
+  execute_info.lpParameters = argument.empty() ? nullptr : argument.c_str();
   execute_info.nShow = SW_SHOWNORMAL;
   if (ShellExecuteExW(&execute_info) == FALSE) {
     Log("ERROR", "launchApp", "ShellExecuteExW failed for target " + WideToUtf8(target),
@@ -1006,6 +1012,43 @@ ErrorOr<ActionResult> DeviceKitLibPlugin::LaunchApp(
         S_OK, ERROR_FILE_NOT_FOUND));
   }
   return Success(false);
+}
+
+ErrorOr<ActionResult> DeviceKitLibPlugin::OpenUrl(
+    const std::string& url, const std::string* app_id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!initialized_) {
+    return Failed<ActionResult>(OperationFailure(
+        "openUrl", "The Windows driver is not initialized"));
+  }
+  const std::wstring target_url = Utf8ToWide(url);
+  if (target_url.rfind(L"http://", 0) != 0 && target_url.rfind(L"https://", 0) != 0) {
+    return Failed<ActionResult>(OperationFailure(
+        "openUrl", "Only an absolute HTTP(S) URL is supported"));
+  }
+  ResetTarget();
+  if (app_id != nullptr && !app_id->empty()) {
+    target_name_ = Utf8ToWide(*app_id);
+    const std::optional<uint32_t> process_id = StartTarget(target_name_, target_url);
+    if (!process_id.has_value()) {
+      return Failed<ActionResult>(OperationFailure(
+          "openUrl", "The requested browser could not be launched", S_OK,
+          ERROR_FILE_NOT_FOUND));
+    }
+    target_process_id_ = *process_id;
+    Log("INFO", "openUrl", "Opened URL in browser pid " +
+        std::to_string(target_process_id_));
+    return Success(true);
+  }
+  const HINSTANCE result = ShellExecuteW(nullptr, L"open", target_url.c_str(),
+                                         nullptr, nullptr, SW_SHOWNORMAL);
+  if (reinterpret_cast<INT_PTR>(result) <= 32) {
+    return Failed<ActionResult>(OperationFailure(
+        "openUrl", "Unable to open URL with the default browser", S_OK,
+        GetLastError()));
+  }
+  Log("INFO", "openUrl", "Opened URL with default browser");
+  return Success(true);
 }
 
 ErrorOr<UiSnapshot> DeviceKitLibPlugin::DumpUi() {

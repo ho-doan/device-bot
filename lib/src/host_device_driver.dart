@@ -14,13 +14,11 @@ import 'ui_element.dart';
 ///
 /// This is intentionally not a wrapper around `@mobilenext/mobilecli`.
 class HostDeviceDriver implements DeviceDriver {
-  HostDeviceDriver({
-    required this.deviceQuery,
-    int? agentPort,
-  }) : agentPort =
-           agentPort ??
-           int.tryParse(Platform.environment['DEVICE_KIT_AGENT_PORT'] ?? '') ??
-           18787;
+  HostDeviceDriver({required this.deviceQuery, int? agentPort})
+    : agentPort =
+          agentPort ??
+          int.tryParse(Platform.environment['DEVICE_KIT_AGENT_PORT'] ?? '') ??
+          18787;
 
   final String deviceQuery;
   final int agentPort;
@@ -36,10 +34,7 @@ class HostDeviceDriver implements DeviceDriver {
   }) async {
     _device = await _resolveHostDevice(deviceQuery);
     if (_device!.platform == 'ios') {
-      _ios = _IosAgentBridge(
-        device: _device!,
-        port: agentPort,
-      );
+      _ios = _IosAgentBridge(device: _device!, port: agentPort);
       try {
         await _ios!.start();
       } on Object {
@@ -103,6 +98,41 @@ class HostDeviceDriver implements DeviceDriver {
   }
 
   @override
+  Future<ActionResult> openUrl(String url, {String? appId}) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+      return const ActionResult(success: false, message: 'invalid_http_url');
+    }
+    if (_ios != null) {
+      final result = await _ios!.call('openUrl', <String, Object?>{
+        'url': url,
+        'appId': appId,
+      });
+      return ActionResult(
+        success: result['ok'] == true,
+        message: result['message']?.toString() ?? 'url_opened',
+        uiChanged: result['ok'] == true,
+      );
+    }
+    final arguments = <String>[
+      'shell',
+      'am',
+      'start',
+      '-a',
+      'android.intent.action.VIEW',
+      '-d',
+      url,
+      if (appId != null && appId.isNotEmpty) appId,
+    ];
+    await _adb(arguments);
+    return const ActionResult(
+      success: true,
+      message: 'url_opened',
+      uiChanged: true,
+    );
+  }
+
+  @override
   Future<UiSnapshot> dumpUi() async {
     if (_ios != null) {
       final result = await _ios!.call('dump');
@@ -113,12 +143,7 @@ class HostDeviceDriver implements DeviceDriver {
       }
       return _snapshotFromJson(result);
     }
-    final xml = await _adb([
-      'exec-out',
-      'uiautomator',
-      'dump',
-      '/dev/tty',
-    ]);
+    final xml = await _adb(['exec-out', 'uiautomator', 'dump', '/dev/tty']);
     _androidGeneration += 1;
     return parseUiautomatorDump(xml, generation: _androidGeneration);
   }
@@ -361,10 +386,7 @@ class _ResolvedDevice {
 }
 
 class _IosAgentBridge {
-  _IosAgentBridge({
-    required this.device,
-    required this.port,
-  });
+  _IosAgentBridge({required this.device, required this.port});
 
   final _ResolvedDevice device;
   final int port;
@@ -429,9 +451,8 @@ class _IosAgentBridge {
     _queue.add(_QueuedCommand(id: id, method: method, params: params));
     return completer.future.timeout(
       const Duration(seconds: 45),
-      onTimeout: () => throw HostDeviceException(
-        'iOS XCTest agent timed out on $method.',
-      ),
+      onTimeout: () =>
+          throw HostDeviceException('iOS XCTest agent timed out on $method.'),
     );
   }
 
@@ -533,7 +554,9 @@ Future<List<_ResolvedDevice>> _listAdbDevices() async {
   final devices = <_ResolvedDevice>[];
   for (final line in result.stdout.toString().split('\n').skip(1)) {
     final trimmed = line.trim();
-    if (trimmed.isEmpty || trimmed.startsWith('*') || !trimmed.contains('device')) {
+    if (trimmed.isEmpty ||
+        trimmed.startsWith('*') ||
+        !trimmed.contains('device')) {
       continue;
     }
     final parts = trimmed.split(RegExp(r'\s+'));
@@ -606,9 +629,7 @@ Future<List<_ResolvedDevice>> _listIosDevices() async {
                 hw['marketingName']?.toString() ??
                 hw['productType']?.toString(),
             xcodeDestination: 'platform=iOS,id=$udid',
-            aliases: <String>[
-              if (identifier.isNotEmpty) identifier,
-            ],
+            aliases: <String>[if (identifier.isNotEmpty) identifier],
           ),
         );
       }
@@ -716,7 +737,9 @@ UiSnapshot parseUiautomatorDump(String xml, {required int generation}) {
       );
     }
     if (!token.endsWith('/>')) {
-      stack.add(_AndroidNode(nodeId: nodeId, elementIndex: elements.length - 1));
+      stack.add(
+        _AndroidNode(nodeId: nodeId, elementIndex: elements.length - 1),
+      );
     }
   }
 
@@ -735,36 +758,38 @@ UiSnapshot _snapshotFromJson(Map<String, Object?> json) {
   if (rawElements is! List) {
     throw const HostDeviceException('iOS dump returned no elements.');
   }
-  final elements = rawElements.map((raw) {
-    final node = _asMap(raw);
-    final bounds = _asMap(node['bounds']);
-    double number(String key) => (bounds[key] as num?)?.toDouble() ?? 0;
-    return UiElement(
-      nodeId: node['nodeId']?.toString() ?? '',
-      parentNodeId: _emptyToNull(node['parentNodeId']?.toString()),
-      childNodeIds: (node['childNodeIds'] as List? ?? const <Object?>[])
-          .map((id) => id.toString())
-          .toList(growable: false),
-      automationId: _emptyToNull(node['automationId']?.toString()),
-      text: _emptyToNull(node['text']?.toString()),
-      label: _emptyToNull(node['label']?.toString()),
-      value: _emptyToNull(node['value']?.toString()),
-      role: uiRoleFromString(node['role']?.toString()),
-      bounds: UiBounds(
-        x: number('x'),
-        y: number('y'),
-        width: number('width'),
-        height: number('height'),
-      ),
-      enabled: node['enabled'] as bool? ?? true,
-      clickable: node['clickable'] as bool? ?? false,
-      editable: node['editable'] as bool? ?? false,
-      focused: node['focused'] as bool? ?? false,
-      selected: node['selected'] as bool? ?? false,
-      checked: node['checked'] as bool? ?? false,
-      scrollable: node['scrollable'] as bool? ?? false,
-    );
-  }).toList(growable: false);
+  final elements = rawElements
+      .map((raw) {
+        final node = _asMap(raw);
+        final bounds = _asMap(node['bounds']);
+        double number(String key) => (bounds[key] as num?)?.toDouble() ?? 0;
+        return UiElement(
+          nodeId: node['nodeId']?.toString() ?? '',
+          parentNodeId: _emptyToNull(node['parentNodeId']?.toString()),
+          childNodeIds: (node['childNodeIds'] as List? ?? const <Object?>[])
+              .map((id) => id.toString())
+              .toList(growable: false),
+          automationId: _emptyToNull(node['automationId']?.toString()),
+          text: _emptyToNull(node['text']?.toString()),
+          label: _emptyToNull(node['label']?.toString()),
+          value: _emptyToNull(node['value']?.toString()),
+          role: uiRoleFromString(node['role']?.toString()),
+          bounds: UiBounds(
+            x: number('x'),
+            y: number('y'),
+            width: number('width'),
+            height: number('height'),
+          ),
+          enabled: node['enabled'] as bool? ?? true,
+          clickable: node['clickable'] as bool? ?? false,
+          editable: node['editable'] as bool? ?? false,
+          focused: node['focused'] as bool? ?? false,
+          selected: node['selected'] as bool? ?? false,
+          checked: node['checked'] as bool? ?? false,
+          scrollable: node['scrollable'] as bool? ?? false,
+        );
+      })
+      .toList(growable: false);
   return UiSnapshot(
     generation: (json['generation'] as num?)?.toInt() ?? 0,
     elements: elements,
@@ -781,9 +806,7 @@ Map<String, String> _parseAttributes(String raw) {
 }
 
 UiBounds _parseBounds(String? raw) {
-  final match = RegExp(
-    r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]',
-  ).firstMatch(raw ?? '');
+  final match = RegExp(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]').firstMatch(raw ?? '');
   if (match == null) {
     return const UiBounds(x: 0, y: 0, width: 0, height: 0);
   }

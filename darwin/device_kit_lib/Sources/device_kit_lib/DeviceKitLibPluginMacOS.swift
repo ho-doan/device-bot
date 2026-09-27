@@ -37,6 +37,10 @@ extension DeviceKitLibPlugin: DeviceKitHostApi {
     runtimeDriver.launchApp(bundleIdentifier: packageName)
   }
 
+  func openUrl(url: String, appId: String?) throws -> ActionResult {
+    runtimeDriver.openUrl(url: url, appId: appId)
+  }
+
   func dumpUi() throws -> UiSnapshot {
     try runtimeDriver.dumpUi()
   }
@@ -160,6 +164,29 @@ private final class MacOSAccessibilityDriver {
     application = AXUIElementCreateApplication(app.processIdentifier)
     app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
     return success(changed: false)
+  }
+
+  func openUrl(url: String, appId: String?) -> ActionResult {
+    guard let httpUrl = URL(string: url), ["http", "https"].contains(httpUrl.scheme?.lowercased()) else {
+      return failure("Only an absolute HTTP(S) URL is supported.")
+    }
+    guard let appId, !appId.isEmpty else {
+      guard NSWorkspace.shared.open(httpUrl) else {
+        return failure("Unable to open URL with the default browser.")
+      }
+      return success(changed: true)
+    }
+    guard let browserUrl = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appId) else {
+      return failure("Unable to find macOS browser \(appId).")
+    }
+    let configuration = NSWorkspace.OpenConfiguration()
+    NSWorkspace.shared.open([httpUrl], withApplicationAt: browserUrl, configuration: configuration) {
+      _, error in
+      if let error {
+        NSLog("DeviceKit could not open URL in %@: %@", appId, error.localizedDescription)
+      }
+    }
+    return success(changed: true)
   }
 
   func dumpUi() throws -> UiSnapshot {

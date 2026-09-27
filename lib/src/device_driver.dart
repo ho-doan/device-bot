@@ -25,6 +25,8 @@ abstract interface class DeviceDriver {
 
   Future<ActionResult> launchApp(String packageName);
 
+  Future<ActionResult> openUrl(String url, {String? appId});
+
   Future<UiSnapshot> dumpUi();
 
   Future<ActionResult> performElementAction(
@@ -161,6 +163,13 @@ class AutomationService {
       throw AutomationActionException(
         result.message ?? 'Unable to launch $packageName.',
       );
+    }
+  }
+
+  Future<void> openUrl(String url, {String? appId}) async {
+    final result = await driver.openUrl(url, appId: appId);
+    if (!result.success) {
+      throw AutomationActionException(result.message ?? 'Unable to open $url.');
     }
   }
 

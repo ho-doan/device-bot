@@ -36,6 +36,10 @@ extension DeviceKitLibPlugin: DeviceKitHostApi {
     runtimeDriver.launchApp(packageName: packageName)
   }
 
+  func openUrl(url: String, appId: String?) throws -> ActionResult {
+    runtimeDriver.openUrl(url: url, appId: appId)
+  }
+
   func dumpUi() throws -> UiSnapshot {
     runtimeDriver.dumpUi()
   }
@@ -147,6 +151,33 @@ private final class IosRuntimeDriver {
     }
     UIApplication.shared.open(url)
     return success(changed: false)
+  }
+
+  func openUrl(url: String, appId: String?) -> ActionResult {
+    guard let httpUrl = URL(string: url), ["http", "https"].contains(httpUrl.scheme?.lowercased()) else {
+      return failure("Only an absolute HTTP(S) URL is supported.")
+    }
+    let targetUrl: URL
+    switch appId {
+    case nil, "":
+      targetUrl = httpUrl
+    case "com.google.chrome.ios":
+      guard var components = URLComponents(url: httpUrl, resolvingAgainstBaseURL: false) else {
+        return failure("Unable to create Chrome URL.")
+      }
+      components.scheme = httpUrl.scheme?.lowercased() == "https" ? "googlechromes" : "googlechrome"
+      guard let chromeUrl = components.url else {
+        return failure("Unable to create Chrome URL.")
+      }
+      targetUrl = chromeUrl
+    default:
+      return failure(
+        "iOS can only select Chrome through com.google.chrome.ios; "
+          + "omit appId to use the default browser."
+      )
+    }
+    UIApplication.shared.open(targetUrl)
+    return success(changed: true)
   }
 
   func dumpUi() -> UiSnapshot {

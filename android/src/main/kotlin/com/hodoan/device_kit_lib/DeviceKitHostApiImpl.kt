@@ -17,6 +17,7 @@ import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.provider.Settings
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.CountDownLatch
@@ -86,6 +87,21 @@ class DeviceKitHostApiImpl(
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
         return ActionResult(true, "app_launched", true)
+    }
+
+    override fun openUrl(url: String, appId: String?): ActionResult {
+        val uri = Uri.parse(url)
+        if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrEmpty()) {
+            throw FlutterError("invalid_url", "Only an absolute HTTP(S) URL is supported.", null)
+        }
+        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (!appId.isNullOrBlank()) {
+                setPackage(appId)
+            }
+        }
+        context.startActivity(intent)
+        return ActionResult(true, "url_opened", true)
     }
 
     override fun dumpUi(): UiSnapshot = service().dumpUi()

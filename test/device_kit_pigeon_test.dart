@@ -150,4 +150,33 @@ void main() {
     expect(snapshot.elements.single.value, '0');
     expect(snapshot.elements.single.role, UiRole.text);
   });
+
+  test(
+    'native drivers forward URL and selected browser through Pigeon',
+    () async {
+      final channel = BasicMessageChannel<Object?>(
+        'dev.flutter.pigeon.device_kit_lib.DeviceKitHostApi.openUrl',
+        api.DeviceKitHostApi.pigeonChannelCodec,
+      );
+      registeredChannels.add(channel.name);
+      Object? request;
+      messenger.setMockDecodedMessageHandler<Object?>(channel, (message) async {
+        request = message;
+        return <Object?>[
+          api.ActionResult(
+            success: true,
+            message: 'url_opened',
+            uiChanged: true,
+          ),
+        ];
+      });
+
+      final result = await AndroidDriver(
+        hostApi: api.DeviceKitHostApi(),
+      ).openUrl('https://example.com', appId: 'com.android.chrome');
+
+      expect(result.success, isTrue);
+      expect(request, <Object?>['https://example.com', 'com.android.chrome']);
+    },
+  );
 }

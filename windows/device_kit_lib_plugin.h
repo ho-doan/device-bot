@@ -36,6 +36,8 @@ class DeviceKitLibPlugin final : public flutter::Plugin, public DeviceKitHostApi
   ErrorOr<DeviceInfo> GetDeviceInfo() override;
   ErrorOr<ActionResult> OpenAccessibilitySettings() override;
   ErrorOr<ActionResult> LaunchApp(const std::string& package_name) override;
+  ErrorOr<ActionResult> OpenUrl(const std::string& url,
+                                const std::string* app_id) override;
   ErrorOr<UiSnapshot> DumpUi() override;
   ErrorOr<ActionResult> PerformElementAction(
       const std::string& node_id,
@@ -97,6 +99,8 @@ class DeviceKitLibPlugin final : public flutter::Plugin, public DeviceKitHostApi
                       int64_t duration_ms);
   std::optional<uint32_t> FindProcessId(const std::wstring& target) const;
   std::optional<uint32_t> StartTarget(const std::wstring& target);
+  std::optional<uint32_t> StartTarget(const std::wstring& target,
+                                      const std::wstring& argument);
   std::string OperationFailure(const char* operation, const std::string& detail,
                                HRESULT hr = S_OK, DWORD win32_error = ERROR_SUCCESS);
   ActionResult Success(bool ui_changed) const;

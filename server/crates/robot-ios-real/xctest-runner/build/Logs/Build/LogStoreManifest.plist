@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>logFormatVersion</key>
+	<integer>11</integer>
+	<key>logs</key>
+	<dict>
+		<key>D3156537-0E45-4225-9D53-5B7C7D6CCDD3</key>
+		<dict>
+			<key>className</key>
+			<string>IDECommandLineBuildLog</string>
+			<key>documentTypeString</key>
+			<string>&lt;nil&gt;</string>
+			<key>domainType</key>
+			<string>Xcode.IDEActivityLogDomainType.BuildLog</string>
+			<key>fileName</key>
+			<string>D3156537-0E45-4225-9D53-5B7C7D6CCDD3.xcactivitylog</string>
+			<key>hasPrimaryLog</key>
+			<true/>
+			<key>primaryObservable</key>
+			<dict>
+				<key>highLevelStatus</key>
+				<string>E</string>
+				<key>totalNumberOfAnalyzerIssues</key>
+				<integer>0</integer>
+				<key>totalNumberOfErrors</key>
+				<integer>4</integer>
+				<key>totalNumberOfTestFailures</key>
+				<integer>0</integer>
+				<key>totalNumberOfWarnings</key>
+				<integer>0</integer>
+			</dict>
+			<key>schemeIdentifier-containerName</key>
+			<string>MobileMcpRealRunner project</string>
+			<key>schemeIdentifier-schemeName</key>
+			<string>MobileMcpRealRunner</string>
+			<key>schemeIdentifier-sharedScheme</key>
+			<integer>1</integer>
+			<key>signature</key>
+			<string>Building project MobileMcpRealRunner for testing with scheme MobileMcpRealRunner</string>
+			<key>timeStartedRecording</key>
+			<real>812177065.32564497</real>
+			<key>timeStoppedRecording</key>
+			<real>812177067.98002303</real>
+			<key>title</key>
+			<string>Building project MobileMcpRealRunner for testing with scheme MobileMcpRealRunner</string>
+			<key>uniqueIdentifier</key>
+			<string>D3156537-0E45-4225-9D53-5B7C7D6CCDD3</string>
+		</dict>
+		<key>DD8ED7E1-6267-43ED-B69E-0706C7297595</key>
+		<dict>
+			<key>className</key>
+			<string>IDECommandLineBuildLog</string>
+			<key>documentTypeString</key>
+			<string>&lt;nil&gt;</string>
+			<key>domainType</key>
+			<string>Xcode.IDEActivityLogDomainType.BuildLog</string>
+			<key>fileName</key>
+			<string>DD8ED7E1-6267-43ED-B69E-0706C7297595.xcactivitylog</string>
+			<key>hasPrimaryLog</key>
+			<true/>
+			<key>primaryObservable</key>
+			<dict>
+				<key>highLevelStatus</key>
+				<string>E</string>
+				<key>totalNumberOfAnalyzerIssues</key>
+				<integer>0</integer>
+				<key>totalNumberOfErrors</key>
+				<integer>2</integer>
+				<key>totalNumberOfTestFailures</key>
+				<integer>0</integer>
+				<key>totalNumberOfWarnings</key>
+				<integer>0</integer>
+			</dict>
+			<key>schemeIdentifier-containerName</key>
+			<string>MobileMcpRealRunner project</string>
+			<key>schemeIdentifier-schemeName</key>
+			<string>MobileMcpRealRunner</string>
+			<key>schemeIdentifier-sharedScheme</key>
+			<integer>1</integer>
+			<key>signature</key>
+			<string>Building project MobileMcpRealRunner for testing with scheme MobileMcpRealRunner</string>
+			<key>timeStartedRecording</key>
+			<real>812176857.11816394</real>
+			<key>timeStoppedRecording</key>
+			<real>812176861.81510603</real>
+			<key>title</key>
+			<string>Building project MobileMcpRealRunner for testing with scheme MobileMcpRealRunner</string>
+			<key>uniqueIdentifier</key>
+			<string>DD8ED7E1-6267-43ED-B69E-0706C7297595</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

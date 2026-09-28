@@ -147,11 +147,37 @@ async fn main() -> std::io::Result<()> {
             eprintln!("iOS XCTest agent bridge stopped: {error}");
         }
     });
+    let ios_sim_agent_address =
+        std::env::var("MOBILE_MCP_IOS_SIM_AGENT_BIND").unwrap_or_else(|_| "127.0.0.1:18788".into());
+    let ios_sim_agent_address: SocketAddr = ios_sim_agent_address.parse().map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid MOBILE_MCP_IOS_SIM_AGENT_BIND address: {error}"),
+        )
+    })?;
+    let ios_sim_agent =
+        XCTestAgentBridge::new(std::env::var("MOBILE_MCP_IOS_SIM_AGENT_TOKEN").ok());
+    let ios_sim_listener = tokio::net::TcpListener::bind(ios_sim_agent_address).await?;
+    let ios_sim_agent_router = ios_sim_agent.router();
+    tokio::spawn(async move {
+        if let Err(error) = axum::serve(ios_sim_listener, ios_sim_agent_router).await {
+            eprintln!("iOS Simulator XCTest agent bridge stopped: {error}");
+        }
+    });
     let drivers: Vec<Arc<dyn mobile_robot_core::Robot>> = vec![
         Arc::new(AndroidRobot::new(adb_path, artifact_dir.clone())),
         Arc::new(ChromeRobot::from_env()),
         Arc::new(IosXCTestRobot::new(xcrun_path.clone(), ios_agent)),
-        Arc::new(IosSimulatorRobot::new(xcrun_path, artifact_dir)),
+        Arc::new(IosSimulatorRobot::with_xctest_runner_and_agent(
+            xcrun_path,
+            "xcodebuild",
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../robot-ios-sim/xctest-runner/MobileMcpSimulatorRunner.xcodeproj"),
+            artifact_dir,
+            ios_sim_agent,
+            ios_sim_agent_address.ip().to_string(),
+            ios_sim_agent_address.port(),
+        )),
         Arc::new(MacosRobot::from_env()),
         Arc::new(WindowsRobot::from_env()),
     ];

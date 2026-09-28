@@ -16,15 +16,18 @@ use mobile_robot_core::{
     Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiAction, UiElement,
     UiRunnerStatus,
 };
+use mobile_robot_ios_real::XCTestAgentBridge;
 use serde::Deserialize;
+use serde_json::{Value, json};
 use tokio::{
     process::{Child, Command},
     sync::Mutex,
-    time::Instant,
+    time::{Instant, sleep},
 };
 
 static ARTIFACT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const XCTEST_BUILD_TIMEOUT: Duration = Duration::from_secs(90);
+const XCTEST_RUNNER_BUNDLE_ID: &str = "com.mobilemcp.simulatorrunner.tests.xctrunner";
 
 #[derive(Clone)]
 pub struct IosSimulatorRobot {
@@ -35,6 +38,11 @@ pub struct IosSimulatorRobot {
     recordings: Arc<Mutex<HashMap<String, ActiveRecording>>>,
     active_apps: Arc<Mutex<HashMap<String, String>>>,
     xctest_lock: Arc<Mutex<()>>,
+    simulator_agent: Option<XCTestAgentBridge>,
+    simulator_agent_host: String,
+    simulator_agent_port: u16,
+    persistent_agents: Arc<Mutex<HashMap<String, Child>>>,
+    agent_apps: Arc<Mutex<HashMap<String, String>>>,
 }
 
 struct ActiveRecording {
@@ -60,6 +68,46 @@ impl IosSimulatorRobot {
         xctest_project: impl Into<PathBuf>,
         artifact_dir: impl Into<PathBuf>,
     ) -> Self {
+        Self::with_xctest_runner_and_agent_option(
+            xcrun_path,
+            xcodebuild_path,
+            xctest_project,
+            artifact_dir,
+            None,
+            "127.0.0.1",
+            0,
+        )
+    }
+
+    pub fn with_xctest_runner_and_agent(
+        xcrun_path: impl Into<String>,
+        xcodebuild_path: impl Into<String>,
+        xctest_project: impl Into<PathBuf>,
+        artifact_dir: impl Into<PathBuf>,
+        simulator_agent: XCTestAgentBridge,
+        simulator_agent_host: impl Into<String>,
+        simulator_agent_port: u16,
+    ) -> Self {
+        Self::with_xctest_runner_and_agent_option(
+            xcrun_path,
+            xcodebuild_path,
+            xctest_project,
+            artifact_dir,
+            Some(simulator_agent),
+            simulator_agent_host,
+            simulator_agent_port,
+        )
+    }
+
+    fn with_xctest_runner_and_agent_option(
+        xcrun_path: impl Into<String>,
+        xcodebuild_path: impl Into<String>,
+        xctest_project: impl Into<PathBuf>,
+        artifact_dir: impl Into<PathBuf>,
+        simulator_agent: Option<XCTestAgentBridge>,
+        simulator_agent_host: impl Into<String>,
+        simulator_agent_port: u16,
+    ) -> Self {
         Self {
             xcrun_path: xcrun_path.into(),
             xcodebuild_path: xcodebuild_path.into(),
@@ -68,6 +116,11 @@ impl IosSimulatorRobot {
             recordings: Arc::default(),
             active_apps: Arc::default(),
             xctest_lock: Arc::default(),
+            simulator_agent,
+            simulator_agent_host: simulator_agent_host.into(),
+            simulator_agent_port,
+            persistent_agents: Arc::default(),
+            agent_apps: Arc::default(),
         }
     }
 
@@ -128,13 +181,18 @@ impl IosSimulatorRobot {
 
     fn next_recording_path(&self, device_id: &str) -> PathBuf {
         self.artifact_dir.join(format!(
-            "mobile-mcp-ios-recording-{device_id}-{}.mp4",
+            "mobile-mcp-ios-recording-{device_id}-{}-{}.mp4",
+            std::process::id(),
             ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ))
     }
 
     fn xctest_derived_data() -> PathBuf {
-        std::env::temp_dir().join("mobile-mcp-ios-xctest-derived-data")
+        std::env::var_os("MOBILE_MCP_IOS_XCTEST_DERIVED_DATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::temp_dir().join("mobile-mcp-ios-xctest-derived-data-persistent-agent")
+            })
     }
 
     fn xctest_runner_ready(derived_data: &Path) -> bool {
@@ -235,21 +293,139 @@ impl IosSimulatorRobot {
             })
     }
 
-    async fn run_xctest(
+    async fn stop_persistent_agent(&self, device_id: &str) {
+        if let Some(mut child) = self.persistent_agents.lock().await.remove(device_id) {
+            let _ = child.start_kill();
+            let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
+        }
+        let _ = self
+            .simctl(&[
+                "simctl".into(),
+                "terminate".into(),
+                device_id.into(),
+                XCTEST_RUNNER_BUNDLE_ID.into(),
+            ])
+            .await;
+    }
+
+    async fn wait_for_persistent_agent(
+        &self,
+        agent: &XCTestAgentBridge,
+        timeout: Duration,
+    ) -> Result<Value, RobotError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match agent
+                .dispatch("health", json!({}), Duration::from_secs(2))
+                .await
+            {
+                Ok(value) => return Ok(value),
+                Err(error) if Instant::now() < deadline => {
+                    let _ = error;
+                    sleep(Duration::from_millis(250)).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    async fn ensure_agent_app(
         &self,
         device_id: &str,
         target_app_id: &str,
-        action: &str,
-        values: &[(&str, String)],
-        timeout: Option<Duration>,
-    ) -> Result<RunnerResult, RobotError> {
-        Self::valid_device_id(device_id)?;
-        if !self.xctest_project.is_dir() {
-            return Err(RobotError::CommandFailed(format!(
-                "bundled XCTest project was not found at {}",
-                self.xctest_project.display()
-            )));
+        agent: &XCTestAgentBridge,
+        current_app: &str,
+    ) -> Result<(), RobotError> {
+        let bound_to_session = self
+            .agent_apps
+            .lock()
+            .await
+            .get(device_id)
+            .is_some_and(|app_id| app_id == target_app_id);
+        if current_app != target_app_id || !bound_to_session {
+            agent
+                .dispatch(
+                    "launch",
+                    json!({ "bundleId": target_app_id }),
+                    Duration::from_secs(20),
+                )
+                .await?;
+            self.agent_apps
+                .lock()
+                .await
+                .insert(device_id.into(), target_app_id.into());
         }
+        Ok(())
+    }
+
+    async fn ensure_persistent_agent(
+        &self,
+        device_id: &str,
+        target_app_id: &str,
+        project: &str,
+        destination: &str,
+        derived_data: &Path,
+    ) -> Result<(), RobotError> {
+        let agent = self.simulator_agent.clone().ok_or_else(|| {
+            RobotError::CommandFailed(
+                "iOS Simulator XCTest agent is not configured for this server".into(),
+            )
+        })?;
+
+        if let Ok(health) = agent
+            .dispatch("health", json!({}), Duration::from_secs(2))
+            .await
+        {
+            let current_app = health
+                .get("bundleId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            self.ensure_agent_app(device_id, target_app_id, &agent, current_app)
+                .await?;
+            return Ok(());
+        }
+
+        let agent_is_running = {
+            let mut agents = self.persistent_agents.lock().await;
+            match agents.get_mut(device_id) {
+                Some(child) => match child.try_wait() {
+                    Ok(Some(_)) | Err(_) => {
+                        agents.remove(device_id);
+                        false
+                    }
+                    Ok(None) => true,
+                },
+                None => false,
+            }
+        };
+        if agent_is_running {
+            if let Ok(health) = self
+                .wait_for_persistent_agent(&agent, Duration::from_secs(15))
+                .await
+            {
+                let current_app = health
+                    .get("bundleId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                self.ensure_agent_app(device_id, target_app_id, &agent, current_app)
+                    .await?;
+                return Ok(());
+            }
+            self.stop_persistent_agent(device_id).await;
+        } else {
+            // A previous MCP process may have left the agent app running while
+            // its Child handle was dropped. Terminate only that helper before
+            // starting a replacement; the compiled products stay cached.
+            let _ = self
+                .simctl(&[
+                    "simctl".into(),
+                    "terminate".into(),
+                    device_id.into(),
+                    XCTEST_RUNNER_BUNDLE_ID.into(),
+                ])
+                .await;
+        }
+
         tokio::fs::create_dir_all(&self.artifact_dir)
             .await
             .map_err(|error| {
@@ -258,142 +434,158 @@ impl IosSimulatorRobot {
                 ))
             })?;
         let artifact_dir = Self::absolute_path(&self.artifact_dir)?;
-        let sequence = ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let result_path =
-            artifact_dir.join(format!("mobile-mcp-ios-xctest-{device_id}-{sequence}.json"));
-        // Keep DerivedData independent from request artifacts so every MCP server
-        // process can reuse the compiled XCTest runner. The mutex below serializes
-        // access to this shared cache.
-        let derived_data = Self::xctest_derived_data();
-        let project = self.xctest_project.to_string_lossy().into_owned();
-        let destination = format!("platform=iOS Simulator,id={device_id}");
-        let derived_data_argument = derived_data.to_string_lossy().into_owned();
-        let runner_env = values
-            .iter()
-            .map(|(name, value)| (format!("TEST_RUNNER_{name}"), value.clone()))
-            .collect::<Vec<_>>();
-        // Xcode uses a shared DerivedData directory, so concurrent UI calls must not
-        // build or test against it at the same time.
-        let _xctest_lock = self.xctest_lock.lock().await;
-        self.ensure_xctest_runner(&project, &destination, &derived_data)
-            .await?;
-        let mut command = Command::new(&self.xcodebuild_path);
-        command
-            .args([
-                "test-without-building",
-                "-project",
-                &project,
-                "-scheme",
-                "MobileMcpSimulatorRunner",
-                "-destination",
-                &destination,
-                "-only-testing:MobileMcpSimulatorRunnerUITests/MobileMcpSimulatorRunnerUITests/testDispatch",
-                "-derivedDataPath",
-                &derived_data_argument,
-            ])
-            .env("TEST_RUNNER_MOBILE_MCP_RESULT_PATH", &result_path)
-            .env("TEST_RUNNER_MOBILE_MCP_ACTION", action)
-            .env("TEST_RUNNER_MOBILE_MCP_TARGET_APP_ID", target_app_id)
-            .envs(runner_env)
-            .stdin(Stdio::null())
-            .kill_on_drop(true);
-        // XCTest must not write into this process's JSON-RPC stdout. Persist both
-        // streams beside the result for every invocation, including normal runs.
-        let stdout_path = result_path.with_extension("stdout.log");
-        let stderr_path = result_path.with_extension("stderr.log");
+        let stdout_path = artifact_dir.join(format!(
+            "mobile-mcp-ios-xctest-agent-{device_id}.stdout.log"
+        ));
+        let stderr_path = artifact_dir.join(format!(
+            "mobile-mcp-ios-xctest-agent-{device_id}.stderr.log"
+        ));
         let stdout = std::fs::File::create(&stdout_path).map_err(|error| {
             RobotError::CommandFailed(format!(
-                "could not create XCTest stdout log {}: {error}",
+                "could not create XCTest agent stdout log {}: {error}",
                 stdout_path.display()
             ))
         })?;
         let stderr = std::fs::File::create(&stderr_path).map_err(|error| {
             RobotError::CommandFailed(format!(
-                "could not create XCTest stderr log {}: {error}",
+                "could not create XCTest agent stderr log {}: {error}",
                 stderr_path.display()
             ))
         })?;
+        let derived_data_argument = derived_data.to_string_lossy().into_owned();
+        let mut command = Command::new(&self.xcodebuild_path);
         command
+            .args([
+                "test-without-building",
+                "-project",
+                project,
+                "-scheme",
+                "MobileMcpSimulatorRunner",
+                "-destination",
+                destination,
+                "-only-testing:MobileMcpSimulatorRunnerUITests/MobileMcpSimulatorRunnerUITests/testServe",
+                "-derivedDataPath",
+                &derived_data_argument,
+            ])
+            .env("TEST_RUNNER_MOBILE_MCP_HOSTS", &self.simulator_agent_host)
+            .env(
+                "TEST_RUNNER_MOBILE_MCP_PORT",
+                self.simulator_agent_port.to_string(),
+            )
+            .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
-        let mut child = command.spawn().map_err(|error| {
+        if let Ok(token) = std::env::var("MOBILE_MCP_IOS_SIM_AGENT_TOKEN") {
+            command.env("TEST_RUNNER_MOBILE_MCP_TOKEN", token);
+        }
+        // Keep the long-lived XCTest process outside the MCP server's process
+        // group so stopping one MCP session does not stop the cached agent.
+        #[cfg(unix)]
+        command.process_group(0);
+        let child = command.spawn().map_err(|error| {
             RobotError::CommandFailed(format!(
-                "could not start bundled XCTest runner at {}: {error}",
+                "could not start persistent XCTest agent at {}: {error}",
                 self.xcodebuild_path
             ))
         })?;
-        let deadline = timeout.map(|duration| Instant::now() + duration);
-        let result = loop {
-            if let Ok(bytes) = tokio::fs::read(&result_path).await {
-                break serde_json::from_slice::<RunnerResult>(&bytes).map_err(|error| {
-                    RobotError::CommandFailed(format!(
-                        "XCTest runner wrote an invalid result: {error}"
-                    ))
-                });
-            }
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    break Err(RobotError::CommandFailed(format!(
-                        "XCTest runner did not return a result (status {})",
-                        status
-                            .code()
-                            .map_or_else(|| "unknown".into(), |code| code.to_string())
-                    )));
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    break Err(RobotError::CommandFailed(format!(
-                        "could not wait for XCTest runner: {error}"
-                    )));
-                }
-            }
-            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                break Err(RobotError::CommandFailed(format!(
-                    "XCTest runner timed out after {} seconds",
-                    timeout.expect("deadline exists").as_secs()
-                )));
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        };
-        if child.try_wait().ok().flatten().is_none() {
-            let _ = child.start_kill();
-            let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-        }
-        let _ = tokio::fs::remove_file(&result_path).await;
-        let result = result?;
-        if !result.ok {
-            return Err(RobotError::CommandFailed(
-                result
-                    .error
-                    .unwrap_or_else(|| "XCTest runner failed".into()),
-            ));
-        }
-        Ok(result)
+        self.persistent_agents
+            .lock()
+            .await
+            .insert(device_id.into(), child);
+
+        let health = self
+            .wait_for_persistent_agent(&agent, Duration::from_secs(60))
+            .await
+            .map_err(|error| {
+                RobotError::CommandFailed(format!(
+                    "persistent XCTest agent did not become ready: {error}"
+                ))
+            })?;
+        let current_app = health
+            .get("bundleId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        self.ensure_agent_app(device_id, target_app_id, &agent, current_app)
+            .await?;
+        Ok(())
     }
-}
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RunnerResult {
-    ok: bool,
-    error: Option<String>,
-    #[serde(default)]
-    elements: Vec<RunnerElement>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RunnerElement {
-    class_name: String,
-    resource_id: String,
-    text: String,
-    content_description: String,
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-    clickable: bool,
-    enabled: bool,
+    async fn run_xctest(
+        &self,
+        device_id: &str,
+        target_app_id: &str,
+        action: &str,
+        values: &[(&str, String)],
+        timeout: Option<Duration>,
+    ) -> Result<Value, RobotError> {
+        Self::valid_device_id(device_id)?;
+        if !self.xctest_project.is_dir() {
+            return Err(RobotError::CommandFailed(format!(
+                "bundled XCTest project was not found at {}",
+                self.xctest_project.display()
+            )));
+        }
+        let derived_data = Self::xctest_derived_data();
+        let project = self.xctest_project.to_string_lossy().into_owned();
+        let destination = format!("platform=iOS Simulator,id={device_id}");
+        let _xctest_lock = self.xctest_lock.lock().await;
+        self.ensure_xctest_runner(&project, &destination, &derived_data)
+            .await?;
+        self.ensure_persistent_agent(
+            device_id,
+            target_app_id,
+            &project,
+            &destination,
+            &derived_data,
+        )
+        .await?;
+        let agent = self.simulator_agent.clone().ok_or_else(|| {
+            RobotError::CommandFailed(
+                "iOS Simulator XCTest agent is not configured for this server".into(),
+            )
+        })?;
+        let params = values
+            .iter()
+            .filter_map(|(name, value)| match *name {
+                "MOBILE_MCP_X" => Some(("x", json!(value.parse::<f64>().ok()?))),
+                "MOBILE_MCP_Y" => Some(("y", json!(value.parse::<f64>().ok()?))),
+                "MOBILE_MCP_END_X" => Some(("toX", json!(value.parse::<f64>().ok()?))),
+                "MOBILE_MCP_END_Y" => Some(("toY", json!(value.parse::<f64>().ok()?))),
+                "MOBILE_MCP_DURATION_SECONDS" => Some((
+                    "durationMs",
+                    json!(value.parse::<f64>().ok()?.mul_add(1000.0, 0.0) as u64),
+                )),
+                "MOBILE_MCP_TEXT" => Some(("text", json!(value))),
+                "MOBILE_MCP_ELEMENT_FILTER" => Some(("filter", json!(value))),
+                "MOBILE_MCP_MAX_RESULTS" => {
+                    Some(("maxResults", json!(value.parse::<usize>().ok()?)))
+                }
+                _ => None,
+            })
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect::<serde_json::Map<_, _>>();
+        let timeout = timeout.unwrap_or(Duration::from_secs(45));
+        match action {
+            "tap" => agent.dispatch("tap", Value::Object(params), timeout).await,
+            "type" => agent.dispatch("text", Value::Object(params), timeout).await,
+            "swipe" => {
+                let mut params = params;
+                if let Some(value) = params.remove("x") {
+                    params.insert("fromX".into(), value);
+                }
+                if let Some(value) = params.remove("y") {
+                    params.insert("fromY".into(), value);
+                }
+                agent
+                    .dispatch("swipe", Value::Object(params), timeout)
+                    .await
+            }
+            "list-elements" => agent.dispatch("dump", Value::Object(params), timeout).await,
+            _ => Err(RobotError::Unsupported(format!(
+                "persistent XCTest agent action {action} is not supported"
+            ))),
+        }
+    }
 }
 
 #[async_trait]
@@ -667,17 +859,79 @@ impl Robot for IosSimulatorRobot {
             return Err(RobotError::InvalidInput("actions must not be empty".into()));
         }
         let app_id = self.active_app(device_id).await?;
-        let batch = serde_json::to_string(actions)
-            .map_err(|error| RobotError::InvalidInput(error.to_string()))?;
-        self.run_xctest(
-            device_id,
-            &app_id,
-            "batch",
-            &[("MOBILE_MCP_BATCH", batch)],
-            None,
-        )
-        .await
-        .map(|_| ())
+        for action in actions {
+            match action {
+                UiAction::Tap { x, y } => {
+                    Self::valid_point(Point { x: *x, y: *y }, "tap")?;
+                    self.run_xctest(
+                        device_id,
+                        &app_id,
+                        "tap",
+                        &[
+                            ("MOBILE_MCP_X", x.to_string()),
+                            ("MOBILE_MCP_Y", y.to_string()),
+                        ],
+                        None,
+                    )
+                    .await?;
+                }
+                UiAction::Type { text } => {
+                    if text.is_empty() || text.contains('\0') {
+                        return Err(RobotError::InvalidInput(
+                            "text must be non-empty and must not contain NUL".into(),
+                        ));
+                    }
+                    self.run_xctest(
+                        device_id,
+                        &app_id,
+                        "type",
+                        &[("MOBILE_MCP_TEXT", text.clone())],
+                        None,
+                    )
+                    .await?;
+                }
+                UiAction::Swipe {
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    duration_ms,
+                } => {
+                    Self::valid_point(
+                        Point {
+                            x: *start_x,
+                            y: *start_y,
+                        },
+                        "swipe start",
+                    )?;
+                    Self::valid_point(
+                        Point {
+                            x: *end_x,
+                            y: *end_y,
+                        },
+                        "swipe end",
+                    )?;
+                    self.run_xctest(
+                        device_id,
+                        &app_id,
+                        "swipe",
+                        &[
+                            ("MOBILE_MCP_X", start_x.to_string()),
+                            ("MOBILE_MCP_Y", start_y.to_string()),
+                            ("MOBILE_MCP_END_X", end_x.to_string()),
+                            ("MOBILE_MCP_END_Y", end_y.to_string()),
+                            (
+                                "MOBILE_MCP_DURATION_SECONDS",
+                                format!("{:.3}", duration_ms.unwrap_or(100) as f64 / 1_000.0),
+                            ),
+                        ],
+                        None,
+                    )
+                    .await?;
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn ui_runner_status(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
@@ -710,29 +964,81 @@ impl Robot for IosSimulatorRobot {
         let result = self
             .run_xctest(device_id, &app_id, "list-elements", &values, None)
             .await?;
-        Ok(result
-            .elements
+        let elements: Vec<AgentElement> = serde_json::from_value(
+            result
+                .get("elements")
+                .cloned()
+                .unwrap_or_else(|| Value::Array(Vec::new())),
+        )
+        .map_err(|error| {
+            RobotError::CommandFailed(format!(
+                "invalid persistent XCTest element payload: {error}"
+            ))
+        })?;
+        let filter = filter.map(str::to_ascii_lowercase);
+        let mut elements = elements
             .into_iter()
-            .map(|element| UiElement {
-                class_name: element.class_name,
-                resource_id: non_empty(element.resource_id),
-                text: non_empty(element.text),
-                content_description: non_empty(element.content_description),
-                bounds: Bounds {
-                    left: element.left,
-                    top: element.top,
-                    right: element.right,
-                    bottom: element.bottom,
-                },
-                clickable: element.clickable,
-                enabled: element.enabled,
+            .map(AgentElement::into_ui_element)
+            .filter(|element| {
+                filter.as_deref().is_none_or(|filter| {
+                    [
+                        element.resource_id.as_deref(),
+                        element.text.as_deref(),
+                        element.content_description.as_deref(),
+                        Some(element.class_name.as_str()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .any(|value| value.to_ascii_lowercase().contains(filter))
+                })
             })
-            .collect())
+            .collect::<Vec<_>>();
+        if let Some(max_results) = max_results {
+            elements.truncate(max_results);
+        }
+        Ok(elements)
     }
 }
 
-fn non_empty(value: String) -> Option<String> {
-    (!value.is_empty()).then_some(value)
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentElement {
+    node_id: String,
+    automation_id: Option<String>,
+    text: Option<String>,
+    label: Option<String>,
+    value: Option<String>,
+    role: String,
+    bounds: AgentBounds,
+    enabled: bool,
+    clickable: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentBounds {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+impl AgentElement {
+    fn into_ui_element(self) -> UiElement {
+        UiElement {
+            class_name: self.role,
+            resource_id: self.automation_id.or(Some(self.node_id)),
+            text: self.text.or(self.value).filter(|value| !value.is_empty()),
+            content_description: self.label.filter(|value| !value.is_empty()),
+            bounds: Bounds {
+                left: self.bounds.x.round() as i32,
+                top: self.bounds.y.round() as i32,
+                right: (self.bounds.x + self.bounds.width).round() as i32,
+                bottom: (self.bounds.y + self.bounds.height).round() as i32,
+            },
+            clickable: self.clickable,
+            enabled: self.enabled,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -804,19 +1110,21 @@ mod tests {
 
     #[test]
     fn decodes_xctest_accessibility_elements() {
-        let result: RunnerResult = serde_json::from_str(
-            r#"{"ok":true,"elements":[{"className":"Button","resourceId":"save-button","text":"Save","contentDescription":"Save changes","left":20,"top":100,"right":100,"bottom":144,"clickable":true,"enabled":true}]}"#,
+        let element: AgentElement = serde_json::from_str(
+            r#"{"nodeId":"ios-1-0","automationId":"save-button","text":"Save","label":"Save changes","value":null,"role":"button","bounds":{"x":20,"y":100,"width":80,"height":44},"clickable":true,"enabled":true}"#,
         )
         .unwrap();
-
-        assert!(result.ok);
-        assert_eq!(result.elements.len(), 1);
-        let element = &result.elements[0];
-        assert_eq!(element.class_name, "Button");
-        assert_eq!(element.resource_id, "save-button");
-        assert_eq!(element.content_description, "Save changes");
+        let element = element.into_ui_element();
+        assert_eq!(element.class_name, "button");
+        assert_eq!(element.resource_id.as_deref(), Some("save-button"));
+        assert_eq!(element.content_description.as_deref(), Some("Save changes"));
         assert_eq!(
-            (element.left, element.top, element.right, element.bottom),
+            (
+                element.bounds.left,
+                element.bounds.top,
+                element.bounds.right,
+                element.bounds.bottom,
+            ),
             (20, 100, 100, 144)
         );
         assert!(element.clickable);

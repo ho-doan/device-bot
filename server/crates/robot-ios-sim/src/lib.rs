@@ -20,9 +20,11 @@ use serde::Deserialize;
 use tokio::{
     process::{Child, Command},
     sync::Mutex,
+    time::Instant,
 };
 
 static ARTIFACT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const XCTEST_BUILD_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[derive(Clone)]
 pub struct IosSimulatorRobot {
@@ -131,6 +133,77 @@ impl IosSimulatorRobot {
         ))
     }
 
+    fn xctest_derived_data() -> PathBuf {
+        std::env::temp_dir().join("mobile-mcp-ios-xctest-derived-data")
+    }
+
+    fn xctest_runner_ready(derived_data: &Path) -> bool {
+        let products = derived_data.join("Build/Products/Debug-iphonesimulator");
+        products.join("MobileMcpSimulatorRunnerHost.app").is_dir()
+            && products
+                .join("MobileMcpSimulatorRunnerUITests-Runner.app")
+                .is_dir()
+    }
+
+    async fn ensure_xctest_runner(
+        &self,
+        project: &str,
+        destination: &str,
+        derived_data: &Path,
+    ) -> Result<(), RobotError> {
+        if Self::xctest_runner_ready(derived_data) {
+            return Ok(());
+        }
+
+        let derived_data = derived_data.to_string_lossy().into_owned();
+        let output = tokio::time::timeout(
+            XCTEST_BUILD_TIMEOUT,
+            Command::new(&self.xcodebuild_path)
+                .args([
+                    "build-for-testing",
+                    "-project",
+                    project,
+                    "-scheme",
+                    "MobileMcpSimulatorRunner",
+                    "-destination",
+                    destination,
+                    "-derivedDataPath",
+                    &derived_data,
+                ])
+                .stdin(Stdio::null())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| {
+            RobotError::CommandFailed(format!(
+                "bundled XCTest runner build timed out after {} seconds",
+                XCTEST_BUILD_TIMEOUT.as_secs()
+            ))
+        })?
+        .map_err(|error| {
+            RobotError::CommandFailed(format!(
+                "could not build bundled XCTest runner at {}: {error}",
+                self.xcodebuild_path
+            ))
+        })?;
+
+        if output.status.success() && Self::xctest_runner_ready(Path::new(&derived_data)) {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let details = if stderr.is_empty() { stdout } else { stderr };
+        Err(RobotError::CommandFailed(format!(
+            "bundled XCTest runner build failed with status {}: {details}",
+            output
+                .status
+                .code()
+                .map_or_else(|| "unknown".into(), |code| code.to_string())
+        )))
+    }
+
     /// Resolves an artifact path before passing it into the XCTest process.
     ///
     /// XCTest runs in a different working directory from the MCP server, so a
@@ -168,6 +241,7 @@ impl IosSimulatorRobot {
         target_app_id: &str,
         action: &str,
         values: &[(&str, String)],
+        timeout: Option<Duration>,
     ) -> Result<RunnerResult, RobotError> {
         Self::valid_device_id(device_id)?;
         if !self.xctest_project.is_dir() {
@@ -190,10 +264,10 @@ impl IosSimulatorRobot {
         // Keep DerivedData independent from request artifacts so every MCP server
         // process can reuse the compiled XCTest runner. The mutex below serializes
         // access to this shared cache.
-        let derived_data = std::env::temp_dir().join("mobile-mcp-ios-xctest-derived-data");
+        let derived_data = Self::xctest_derived_data();
         let project = self.xctest_project.to_string_lossy().into_owned();
         let destination = format!("platform=iOS Simulator,id={device_id}");
-        let derived_data = derived_data.to_string_lossy().into_owned();
+        let derived_data_argument = derived_data.to_string_lossy().into_owned();
         let runner_env = values
             .iter()
             .map(|(name, value)| (format!("TEST_RUNNER_{name}"), value.clone()))
@@ -201,6 +275,8 @@ impl IosSimulatorRobot {
         // Xcode uses a shared DerivedData directory, so concurrent UI calls must not
         // build or test against it at the same time.
         let _xctest_lock = self.xctest_lock.lock().await;
+        self.ensure_xctest_runner(&project, &destination, &derived_data)
+            .await?;
         let mut command = Command::new(&self.xcodebuild_path);
         command
             .args([
@@ -213,7 +289,7 @@ impl IosSimulatorRobot {
                 &destination,
                 "-only-testing:MobileMcpSimulatorRunnerUITests/MobileMcpSimulatorRunnerUITests/testDispatch",
                 "-derivedDataPath",
-                &derived_data,
+                &derived_data_argument,
             ])
             .env("TEST_RUNNER_MOBILE_MCP_RESULT_PATH", &result_path)
             .env("TEST_RUNNER_MOBILE_MCP_ACTION", action)
@@ -221,47 +297,76 @@ impl IosSimulatorRobot {
             .envs(runner_env)
             .stdin(Stdio::null())
             .kill_on_drop(true);
-        let output = tokio::time::timeout(Duration::from_secs(45), command.output())
-            .await
-            .map_err(|_| {
-                RobotError::CommandFailed(
-                    "XCTest runner timed out after 45 seconds; use filter and maxResults for web views"
-                        .into(),
-                )
-            })?
-            .map_err(|error| {
-                RobotError::CommandFailed(format!(
-                    "could not start bundled XCTest runner at {}: {error}",
-                    self.xcodebuild_path
-                ))
-            })?;
-        let result = tokio::fs::read(&result_path)
-            .await
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<RunnerResult>(&bytes).ok());
-        let _ = tokio::fs::remove_file(&result_path).await;
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        let Some(result) = result else {
-            return Err(RobotError::CommandFailed(format!(
-                "XCTest runner did not return a result (status {}): {stderr}",
-                output
-                    .status
-                    .code()
-                    .map_or_else(|| "unknown".into(), |code| code.to_string())
-            )));
-        };
-        if !output.status.success() || !result.ok {
-            return Err(RobotError::CommandFailed(result.error.unwrap_or_else(
-                || {
-                    format!(
-                        "XCTest runner failed with status {}: {stderr}",
-                        output
-                            .status
+        // XCTest must not write into this process's JSON-RPC stdout. Persist both
+        // streams beside the result for every invocation, including normal runs.
+        let stdout_path = result_path.with_extension("stdout.log");
+        let stderr_path = result_path.with_extension("stderr.log");
+        let stdout = std::fs::File::create(&stdout_path).map_err(|error| {
+            RobotError::CommandFailed(format!(
+                "could not create XCTest stdout log {}: {error}",
+                stdout_path.display()
+            ))
+        })?;
+        let stderr = std::fs::File::create(&stderr_path).map_err(|error| {
+            RobotError::CommandFailed(format!(
+                "could not create XCTest stderr log {}: {error}",
+                stderr_path.display()
+            ))
+        })?;
+        command
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
+        let mut child = command.spawn().map_err(|error| {
+            RobotError::CommandFailed(format!(
+                "could not start bundled XCTest runner at {}: {error}",
+                self.xcodebuild_path
+            ))
+        })?;
+        let deadline = timeout.map(|duration| Instant::now() + duration);
+        let result = loop {
+            if let Ok(bytes) = tokio::fs::read(&result_path).await {
+                break serde_json::from_slice::<RunnerResult>(&bytes).map_err(|error| {
+                    RobotError::CommandFailed(format!(
+                        "XCTest runner wrote an invalid result: {error}"
+                    ))
+                });
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    break Err(RobotError::CommandFailed(format!(
+                        "XCTest runner did not return a result (status {})",
+                        status
                             .code()
                             .map_or_else(|| "unknown".into(), |code| code.to_string())
-                    )
-                },
-            )));
+                    )));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    break Err(RobotError::CommandFailed(format!(
+                        "could not wait for XCTest runner: {error}"
+                    )));
+                }
+            }
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                break Err(RobotError::CommandFailed(format!(
+                    "XCTest runner timed out after {} seconds",
+                    timeout.expect("deadline exists").as_secs()
+                )));
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        if child.try_wait().ok().flatten().is_none() {
+            let _ = child.start_kill();
+            let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+        }
+        let _ = tokio::fs::remove_file(&result_path).await;
+        let result = result?;
+        if !result.ok {
+            return Err(RobotError::CommandFailed(
+                result
+                    .error
+                    .unwrap_or_else(|| "XCTest runner failed".into()),
+            ));
         }
         Ok(result)
     }
@@ -497,6 +602,7 @@ impl Robot for IosSimulatorRobot {
                 ("MOBILE_MCP_X", point.x.to_string()),
                 ("MOBILE_MCP_Y", point.y.to_string()),
             ],
+            None,
         )
         .await
         .map(|_| ())
@@ -514,6 +620,7 @@ impl Robot for IosSimulatorRobot {
             &app_id,
             "type",
             &[("MOBILE_MCP_TEXT", text.into())],
+            None,
         )
         .await
         .map(|_| ())
@@ -542,6 +649,7 @@ impl Robot for IosSimulatorRobot {
                     format!("{:.3}", duration_ms.unwrap_or(100) as f64 / 1_000.0),
                 ),
             ],
+            None,
         )
         .await
         .map(|_| ())
@@ -561,32 +669,26 @@ impl Robot for IosSimulatorRobot {
         let app_id = self.active_app(device_id).await?;
         let batch = serde_json::to_string(actions)
             .map_err(|error| RobotError::InvalidInput(error.to_string()))?;
-        self.run_xctest(device_id, &app_id, "batch", &[("MOBILE_MCP_BATCH", batch)])
-            .await
-            .map(|_| ())
+        self.run_xctest(
+            device_id,
+            &app_id,
+            "batch",
+            &[("MOBILE_MCP_BATCH", batch)],
+            None,
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn ui_runner_status(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
         Self::valid_device_id(device_id)?;
-        let products =
-            std::env::temp_dir().join("mobile-mcp-ios-xctest-derived-data/Build/Products");
-        let ready = std::fs::read_dir(&products)
-            .ok()
-            .into_iter()
-            .flatten()
-            .flatten()
-            .any(|entry| {
-                entry
-                    .path()
-                    .extension()
-                    .is_some_and(|extension| extension == "xctestrun")
-            });
+        let ready = Self::xctest_runner_ready(&Self::xctest_derived_data());
         Ok(UiRunnerStatus {
             ready,
             detail: if ready {
-                "XCTest cache ready for test-without-building".into()
+                "XCTest runner products ready for test-without-building".into()
             } else {
-                "XCTest cache missing; prewarm before recording".into()
+                "XCTest runner products missing; the next UI request will build them".into()
             },
         })
     }
@@ -606,7 +708,7 @@ impl Robot for IosSimulatorRobot {
             values.push(("MOBILE_MCP_MAX_RESULTS", max_results.to_string()));
         }
         let result = self
-            .run_xctest(device_id, &app_id, "list-elements", &values)
+            .run_xctest(device_id, &app_id, "list-elements", &values, None)
             .await?;
         Ok(result
             .elements
@@ -736,5 +838,28 @@ mod tests {
         );
         assert!(IosSimulatorRobot::valid_point(Point { x: -1.0, y: 0.0 }, "tap").is_err());
         assert!(IosSimulatorRobot::valid_point(Point { x: 12.6, y: 24.2 }, "tap").is_ok());
+    }
+
+    #[test]
+    fn xctest_runner_cache_requires_both_app_products() {
+        let derived_data = std::env::temp_dir().join(format!(
+            "mobile-mcp-ios-xctest-cache-test-{}",
+            ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let products = derived_data.join("Build/Products/Debug-iphonesimulator");
+        std::fs::create_dir_all(&products).unwrap();
+        std::fs::write(
+            derived_data.join("Build/Products/stale.xctestrun"),
+            "stale marker",
+        )
+        .unwrap();
+
+        assert!(!IosSimulatorRobot::xctest_runner_ready(&derived_data));
+        std::fs::create_dir(products.join("MobileMcpSimulatorRunnerHost.app")).unwrap();
+        assert!(!IosSimulatorRobot::xctest_runner_ready(&derived_data));
+        std::fs::create_dir(products.join("MobileMcpSimulatorRunnerUITests-Runner.app")).unwrap();
+        assert!(IosSimulatorRobot::xctest_runner_ready(&derived_data));
+
+        std::fs::remove_dir_all(derived_data).unwrap();
     }
 }

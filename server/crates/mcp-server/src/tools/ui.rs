@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use mobile_mcp_protocol::{ToolDefinition, ToolResult};
 use mobile_robot_core::Robot;
@@ -12,13 +12,14 @@ pub(super) fn definition() -> ToolDefinition {
     ToolDefinition {
         name: LIST_ELEMENTS_NAME.into(),
         title: Some("List accessibility elements on screen".into()),
-        description: "Return normalized accessibility elements. `filter` is applied by the platform driver and `maxResults` bounds the response.".into(),
+        description: "Return normalized accessibility elements. `filter` is applied by the platform driver, `maxResults` bounds the response, and optional `timeoutMs` bounds this MCP request.".into(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "deviceId": { "type": "string", "minLength": 1 },
                 "filter": { "type": "string", "minLength": 1 },
-                "maxResults": { "type": "integer", "minimum": 1, "maximum": 100 }
+                "maxResults": { "type": "integer", "minimum": 1, "maximum": 100 },
+                "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 60000 }
             },
             "required": ["deviceId"],
             "additionalProperties": false
@@ -45,10 +46,26 @@ pub(super) async fn list_elements(robot: &Arc<dyn Robot>, arguments: &Value) -> 
         Ok(None) => None,
         Err(error) => return error,
     };
-    match robot
-        .list_elements_filtered(&device_id, filter.as_deref(), max_results)
-        .await
-    {
+    let timeout = match optional_u64(arguments, "timeoutMs") {
+        Ok(Some(value @ 1..=60_000)) => Some(Duration::from_millis(value)),
+        Ok(Some(_)) => return ToolResult::execution_error("timeoutMs must be between 1 and 60000"),
+        Ok(None) => None,
+        Err(error) => return error,
+    };
+    let list = robot.list_elements_filtered(&device_id, filter.as_deref(), max_results);
+    let result = match timeout {
+        Some(timeout) => match tokio::time::timeout(timeout, list).await {
+            Ok(result) => result,
+            Err(_) => {
+                return ToolResult::execution_error(format!(
+                    "mobile_list_elements_on_screen timed out after {}ms",
+                    timeout.as_millis()
+                ));
+            }
+        },
+        None => list.await,
+    };
+    match result {
         Ok(elements) => ToolResult::structured(json!({ "elements": elements })),
         Err(error) => ToolResult::execution_error(error.to_string()),
     }

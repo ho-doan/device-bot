@@ -105,9 +105,13 @@ final class MobileMcpSimulatorRunnerUITests: XCTestCase {
     } else {
       query = app.descendants(matching: .any)
     }
-    let count = min(query.count, max(maxResults ?? query.count, 1))
-    return (0..<count).map { index in
+    // Do not access query.count: for a WebKit view it forces XCTest to walk the
+    // complete accessibility tree even when the caller only requested a few
+    // filtered matches. `element(boundBy:)` stops at the requested limit.
+    let limit = max(maxResults ?? 1, 1)
+    return (0..<limit).compactMap { index in
       let element = query.element(boundBy: index)
+      guard element.exists else { return nil }
       let frame = element.frame
       return [
         "className": String(describing: element.elementType),

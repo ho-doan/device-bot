@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Kịch bản MCP: mở Chrome Incognito, tìm babyshark, mở video đầu tiên, phát và quay màn hình.
+# Kịch bản MCP: mở Chrome Incognito, tìm ChatGPT, nhập "hello", gửi và quay màn hình.
 # Cần jq để đọc structuredContent trả về từ MCP.
 #
 # Chạy: ./server/examples/example.sh
@@ -106,10 +106,10 @@ tap_first_element() {
   return 1
 }
 
-tap_first_video_result() {
+tap_chatgpt_search_result() {
   local arguments candidate x y attempt
   arguments="$(jq -cn --arg device "$DEVICE_ID" \
-    '{deviceId:$device, filter:"Baby Shark", maxResults:20}')"
+    '{deviceId:$device, filter:"ChatGPT", maxResults:20}')"
   for ((attempt = 1; attempt <= 12; attempt++)); do
     call_tool mobile_list_elements_on_screen "$arguments"
     candidate="$(jq -cer '
@@ -117,8 +117,7 @@ tap_first_video_result() {
         .result.structuredContent.elements[]
         | select(
             .className == "AXLink" and .clickable == true and
-            (.contentDescription // "" | contains("YouTube")) and
-            .bounds.left >= 200 and .bounds.right <= 750 and
+            (.contentDescription // "" | ascii_downcase | contains("chatgpt.com")) and
             .bounds.top != null and .bounds.bottom != null
           )
         | {x: ((.bounds.left + .bounds.right) / 2), y: ((.bounds.top + .bounds.bottom) / 2)}
@@ -133,11 +132,11 @@ tap_first_video_result() {
     fi
     sleep 0.25
   done
-  printf 'Không tìm thấy kết quả video YouTube đầu tiên trên %s sau tối đa 3 giây.\n' "$DEVICE_ID" >&2
+  printf 'Không tìm thấy kết quả ChatGPT chính thức trên %s sau tối đa 3 giây.\n' "$DEVICE_ID" >&2
   return 1
 }
 
-require_clickable_element() {
+require_element() {
   local filter="$1" arguments candidate attempt
   arguments="$(jq -cn --arg device "$DEVICE_ID" --arg filter "$filter" \
     '{deviceId:$device, filter:$filter, maxResults:10}')"
@@ -145,12 +144,12 @@ require_clickable_element() {
     call_tool mobile_list_elements_on_screen "$arguments"
     candidate="$(jq -cer '
       .result.structuredContent.elements[]
-      | select(.clickable == true and .bounds.left != null and .bounds.right != null)
+      | select(.bounds.left != null and .bounds.right != null and .bounds.top != null and .bounds.bottom != null)
     ' <<<"$last_response" 2>/dev/null || true)"
     [[ -n "$candidate" ]] && return 0
     sleep 0.25
   done
-  printf 'Không xác nhận được element có thể click %q trên %s sau tối đa 3 giây.\n' "$filter" "$DEVICE_ID" >&2
+  printf 'Không xác nhận được element %q trên %s sau tối đa 3 giây.\n' "$filter" "$DEVICE_ID" >&2
   return 1
 }
 
@@ -214,16 +213,16 @@ sleep "$SETTLE_SECONDS"
 # nếu Chrome chưa expose tab strip qua accessibility trong thời gian khởi động.
 tap_first_element 'New Tab' true || printf 'Không tìm thấy New Tab; dùng tab hiện tại.\n' >&2
 tap_first_element 'Address and search bar' false
-call_tool mobile_type_keys "$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device, text:"babyshark\n"}')"
+call_tool mobile_type_keys "$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device, text:"ChatGPT\n"}')"
 sleep "$SETTLE_SECONDS"
 dismiss_translate_popup_if_present
 
-# UI web: chọn chính xác link của kết quả YouTube đầu tiên, không nhầm nút
-# gợi ý truy vấn "baby shark" nằm trong cùng kết quả filter.
-tap_first_video_result
+# UI web: chỉ chọn kết quả chính thức chatgpt.com, tránh quảng cáo hoặc link bên thứ ba.
+tap_chatgpt_search_result
 sleep "$SETTLE_SECONDS"
-tap_first_element 'Play' true
-# Khi video đang chạy, accessibility của YouTube đổi action của player từ
-# Play sang Pause. Đây là assertion cho step cuối, không chỉ là click thành công.
-require_clickable_element 'Pause'
+tap_first_element 'Message ChatGPT' false || tap_first_element 'Message' false
+call_tool mobile_type_keys "$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device, text:"hello"}')"
+tap_first_element 'Send prompt' true || tap_first_element 'Send' true
+# Sau khi gửi, tin nhắn của người dùng phải xuất hiện trong conversation.
+require_element 'hello'
 sleep "$SETTLE_SECONDS"

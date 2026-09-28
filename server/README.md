@@ -198,6 +198,10 @@ requests Screen Recording permission automatically. The first request can requir
 the user to approve macOS's prompt and retry. Chrome recording also writes an MP4
 from DevTools screenshots. Both recording drivers require `ffmpeg` (set
 `MOBILE_MCP_FFMPEG_PATH` when it is not on `PATH`).
+macOS recording uses AVFoundation's named `Capture screen 0` source rather than
+a numeric device index, so a connected iPhone/Continuity camera cannot be
+selected accidentally. Set `MOBILE_MCP_MACOS_SCREEN_DEVICE` when recording a
+different display.
 
 Install the recording dependency through the server itself on macOS:
 

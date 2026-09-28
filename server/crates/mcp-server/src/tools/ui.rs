@@ -12,7 +12,7 @@ pub(super) fn definition() -> ToolDefinition {
     ToolDefinition {
         name: LIST_ELEMENTS_NAME.into(),
         title: Some("List accessibility elements on screen".into()),
-        description: "Return normalized accessibility elements. `filter` narrows the native iOS query and `maxResults` bounds the response, avoiding full web-view enumeration.".into(),
+        description: "Return normalized accessibility elements. `filter` is applied by the platform driver and `maxResults` bounds the response.".into(),
         input_schema: json!({
             "type": "object",
             "properties": {

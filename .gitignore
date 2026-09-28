@@ -33,3 +33,4 @@ migrate_working_dir/
 /coverage/
 tools/go/bin/
 build/
+artifacts/

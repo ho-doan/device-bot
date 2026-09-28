@@ -92,6 +92,35 @@ final class DeviceKitXCTestDriver {
     return true
   }
 
+  func tapElement(filter: String) -> Bool {
+    guard let app else { return false }
+    let normalizedFilter = filter.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalizedFilter.isEmpty else { return false }
+    let predicate = NSPredicate(
+      format: "identifier CONTAINS[c] %@ OR label CONTAINS[c] %@ OR value CONTAINS[c] %@",
+      normalizedFilter,
+      normalizedFilter,
+      normalizedFilter
+    )
+    let queries: [XCUIElementQuery] = [
+      app.buttons,
+      app.textFields,
+      app.secureTextFields,
+      app.textViews,
+      app.searchFields,
+      app.links,
+      app.staticTexts,
+    ]
+    for query in queries {
+      let element = query.matching(predicate).firstMatch
+      if element.exists && element.isHittable {
+        element.tap()
+        return true
+      }
+    }
+    return false
+  }
+
   func swipe(fromX: CGFloat, fromY: CGFloat, toX: CGFloat, toY: CGFloat, duration: TimeInterval) -> Bool {
     guard let app else { return false }
     let frame = app.frame

@@ -52,6 +52,10 @@ final class DeviceKitXCTestHostAgent {
       ensureApp()
       let ok = driver.tap(x: number(command.params["x"]) ?? 0, y: number(command.params["y"]) ?? 0)
       return ["ok": ok, "message": ok ? "tap" : "tap_failed"]
+    case "tap-element":
+      ensureApp()
+      let ok = driver.tapElement(filter: string(command.params["filter"]) ?? "")
+      return ["ok": ok, "message": ok ? "tap_element" : "tap_element_failed"]
     case "swipe":
       ensureApp()
       let ok = driver.swipe(

@@ -81,6 +81,9 @@ pub enum UiAction {
         x: f64,
         y: f64,
     },
+    TapElement {
+        filter: String,
+    },
     Type {
         text: String,
     },
@@ -145,6 +148,11 @@ pub trait Robot: Send + Sync {
         for action in actions {
             match action {
                 UiAction::Tap { x, y } => self.tap(device_id, Point { x: *x, y: *y }).await?,
+                UiAction::TapElement { filter } => {
+                    return Err(RobotError::Unsupported(format!(
+                        "tap element is not supported for device {device_id}: {filter}"
+                    )));
+                }
                 UiAction::Type { text } => self.type_text(device_id, text).await?,
                 UiAction::Swipe {
                     start_x,

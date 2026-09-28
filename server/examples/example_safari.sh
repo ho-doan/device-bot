@@ -201,28 +201,43 @@ search_for_chatgpt() {
   fi
 }
 
+tap_accessibility_element() {
+  local filter="$1" max_attempts="${2:-12}" arguments attempt
+  arguments="$(jq -cn --arg device "$DEVICE_ID" --arg filter "$filter" \
+    '{deviceId:$device, actions:[{type:"tap_element", filter:$filter}]}')"
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    if call_tool mobile_execute_ui_actions "$arguments"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
 open_ios_safari_new_tab() {
   # Use Safari Private before creating the tab so ChatGPT cannot restore a
   # draft from the regular tab group. All controls are located through the
   # accessibility tree; no screen coordinates are assumed.
-  tap_first_element 'Tabs' true 1
+  tap_accessibility_element 'Tabs' 12
   sleep "$SETTLE_SECONDS"
-  tap_first_element 'Private' true 1 ||
-    tap_first_element 'Private Browsing' true 1
+  tap_accessibility_element 'Private' 12 ||
+    tap_accessibility_element 'Private Browsing' 12
+  sleep "$SETTLE_SECONDS"
+  # Selecting the Private tab group opens the Tab Groups sheet. Confirm the
+  # selected group before looking for the new-tab control.
+  tap_accessibility_element 'Done' 12 ||
+    tap_accessibility_element 'Close' 12
   sleep "$SETTLE_SECONDS"
   # iOS Tab Overview exposes its + control as "Add", not "New Tab".
-  tap_first_element 'Add' true 1
+  tap_accessibility_element 'Add' 20
 }
 
 warm_up_ios_xctest_runner() {
   [[ "$APP_ID" == "com.apple.mobilesafari" ]] || return 0
-  # The first filtered lookup may have to build the XCTest runner. Do that
-  # once with a cold-start budget; subsequent UI lookups use the normal budget
-  # and hit the shared, complete DerivedData cache without rebuilding.
-  call_tool mobile_list_elements_on_screen "$(jq -cn \
-    --arg device "$DEVICE_ID" \
-    --argjson timeout "$XCTEST_WARMUP_TIMEOUT_MS" \
-    '{deviceId:$device, filter:"Tabs", maxResults:1, timeoutMs:$timeout}')"
+  # The persistent agent is already built. Avoid a full Safari button dump
+  # here because the private-tab overview exposes modern accessibility nodes
+  # that can block XCTest's legacy indexed query.
+  return 0
 }
 
 tap_chatgpt_search_result() {
@@ -232,7 +247,7 @@ tap_chatgpt_search_result() {
 dismiss_chatgpt_cookie_banner_if_present() {
   # ChatGPT can render this consent sheet above the composer on a fresh Safari
   # profile. It must be dismissed before looking up the message field.
-  tap_first_element 'Reject non-essential' true 1 || true
+  tap_first_element 'Reject non-essential' true 12 || true
 }
 
 require_element() {
@@ -258,10 +273,18 @@ require_sent_message() {
     '{deviceId:$device, filter:$filter, maxResults:20}')"
   for ((attempt = 1; attempt <= 12; attempt++)); do
     call_tool mobile_list_elements_on_screen "$arguments"
+    if [[ "${DEVICE_ROBOT_DEBUG:-}" == "1" ]]; then
+      jq -c '.result.structuredContent.elements' <<<"$last_response" >&2
+    fi
     candidate="$(jq -cer '
       .result.structuredContent.elements[]
-      | select((.role // "") == "text")
-      | select((.text // "") | ascii_downcase | contains("hello"))
+      | select((.role // "") != "textField")
+      | select(
+          [(.text // ""), (.contentDescription // ""), (.value // "")]
+          | join(" ")
+          | ascii_downcase
+          | contains("hello")
+        )
       | select(.bounds.left != null and .bounds.right != null and .bounds.top != null and .bounds.bottom != null)
     ' <<<"$last_response" 2>/dev/null || true)"
     [[ -n "$candidate" ]] && return 0
@@ -341,11 +364,11 @@ fi
 search_for_chatgpt
 sleep "$SETTLE_SECONDS"
 dismiss_translate_popup_if_present
+dismiss_chatgpt_cookie_banner_if_present
 
 # UI web: đã mở trực tiếp chatgpt.com, không tìm kết quả tìm kiếm trung gian.
 tap_chatgpt_search_result
 sleep "$SETTLE_SECONDS"
-dismiss_chatgpt_cookie_banner_if_present
 tap_first_element 'Chat with ChatGPT' false ||
   tap_first_element 'Ask ChatGPT' false ||
   tap_first_element 'Message ChatGPT' false ||

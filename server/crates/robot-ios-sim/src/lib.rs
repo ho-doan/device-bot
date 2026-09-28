@@ -567,6 +567,11 @@ impl IosSimulatorRobot {
         let timeout = timeout.unwrap_or(Duration::from_secs(45));
         match action {
             "tap" => agent.dispatch("tap", Value::Object(params), timeout).await,
+            "tap-element" => {
+                agent
+                    .dispatch("tap-element", Value::Object(params), timeout)
+                    .await
+            }
             "type" => agent.dispatch("text", Value::Object(params), timeout).await,
             "swipe" => {
                 let mut params = params;
@@ -874,6 +879,28 @@ impl Robot for IosSimulatorRobot {
                         None,
                     )
                     .await?;
+                }
+                UiAction::TapElement { filter } => {
+                    if filter.trim().is_empty() {
+                        return Err(RobotError::InvalidInput(
+                            "tap element filter must not be empty".into(),
+                        ));
+                    }
+                    let result = self
+                        .run_xctest(
+                            device_id,
+                            &app_id,
+                            "tap-element",
+                            &[("MOBILE_MCP_ELEMENT_FILTER", filter.clone())],
+                            None,
+                        )
+                        .await?;
+                    if result.get("ok").and_then(Value::as_bool) == Some(false) {
+                        return Err(RobotError::CommandFailed(format!(
+                            "could not tap UI element matching {:?}",
+                            filter
+                        )));
+                    }
                 }
                 UiAction::Type { text } => {
                     if text.is_empty() || text.contains('\0') {

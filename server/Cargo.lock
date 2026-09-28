@@ -604,6 +604,7 @@ dependencies = [
  "async-trait",
  "libc",
  "mobile-robot-core",
+ "mobile-robot-ios-real",
  "serde",
  "serde_json",
  "tokio",

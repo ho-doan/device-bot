@@ -8,6 +8,8 @@
 /* Begin PBXBuildFile section */
 		A10000000000000000000001 /* RunnerHostApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* RunnerHostApp.swift */; };
 		A10000000000000000000002 /* MobileMcpSimulatorRunnerUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* MobileMcpSimulatorRunnerUITests.swift */; };
+		A10000000000000000000004 /* SimulatorXCTestHostAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* SimulatorXCTestHostAgent.swift */; };
+		A10000000000000000000005 /* SimulatorXCTestDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* SimulatorXCTestDriver.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -26,6 +28,8 @@
 		A10000000000000000000012 /* MobileMcpSimulatorRunnerUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileMcpSimulatorRunnerUITests.swift; sourceTree = "<group>"; };
 		A10000000000000000000013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10000000000000000000014 /* MobileMcpSimulatorRunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MobileMcpSimulatorRunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000015 /* SimulatorXCTestHostAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulatorXCTestHostAgent.swift; sourceTree = "<group>"; };
+		A10000000000000000000016 /* SimulatorXCTestDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulatorXCTestDriver.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,7 +55,11 @@
 		};
 		A10000000000000000000023 /* RunnerTests */ = {
 			isa = PBXGroup;
-			children = (A10000000000000000000012 /* MobileMcpSimulatorRunnerUITests.swift */);
+			children = (
+				A10000000000000000000012 /* MobileMcpSimulatorRunnerUITests.swift */,
+				A10000000000000000000015 /* SimulatorXCTestHostAgent.swift */,
+				A10000000000000000000016 /* SimulatorXCTestDriver.swift */,
+			);
 			path = RunnerTests;
 			sourceTree = "<group>";
 		};
@@ -110,7 +118,7 @@
 
 /* Begin PBXSourcesBuildPhase section */
 		A10000000000000000000060 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* RunnerHostApp.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
-		A10000000000000000000061 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000002 /* MobileMcpSimulatorRunnerUITests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000061 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000002 /* MobileMcpSimulatorRunnerUITests.swift in Sources */, A10000000000000000000004 /* SimulatorXCTestHostAgent.swift in Sources */, A10000000000000000000005 /* SimulatorXCTestDriver.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */

@@ -7,6 +7,10 @@
 
 set -euo pipefail
 
+# An inherited SDKROOT may point at an SDK removed by an Xcode update. Let
+# xcrun/xcodebuild select the active Xcode SDK for this standalone scenario.
+unset SDKROOT
+
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SERVER_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 readonly DEVICE_ID="${DEVICE_ID:-macos-host}"
@@ -14,25 +18,35 @@ readonly DEVICE_ID="${DEVICE_ID:-macos-host}"
 # Safari identifier (for example, com.apple.mobilesafari on an iOS Simulator).
 readonly APP_ID="${APP_ID:-Safari}"
 readonly SETTLE_SECONDS="${SETTLE_SECONDS:-3}"
-readonly RECORD_SCREEN="${RECORD_SCREEN:-auto}"
-readonly LIST_ELEMENTS_TIMEOUT_MS="${LIST_ELEMENTS_TIMEOUT_MS:-15000}"
+# XCTest needs a larger request budget on iOS to attach to Safari. This is not
+# a build budget: after warm-up, requests still use test-without-building.
+if [[ "$APP_ID" == "com.apple.mobilesafari" ]]; then
+  readonly LIST_ELEMENTS_TIMEOUT_MS="${LIST_ELEMENTS_TIMEOUT_MS:-60000}"
+else
+  readonly LIST_ELEMENTS_TIMEOUT_MS="${LIST_ELEMENTS_TIMEOUT_MS:-15000}"
+fi
+readonly XCTEST_WARMUP_TIMEOUT_MS="${XCTEST_WARMUP_TIMEOUT_MS:-60000}"
 command -v jq >/dev/null || { printf 'Kịch bản cần jq.\n' >&2; exit 1; }
 [[ "$SETTLE_SECONDS" =~ ^[0-9]+$ ]] || {
   printf 'SETTLE_SECONDS phải là số nguyên không âm.\n' >&2
-  exit 2
-}
-[[ "$RECORD_SCREEN" =~ ^(auto|0|1)$ ]] || {
-  printf 'RECORD_SCREEN phải là auto, 0 hoặc 1.\n' >&2
   exit 2
 }
 [[ "$LIST_ELEMENTS_TIMEOUT_MS" =~ ^[1-9][0-9]*$ && "$LIST_ELEMENTS_TIMEOUT_MS" -le 60000 ]] || {
   printf 'LIST_ELEMENTS_TIMEOUT_MS phải là số nguyên trong khoảng 1..60000.\n' >&2
   exit 2
 }
+[[ "$XCTEST_WARMUP_TIMEOUT_MS" =~ ^[1-9][0-9]*$ && "$XCTEST_WARMUP_TIMEOUT_MS" -le 60000 ]] || {
+  printf 'XCTEST_WARMUP_TIMEOUT_MS phải là số nguyên trong khoảng 1..60000.\n' >&2
+  exit 2
+}
 
 readonly SESSION_DIR="$(mktemp -d "${TMPDIR:-/tmp}/device-robot-mcp.XXXXXX")"
 readonly INPUT_PIPE="$SESSION_DIR/input"
 readonly OUTPUT_PIPE="$SESSION_DIR/output"
+# Keep the XCTest products in the workspace target directory so separate MCP
+# processes and later example/test runs share one machine-local build cache.
+readonly XCTEST_DERIVED_DATA_DIR="${MOBILE_MCP_IOS_XCTEST_DERIVED_DATA:-$SERVER_DIR/target/mobile-mcp-ios-xctest-derived-data-persistent-agent}"
+export MOBILE_MCP_IOS_XCTEST_DERIVED_DATA="$XCTEST_DERIVED_DATA_DIR"
 # The server always starts an iOS XCTest bridge, although this Safari example
 # uses an iOS Simulator and does not need it. An ephemeral port keeps repeated
 # example runs from colliding with another local server.
@@ -80,7 +94,7 @@ call_tool() {
 }
 
 tap_first_element() {
-  local filter="$1" clickable_only="$2" max_attempts="${3:-12}" arguments candidate x y attempt max_results
+  local filter="$1" clickable_only="$2" max_attempts="${3:-12}" tap_anchor="${4:-center}" arguments candidate x y attempt max_results
   max_results=1
   [[ "$clickable_only" == true ]] && max_results=10
   arguments="$(jq -cn --arg device "$DEVICE_ID" --arg filter "$filter" \
@@ -97,7 +111,7 @@ tap_first_element() {
         printf '%s\n' "$debug_line" >>"$DEVICE_ROBOT_DEBUG_LOG"
       fi
     fi
-    candidate="$(jq -cer --argjson clickable "$clickable_only" '
+    candidate="$(jq -cer --argjson clickable "$clickable_only" --arg anchor "$tap_anchor" '
       [
         .result.structuredContent.elements[]
         | select(
@@ -105,7 +119,15 @@ tap_first_element() {
             .bounds.top != null and .bounds.bottom != null and
             (($clickable == false) or (.clickable == true))
           )
-        | {x: ((.bounds.left + .bounds.right) / 2), y: ((.bounds.top + .bounds.bottom) / 2)}
+        | {
+            x: ((.bounds.left + .bounds.right) / 2),
+            y: (if $anchor == "top-edge"
+                then (.bounds.top + 12)
+                elif $anchor == "top-quarter"
+                then (.bounds.top + ((.bounds.bottom - .bounds.top) / 4))
+                else ((.bounds.top + .bounds.bottom) / 2)
+                end)
+          }
       ]
       | first?
       ' <<<"$last_response" 2>/dev/null || true)"
@@ -168,42 +190,43 @@ search_for_chatgpt() {
       --arg device "$DEVICE_ID" \
       --argjson x "$x" \
       --argjson y "$y" \
-      '[{type:"tap", x:$x, y:$y}, {type:"type", text:"ChatGPT\\n"}] | {deviceId:$device, actions:.}')"
+      '[{type:"tap", x:$x, y:$y}, {type:"type", text:"chatgpt.com"}] | {deviceId:$device, actions:.}')"
+    tap_first_element 'Go' false 3 ||
+      tap_first_element 'Search' false 3 ||
+      tap_first_element 'Return' false 3
   else
     tap_address_bar
-    call_tool mobile_type_keys "$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device, text:"ChatGPT\\n"}')"
+    call_tool mobile_type_keys "$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device, text:"chatgpt.com"}')"
+    tap_first_element 'Go' false 3 || tap_first_element 'Search' false 3
   fi
 }
 
+open_ios_safari_new_tab() {
+  # Use Safari Private before creating the tab so ChatGPT cannot restore a
+  # draft from the regular tab group. All controls are located through the
+  # accessibility tree; no screen coordinates are assumed.
+  tap_first_element 'Tabs' true 1
+  sleep "$SETTLE_SECONDS"
+  tap_first_element 'Private' true 1 ||
+    tap_first_element 'Private Browsing' true 1
+  sleep "$SETTLE_SECONDS"
+  # iOS Tab Overview exposes its + control as "Add", not "New Tab".
+  tap_first_element 'Add' true 1
+}
+
+warm_up_ios_xctest_runner() {
+  [[ "$APP_ID" == "com.apple.mobilesafari" ]] || return 0
+  # The first filtered lookup may have to build the XCTest runner. Do that
+  # once with a cold-start budget; subsequent UI lookups use the normal budget
+  # and hit the shared, complete DerivedData cache without rebuilding.
+  call_tool mobile_list_elements_on_screen "$(jq -cn \
+    --arg device "$DEVICE_ID" \
+    --argjson timeout "$XCTEST_WARMUP_TIMEOUT_MS" \
+    '{deviceId:$device, filter:"Tabs", maxResults:1, timeoutMs:$timeout}')"
+}
+
 tap_chatgpt_search_result() {
-  local arguments candidate x y attempt
-  arguments="$(jq -cn --arg device "$DEVICE_ID" \
-    '{deviceId:$device, filter:"ChatGPT", maxResults:20}')"
-  for ((attempt = 1; attempt <= 12; attempt++)); do
-    call_tool mobile_list_elements_on_screen "$arguments"
-    candidate="$(jq -cer '
-      [
-        .result.structuredContent.elements[]
-        | select(
-            (.className == "AXLink" or (.className | startswith("XCUIElementType"))) and
-            .clickable == true and
-            (.contentDescription // "" | ascii_downcase | contains("chatgpt.com")) and
-            .bounds.top != null and .bounds.bottom != null
-          )
-        | {x: ((.bounds.left + .bounds.right) / 2), y: ((.bounds.top + .bounds.bottom) / 2)}
-      ] | first?
-    ' <<<"$last_response" 2>/dev/null || true)"
-    if [[ -n "$candidate" && "$candidate" != null ]]; then
-      x="$(jq -r '.x | round' <<<"$candidate")"
-      y="$(jq -r '.y | round' <<<"$candidate")"
-      call_tool mobile_click_on_screen_at_coordinates \
-        "$(jq -cn --arg device "$DEVICE_ID" --argjson x "$x" --argjson y "$y" '{deviceId:$device, x:$x, y:$y}')"
-      return
-    fi
-    sleep 0.25
-  done
-  printf 'Không tìm thấy kết quả ChatGPT chính thức trên %s sau tối đa 3 giây.\n' "$DEVICE_ID" >&2
-  return 1
+  require_element 'Chat with ChatGPT'
 }
 
 dismiss_chatgpt_cookie_banner_if_present() {
@@ -226,6 +249,25 @@ require_element() {
     sleep 0.25
   done
   printf 'Không xác nhận được element %q trên %s sau tối đa 3 giây.\n' "$filter" "$DEVICE_ID" >&2
+  return 1
+}
+
+require_sent_message() {
+  local arguments candidate attempt
+  arguments="$(jq -cn --arg device "$DEVICE_ID" --arg filter "hello" \
+    '{deviceId:$device, filter:$filter, maxResults:20}')"
+  for ((attempt = 1; attempt <= 12; attempt++)); do
+    call_tool mobile_list_elements_on_screen "$arguments"
+    candidate="$(jq -cer '
+      .result.structuredContent.elements[]
+      | select((.role // "") == "text")
+      | select((.text // "") | ascii_downcase | contains("hello"))
+      | select(.bounds.left != null and .bounds.right != null and .bounds.top != null and .bounds.bottom != null)
+    ' <<<"$last_response" 2>/dev/null || true)"
+    [[ -n "$candidate" ]] && return 0
+    sleep 0.25
+  done
+  printf 'Không xác nhận được tin nhắn hello đã gửi trên %s sau tối đa 3 giây.\n' "$DEVICE_ID" >&2
   return 1
 }
 
@@ -283,22 +325,14 @@ send '{"jsonrpc":"2.0","method":"notifications/initialized"}'
 next_id=2
 
 call_tool mobile_list_available_devices '{}'
-if [[ "$RECORD_SCREEN" == "1" || ( "$RECORD_SCREEN" == "auto" && "$APP_ID" != "com.apple.mobilesafari" ) ]]; then
-  call_tool mobile_start_screen_recording "$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device}')"
-  recording_started=true
-else
-  printf 'Bỏ quay màn hình Safari iOS: simctl recordVideo chặn XCTest UI actions.\n' >&2
-fi
+call_tool mobile_start_screen_recording "$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device}')"
+recording_started=true
 call_tool mobile_launch_app "$(jq -cn --arg device "$DEVICE_ID" --arg app "$APP_ID" '{deviceId:$device, appId:$app}')"
 sleep "$SETTLE_SECONDS"
 
-# iOS Safari có thể hiện Start Page onboarding. Đóng nó trước khi chạm thanh
-# tìm kiếm; không dùng selector New Tab vì text onboarding cũng chứa "new tabs".
 if [[ "$APP_ID" == "com.apple.mobilesafari" ]]; then
-  tap_first_element 'Close' true 1 || true
-  # A fresh Simulator can show a second iCloud-history prompt after the Start
-  # Page sheet closes. Choosing Not Now keeps the browser workflow local.
-  tap_first_element 'Not Now' true 1 || true
+  warm_up_ios_xctest_runner
+  open_ios_safari_new_tab
 else
   # Safari trên macOS có thể đã mở một tab; nếu nút New Tab chưa xuất hiện thì
   # dùng tab đó.
@@ -308,13 +342,27 @@ search_for_chatgpt
 sleep "$SETTLE_SECONDS"
 dismiss_translate_popup_if_present
 
-# UI web: chỉ chọn kết quả chính thức chatgpt.com, tránh quảng cáo hoặc link bên thứ ba.
+# UI web: đã mở trực tiếp chatgpt.com, không tìm kết quả tìm kiếm trung gian.
 tap_chatgpt_search_result
 sleep "$SETTLE_SECONDS"
 dismiss_chatgpt_cookie_banner_if_present
-tap_first_element 'Message ChatGPT' false || tap_first_element 'Message' false
+tap_first_element 'Chat with ChatGPT' false ||
+  tap_first_element 'Ask ChatGPT' false ||
+  tap_first_element 'Message ChatGPT' false ||
+  tap_first_element 'Message' false
+# Safari/ChatGPT can restore the previous draft in a new tab. Remove any
+# restored characters before typing the deterministic test message.
+clear_chatgpt_draft() {
+  local delete_keys
+  delete_keys=$'\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b'
+  call_tool mobile_type_keys "$(jq -cn --arg device "$DEVICE_ID" --arg text "$delete_keys" \
+    '{deviceId:$device, text:$text}')" || true
+}
+clear_chatgpt_draft
 call_tool mobile_type_keys "$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device, text:"hello"}')"
-tap_first_element 'Send prompt' true || tap_first_element 'Send' true
+tap_first_element 'Send message' true 12 top-edge ||
+  tap_first_element 'Send prompt' true ||
+  tap_first_element 'Send' true
 # Sau khi gửi, tin nhắn của người dùng phải xuất hiện trong conversation.
-require_element 'hello'
+require_sent_message
 sleep "$SETTLE_SECONDS"

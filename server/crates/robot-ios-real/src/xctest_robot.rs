@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, fs::File, net::IpAddr, path::PathBuf, process::Stdio, sync::Arc,
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -51,12 +54,12 @@ impl XCTestAgentLauncher {
             .filter(|host| !host.is_empty())
             .collect::<Vec<_>>();
         if hosts.is_empty()
-            || hosts.iter().any(|host| {
-                host.contains("//") || host.contains('/') || host.chars().any(char::is_whitespace)
-            })
+            || hosts
+                .iter()
+                .any(|host| !callback_host_is_advertisable(host))
         {
             return Err(RobotError::InvalidInput(
-                "DEVICE_BOT_IOS_AGENT_HOSTS must be a comma-separated list of IP addresses or hostnames"
+                "DEVICE_BOT_IOS_AGENT_HOSTS must be a comma-separated list of LAN IPs or hostnames the iPhone can open; loopback, wildcard, and link-local addresses are not reachable from the device"
                     .into(),
             ));
         }
@@ -90,22 +93,82 @@ impl XCTestAgentLauncher {
                 "-only-testing:MobileMcpRealRunnerUITests/MobileMcpRealRunnerUITests/testServe",
             ])
             .env_remove("SDKROOT")
-            .env("DEVICE_BOT_HOSTS", &self.hosts)
-            .env("DEVICE_BOT_PORT", self.port.to_string());
-        if let Some(token) = &self.token {
-            command.env("DEVICE_BOT_TOKEN", token);
-        }
-        command
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
+            .kill_on_drop(true);
+        // Xcode strips TEST_RUNNER_ and injects the remainder into the
+        // on-device XCTest process. The runner reads DEVICE_BOT_*.
+        for (key, value) in self.test_environment() {
+            command.env(key, value);
+        }
+        let log_path = self
+            .derived_data
+            .join("Logs/Agent")
+            .join(format!("{device_id}-xcodebuild.log"));
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                RobotError::CommandFailed(format!(
+                    "could not create XCTest agent log directory {}: {error}",
+                    parent.display()
+                ))
+            })?;
+        }
+        let stdout = File::options()
+            .create(true)
+            .append(true)
+            .open(&log_path)
             .map_err(|error| {
                 RobotError::CommandFailed(format!(
-                    "could not start the real-iOS XCTest agent: {error}"
+                    "could not open XCTest agent log {}: {error}",
+                    log_path.display()
                 ))
-            })
+            })?;
+        let stderr = stdout.try_clone().map_err(|error| {
+            RobotError::CommandFailed(format!("could not duplicate XCTest agent log: {error}"))
+        })?;
+        command
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
+        command.spawn().map_err(|error| {
+            RobotError::CommandFailed(format!(
+                "could not start the real-iOS XCTest agent: {error}"
+            ))
+        })
+    }
+
+    fn test_environment(&self) -> Vec<(String, String)> {
+        let mut environment = vec![
+            ("TEST_RUNNER_DEVICE_BOT_HOSTS".into(), self.hosts.clone()),
+            ("TEST_RUNNER_DEVICE_BOT_PORT".into(), self.port.to_string()),
+        ];
+        if let Some(token) = &self.token {
+            environment.push(("TEST_RUNNER_DEVICE_BOT_TOKEN".into(), token.clone()));
+        }
+        environment
+    }
+}
+
+fn callback_host_is_advertisable(host: &str) -> bool {
+    if host.is_empty()
+        || host.contains("//")
+        || host.contains('/')
+        || host.chars().any(char::is_whitespace)
+    {
+        return false;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(address)) => {
+            !address.is_loopback()
+                && !address.is_unspecified()
+                && !address.is_link_local()
+                && !address.is_multicast()
+        }
+        Ok(IpAddr::V6(address)) => {
+            !address.is_loopback()
+                && !address.is_unspecified()
+                && !address.is_unicast_link_local()
+                && !address.is_multicast()
+        }
+        Err(_) => true,
     }
 }
 
@@ -215,11 +278,11 @@ impl IosXCTestRobot {
             .map(|launcher| {
                 launcher
                     .derived_data
-                    .join("Logs/Test")
+                    .join("Logs/Agent")
                     .display()
                     .to_string()
             })
-            .unwrap_or_else(|| "the XCTest derived-data Logs/Test directory".into());
+            .unwrap_or_else(|| "the XCTest derived-data Logs/Agent directory".into());
         Ok(Some(format!(
             "the auto-started iOS XCTest agent exited with {status}; inspect {log_path}"
         )))
@@ -320,18 +383,17 @@ impl IosXCTestRobot {
             let elements = self
                 .list_elements_filtered(device_id, Some(filter), Some(20))
                 .await?;
-            let element = select_tappable_element(&elements, filter).ok_or_else(|| {
-                RobotError::CommandFailed(format!("could not find UI element matching {filter:?}"))
-            })?;
-            let width = element.bounds.right - element.bounds.left;
-            let height = element.bounds.bottom - element.bounds.top;
-            let x = f64::from(element.bounds.left + element.bounds.right) / 2.0;
-            let y = if height > width * 3 {
-                f64::from(element.bounds.top) + 12.0_f64.min(f64::from(height) / 2.0)
-            } else {
-                f64::from(element.bounds.top + element.bounds.bottom) / 2.0
-            };
-            return self.tap(device_id, Point { x, y }).await;
+            if let Some(element) = select_tappable_element(&elements, filter, false) {
+                let width = element.bounds.right - element.bounds.left;
+                let height = element.bounds.bottom - element.bounds.top;
+                let x = f64::from(element.bounds.left + element.bounds.right) / 2.0;
+                let y = if height > width * 3 {
+                    f64::from(element.bounds.top) + 12.0_f64.min(f64::from(height) / 2.0)
+                } else {
+                    f64::from(element.bounds.top + element.bounds.bottom) / 2.0
+                };
+                return self.tap(device_id, Point { x, y }).await;
+            }
         }
         match self
             .dispatch(device_id, "tap-element", json!({ "filter": filter }))
@@ -346,7 +408,7 @@ impl IosXCTestRobot {
         // XCTest bundle is being updated. New runners handle the selector in
         // XCTest directly, avoiding a full accessibility dump per tap.
         let elements = self.list_elements(device_id).await?;
-        let element = select_tappable_element(&elements, filter).ok_or_else(|| {
+        let element = select_tappable_element(&elements, filter, true).ok_or_else(|| {
             RobotError::CommandFailed(format!("could not find UI element matching {filter:?}"))
         })?;
         self.tap(
@@ -744,13 +806,17 @@ fn valid_point(point: Point) -> Result<(), RobotError> {
     }
 }
 
-fn select_tappable_element<'a>(elements: &'a [UiElement], filter: &str) -> Option<&'a UiElement> {
+fn select_tappable_element<'a>(
+    elements: &'a [UiElement],
+    filter: &str,
+    require_hittable: bool,
+) -> Option<&'a UiElement> {
     let filter = filter.to_lowercase();
     elements
         .iter()
         .filter(|element| {
             element.enabled
-                && element.clickable
+                && (!require_hittable || element.clickable)
                 && element.bounds.right > element.bounds.left
                 && element.bounds.bottom > element.bounds.top
                 && ui_element_matches(element, &filter)
@@ -759,6 +825,7 @@ fn select_tappable_element<'a>(elements: &'a [UiElement], filter: &str) -> Optio
             (
                 !ui_element_has_exact_match(element, &filter),
                 !element.class_name.eq_ignore_ascii_case("button"),
+                !element.clickable,
             )
         })
 }
@@ -910,7 +977,7 @@ mod tests {
             ),
         ];
 
-        let selected = select_tappable_element(&elements, "Private, Tab Group").unwrap();
+        let selected = select_tappable_element(&elements, "Private, Tab Group", true).unwrap();
         assert_eq!(selected.resource_id.as_deref(), Some("PrivateTabGroup"));
     }
 
@@ -924,7 +991,22 @@ mod tests {
             true,
         )];
 
-        assert!(select_tappable_element(&elements, "Done").is_none());
+        assert!(select_tappable_element(&elements, "Done", true).is_none());
+    }
+
+    #[test]
+    fn coordinate_selection_keeps_an_enabled_control_that_is_not_hittable() {
+        let elements = vec![element(
+            "button",
+            Some("action-button"),
+            Some("Action"),
+            false,
+            true,
+        )];
+
+        let selected = select_tappable_element(&elements, "Action", false).unwrap();
+        assert_eq!(selected.resource_id.as_deref(), Some("action-button"));
+        assert!(select_tappable_element(&elements, "Action", true).is_none());
     }
 
     #[test]
@@ -942,6 +1024,36 @@ mod tests {
         assert_eq!(launcher.hosts, "fd54:ebfd:3d4f::2");
         assert_eq!(launcher.port, 18787);
         assert_eq!(launcher.token.as_deref(), Some("token"));
+        assert_eq!(
+            launcher.test_environment(),
+            vec![
+                (
+                    "TEST_RUNNER_DEVICE_BOT_HOSTS".into(),
+                    "fd54:ebfd:3d4f::2".into()
+                ),
+                ("TEST_RUNNER_DEVICE_BOT_PORT".into(), "18787".into()),
+                ("TEST_RUNNER_DEVICE_BOT_TOKEN".into(), "token".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn core_launcher_rejects_a_loopback_or_link_local_callback_host() {
+        for host in ["127.0.0.1", "0.0.0.0", "169.254.1.10", "::1", "fe80::1"] {
+            let error = XCTestAgentLauncher::new(
+                "xcodebuild",
+                "runner.xcodeproj",
+                "derived-data",
+                host,
+                18787,
+                Some("token".into()),
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("DEVICE_BOT_IOS_AGENT_HOSTS"),
+                "{host}"
+            );
+        }
     }
 
     #[test]

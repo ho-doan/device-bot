@@ -348,12 +348,11 @@ tap_accessibility_element() {
 }
 
 tap_send_button() {
-  tap_accessibility_element 'Send message' 12 ||
-    tap_accessibility_element 'Send prompt' 12 ||
-    tap_accessibility_element 'Send' 12 ||
-    tap_first_element 'Send message' true 12 top-edge ||
-    tap_first_element 'Send prompt' true ||
-    tap_first_element 'Send' true
+  local attempts=12
+  if [[ "$TARGET" == "ios-real" ]]; then
+    attempts=2
+  fi
+  tap_accessibility_element 'Send message' "$attempts"
 }
 
 has_accessibility_element() {
@@ -430,9 +429,11 @@ require_element() {
 
 require_sent_message() {
   local arguments composer_top input_has_hello candidate attempt
+  # Ask only for nodes that contain the sent text. An unfiltered dump fills
+  # its result cap with buttons before the conversation line.
   arguments="$(jq -cn --arg device "$DEVICE_ID" \
-    '{deviceId:$device, maxResults:100}')"
-  for ((attempt = 1; attempt <= 12; attempt++)); do
+    '{deviceId:$device, filter:"hello", maxResults:20}')"
+  for ((attempt = 1; attempt <= 30; attempt++)); do
     call_tool mobile_list_elements_on_screen "$arguments"
     input_has_hello="$(jq -r '
       [
@@ -475,9 +476,9 @@ require_sent_message() {
       ' <<<"$last_response" 2>/dev/null || true)"
     fi
     [[ -n "$candidate" ]] && return 0
-    sleep 0.25
+    sleep 0.5
   done
-  printf 'Không xác nhận được tin nhắn hello đã gửi trên %s sau tối đa 3 giây.\n' "$DEVICE_ID" >&2
+  printf 'Không xác nhận được tin nhắn hello đã gửi trên %s sau tối đa 15 giây.\n' "$DEVICE_ID" >&2
   return 1
 }
 

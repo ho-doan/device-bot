@@ -36,13 +36,18 @@ case "$command" in
   start)
     hosts="${DEVICE_BOT_IOS_AGENT_HOSTS:-}"
     if [[ -z "$hosts" ]]; then
-      for interface in en0 en1; do
-        hosts="$(ipconfig getifaddr "$interface" 2>/dev/null || true)"
-        [[ -n "$hosts" ]] && break
-      done
+      while IFS= read -r interface; do
+        case "$interface" in
+          en*) ;;
+          *) continue ;;
+        esac
+        address="$(ipconfig getifaddr "$interface" 2>/dev/null || true)"
+        [[ -n "$address" && "$address" != 127.* && "$address" != 169.254.* ]] || continue
+        hosts="${hosts:+$hosts,}$address"
+      done < <(ifconfig -l | tr ' ' '\n')
     fi
     [[ -n "$hosts" ]] || {
-      echo "Set DEVICE_BOT_IOS_AGENT_HOSTS to this Mac's LAN IPv4 address." >&2
+      echo "Set DEVICE_BOT_IOS_AGENT_HOSTS to this Mac's Wi-Fi or Ethernet address." >&2
       exit 2
     }
     port="${DEVICE_BOT_IOS_AGENT_PORT:-18787}"
@@ -51,9 +56,11 @@ case "$command" in
       echo "Set DEVICE_BOT_IOS_AGENT_TOKEN to the token used by Device Bot." >&2
       exit 2
     }
-    export DEVICE_BOT_HOSTS="$hosts"
-    export DEVICE_BOT_PORT="$port"
-    export DEVICE_BOT_TOKEN="$token"
+    # Xcode strips the TEST_RUNNER_ prefix before the on-device test reads
+    # DEVICE_BOT_HOSTS, DEVICE_BOT_PORT, and DEVICE_BOT_TOKEN.
+    export TEST_RUNNER_DEVICE_BOT_HOSTS="$hosts"
+    export TEST_RUNNER_DEVICE_BOT_PORT="$port"
+    export TEST_RUNNER_DEVICE_BOT_TOKEN="$token"
     echo "Starting Device Bot XCTest agent -> $hosts:$port" >&2
     xcodebuild test-without-building "${common[@]}" \
       -only-testing:MobileMcpRealRunnerUITests/MobileMcpRealRunnerUITests/testServe

@@ -26,14 +26,77 @@ fn android_adb_path() -> String {
     executable.into()
 }
 
-fn real_ios_agent_hosts(bind_address: SocketAddr) -> Option<String> {
-    std::env::var("DEVICE_BOT_IOS_AGENT_HOSTS")
+fn real_ios_agent_hosts(bind_address: SocketAddr) -> std::io::Result<Option<String>> {
+    if bind_address.ip().is_loopback() {
+        if std::env::var("DEVICE_BOT_IOS_AGENT_HOSTS")
+            .ok()
+            .is_some_and(|hosts| !hosts.trim().is_empty())
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "DEVICE_BOT_IOS_AGENT_BIND is loopback, so an iPhone cannot open DEVICE_BOT_IOS_AGENT_HOSTS; bind a LAN address or 0.0.0.0",
+            ));
+        }
+        return Ok(None);
+    }
+    if let Some(hosts) = std::env::var("DEVICE_BOT_IOS_AGENT_HOSTS")
         .ok()
         .filter(|hosts| !hosts.trim().is_empty())
-        .or_else(|| {
-            (!bind_address.ip().is_unspecified() && !bind_address.ip().is_loopback())
-                .then(|| bind_address.ip().to_string())
-        })
+    {
+        return Ok(Some(hosts));
+    }
+    if !bind_address.ip().is_unspecified() {
+        return Ok(Some(bind_address.ip().to_string()));
+    }
+    let hosts = discovered_lan_hosts()?;
+    if hosts.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "the iOS agent bridge is listening on every interface, but no LAN address was found; set DEVICE_BOT_IOS_AGENT_HOSTS to this Mac's Wi-Fi or Ethernet address",
+        ));
+    }
+    Ok(Some(hosts.join(",")))
+}
+
+fn discovered_lan_hosts() -> std::io::Result<Vec<String>> {
+    if !cfg!(target_os = "macos") {
+        return Ok(Vec::new());
+    }
+    let listing = std::process::Command::new("ifconfig")
+        .arg("-l")
+        .output()
+        .map_err(|error| {
+            std::io::Error::other(format!("could not list network interfaces: {error}"))
+        })?;
+    if !listing.status.success() {
+        return Err(std::io::Error::other(
+            "ifconfig -l failed while looking for a LAN address the iPhone can open",
+        ));
+    }
+    let mut hosts = Vec::new();
+    for interface in String::from_utf8_lossy(&listing.stdout).split_whitespace() {
+        if !interface.starts_with("en") {
+            continue;
+        }
+        let address = std::process::Command::new("ipconfig")
+            .args(["getifaddr", interface])
+            .output();
+        let Ok(address) = address else {
+            continue;
+        };
+        if !address.status.success() {
+            continue;
+        }
+        let address = String::from_utf8_lossy(&address.stdout).trim().to_owned();
+        let Ok(ip) = address.parse::<std::net::Ipv4Addr>() else {
+            continue;
+        };
+        if ip.is_loopback() || ip.is_unspecified() || ip.is_link_local() || ip.is_multicast() {
+            continue;
+        }
+        hosts.push(address);
+    }
+    Ok(hosts)
 }
 
 async fn install_chrome_recording_tools() -> std::io::Result<()> {
@@ -149,7 +212,17 @@ async fn main() -> std::io::Result<()> {
             format!("invalid DEVICE_BOT_IOS_AGENT_BIND address: {error}"),
         )
     })?;
-    let ios_agent = XCTestAgentBridge::new(std::env::var("DEVICE_BOT_IOS_AGENT_TOKEN").ok());
+    let ios_agent_token = std::env::var("DEVICE_BOT_IOS_AGENT_TOKEN")
+        .ok()
+        .filter(|token| !token.trim().is_empty());
+    if !ios_agent_address.ip().is_loopback() && ios_agent_token.is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "DEVICE_BOT_IOS_AGENT_TOKEN is required when the iOS agent bridge is reachable beyond loopback",
+        ));
+    }
+    let ios_agent_hosts = real_ios_agent_hosts(ios_agent_address)?;
+    let ios_agent = XCTestAgentBridge::new(ios_agent_token.clone());
     let listener = tokio::net::TcpListener::bind(ios_agent_address).await?;
     let agent_router = ios_agent.router();
     tokio::spawn(async move {
@@ -157,7 +230,7 @@ async fn main() -> std::io::Result<()> {
             eprintln!("iOS XCTest agent bridge stopped: {error}");
         }
     });
-    let ios_agent_launcher = real_ios_agent_hosts(ios_agent_address)
+    let ios_agent_launcher = ios_agent_hosts
         .map(|hosts| {
             let project = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../robot-ios-real/xctest-runner/MobileMcpRealRunner.xcodeproj");
@@ -171,7 +244,7 @@ async fn main() -> std::io::Result<()> {
                 derived_data,
                 hosts,
                 ios_agent_address.port(),
-                std::env::var("DEVICE_BOT_IOS_AGENT_TOKEN").ok(),
+                ios_agent_token,
             )
         })
         .transpose()

@@ -240,7 +240,11 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = N7D3XWS9S5;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Device Bot";
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_NSBonjourServices = (
+					"_http._tcp",
+				);
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Device Bot needs local network access to receive automation commands from this Mac.";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.hodoan.device-bot.tests";
@@ -258,7 +262,11 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = N7D3XWS9S5;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Device Bot";
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
+				INFOPLIST_KEY_NSBonjourServices = (
+					"_http._tcp",
+				);
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Device Bot needs local network access to receive automation commands from this Mac.";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.hodoan.device-bot.tests";

@@ -164,10 +164,17 @@ targets that bundle ID and returns normalized accessibility elements.
 The registered real-device driver uses Apple CoreDevice for paired-device
 discovery and app lifecycle, plus the signed XCTest agent for screenshots and
 UI automation. A real-device run requires a paired, trusted iPhone and an
-agent connection back to the MCP host. For wireless devices, configure
-`DEVICE_BOT_IOS_AGENT_BIND` with a LAN-reachable address and ensure the phone
-can reach that address; `127.0.0.1` only works for a local host process, not an
-iPhone.
+agent connection back to the MCP host. Bind `DEVICE_BOT_IOS_AGENT_BIND` to a LAN
+address or `0.0.0.0` and set `DEVICE_BOT_IOS_AGENT_TOKEN`. `127.0.0.1` only
+works for a local host process, not an iPhone. When the bind address is
+`0.0.0.0`, the server advertises the Mac's `en*` IPv4 addresses, skipping
+loopback and link-local. Set `DEVICE_BOT_IOS_AGENT_HOSTS` to override that
+list. Do not advertise the CoreDevice or go-ios tunnel address: that tunnel
+is how the Mac reaches the phone, and the phone's callback does not arrive
+through it. On first contact the signed runner accepts the system Local
+Network sheet (Allow / Cho phép). If iOS will not show that sheet again, the
+runner opens Settings → Privacy & Security → Local Network and turns on
+Device Bot.
 
 `mobile_list_installed_apps` is implemented by each native driver: Android uses
 `adb shell pm list packages -f`, macOS uses `system_profiler
@@ -223,22 +230,26 @@ automation. A Codex configuration that starts another package (for example,
 Likewise, the server default of `127.0.0.1:18787` is reachable only from the
 Mac, not from the iPhone.
 
-There is also an unresolved environment-name mismatch in the current agent
-launcher: `server/tool/ios_xctest_agent.sh` exports
-`TEST_RUNNER_DEVICE_BOT_HOSTS`, `TEST_RUNNER_DEVICE_BOT_PORT`, and
-`TEST_RUNNER_DEVICE_BOT_TOKEN`, while the XCTest runner reads
-`DEVICE_BOT_HOSTS`, `DEVICE_BOT_PORT`, and `DEVICE_BOT_TOKEN`. This must be
-corrected before relying on the launcher for real-device runs.
+There is no environment-name mismatch. The launcher and
+`server/tool/ios_xctest_agent.sh` export `TEST_RUNNER_DEVICE_BOT_HOSTS`,
+`TEST_RUNNER_DEVICE_BOT_PORT`, and `TEST_RUNNER_DEVICE_BOT_TOKEN`. Xcode strips
+the `TEST_RUNNER_` prefix, and the XCTest runner reads `DEVICE_BOT_HOSTS`,
+`DEVICE_BOT_PORT`, and `DEVICE_BOT_TOKEN`. `xcodebuild` stdout and stderr are
+appended under the runner derived data `Logs/Agent` directory.
 
-Deferred remediation and verification:
+A non-loopback agent bind requires `DEVICE_BOT_IOS_AGENT_TOKEN`. Without it
+the bridge would accept every caller on that interface.
 
-1. Configure Codex to start this repository's `mobile-mcp-server` with an
-   explicit `DEVICE_BOT_IOS_AGENT_BIND` on a LAN-reachable interface and the
-   same `DEVICE_BOT_IOS_AGENT_TOKEN` used by the XCTest agent. Never commit
-   that token.
-2. Correct the launcher/XCTest environment-name mismatch, rebuild and
-   reinstall the signed XCTest runner, then explicitly allow its iOS Local
-   Network permission prompt.
+Remediation and verification:
+
+1. Configure Codex to start this repository's `mobile-mcp-server` with
+   `DEVICE_BOT_IOS_AGENT_BIND` on a LAN interface or `0.0.0.0`, and the same
+   `DEVICE_BOT_IOS_AGENT_TOKEN` used by the XCTest agent. Never commit that
+   token. A package other than this server does not exercise this agent.
+2. Rebuild and reinstall the signed XCTest runner after runner changes. The
+   runner accepts the Local Network sheet, or opens that Settings page when
+   iOS will not ask again. That permission is part of this callback; a tunnel
+   address is not a substitute for it.
 3. Verify `mobile_get_ui_runner_status` returns `ready: true` before calling
    any UI tool. Only then validate launch, element dump, tap, text input, and
    screenshot on the physical device.

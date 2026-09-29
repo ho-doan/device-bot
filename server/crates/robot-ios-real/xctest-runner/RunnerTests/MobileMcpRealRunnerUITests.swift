@@ -1,9 +1,14 @@
 import device_kit_lib_xctest
 import Foundation
+import Network
 import UIKit
 import XCTest
 
 final class MobileMcpRealRunnerUITests: XCTestCase {
+  /// Kept alive so the Bonjour browse still triggers Local Network privacy
+  /// after `requestLocalNetworkPermission` returns into the command loop.
+  private var localNetworkBrowser: NWBrowser?
+
   func testServe() {
     let environment = ProcessInfo.processInfo.environment
     let hosts = (environment["DEVICE_BOT_HOSTS"] ?? "")
@@ -16,18 +21,164 @@ final class MobileMcpRealRunnerUITests: XCTestCase {
     MobileMcpRealHostAgent(hosts: hosts, port: port, token: token).run()
   }
 
-  /// A fresh XCTest runner may show the system Local Network permission sheet
-  /// before its command loop can reach the Device Bot bridge. Trigger the
-  /// request and accept that sheet as part of the test harness setup.
+  /// Ask iOS for Local Network access before the command loop. A first run
+  /// shows the system sheet; a previous denial does not, so this opens
+  /// Settings on the Local Network page and enables Device Bot there.
   private func requestLocalNetworkPermission(host: String?, port: Int) {
     guard let host, let url = bridgeUrl(host: host, port: port, path: "/next") else { return }
-    URLSession.shared.dataTask(with: url).resume()
-
-    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-    let allow = springboard.buttons["Allow"]
-    if allow.waitForExistence(timeout: 5) {
-      allow.tap()
+    triggerLocalNetworkAccess(url: url)
+    if acceptLocalNetworkPrompt(timeout: 12) || !localNetworkProhibited(url) {
       print("Device Bot Local Network permission allowed")
+      return
+    }
+
+    print("Device Bot opening Settings → Privacy & Security → Local Network")
+    let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+    let opened = openLocalNetworkSettings(settings)
+    if opened {
+      _ = enableDeviceBotLocalNetworkSwitch(in: settings)
+    }
+
+    let deadline = Date().addingTimeInterval(90)
+    while Date() < deadline {
+      if acceptLocalNetworkPrompt(timeout: 1) || !localNetworkProhibited(url) {
+        print("Device Bot Local Network permission allowed")
+        XCUIDevice.shared.press(.home)
+        return
+      }
+      RunLoop.current.run(until: Date().addingTimeInterval(1))
+    }
+    if opened {
+      print("Device Bot Local Network still blocked. Settings is open on Local Network; turn on Device Bot.")
+    } else {
+      print("Device Bot could not open Local Network settings. Turn on Device Bot under Settings → Privacy & Security → Local Network.")
+    }
+  }
+
+  private func triggerLocalNetworkAccess(url: URL) {
+    URLSession.shared.dataTask(with: url).resume()
+    let browser = NWBrowser(for: .bonjour(type: "_http._tcp", domain: nil), using: .tcp)
+    localNetworkBrowser = browser
+    browser.start(queue: .main)
+  }
+
+  private func acceptLocalNetworkPrompt(timeout: TimeInterval) -> Bool {
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    let allow = NSPredicate(format: "label == 'Allow' OR label == 'Cho phép'")
+    let button = springboard.buttons.matching(allow).firstMatch
+    let alertButton = springboard.alerts.buttons.matching(allow).firstMatch
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      if button.exists && button.isHittable {
+        button.tap()
+        return true
+      }
+      if alertButton.exists && alertButton.isHittable {
+        alertButton.tap()
+        return true
+      }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+    }
+    return false
+  }
+
+  /// `true` only when iOS is refusing the LAN path. A refused TCP connection
+  /// means the permission is already granted and the bridge is simply down.
+  private func localNetworkProhibited(_ url: URL) -> Bool {
+    var request = URLRequest(url: url)
+    request.httpMethod = "GET"
+    request.timeoutInterval = 4
+    var prohibited = false
+    let semaphore = DispatchSemaphore(value: 0)
+    URLSession.shared.dataTask(with: request) { _, response, error in
+      defer { semaphore.signal() }
+      if response != nil { return }
+      guard let error = error as? URLError else { return }
+      let description = error.localizedDescription
+      prohibited = error.code == .notConnectedToInternet
+        || error.code == .dataNotAllowed
+        || description.localizedCaseInsensitiveContains("local network")
+        || description.localizedCaseInsensitiveContains("offline")
+    }.resume()
+    _ = semaphore.wait(timeout: .now() + 6)
+    return prohibited
+  }
+
+  private func openLocalNetworkSettings(_ settings: XCUIApplication) -> Bool {
+    let privacy = ["Privacy & Security", "Privacy", "Quyền riêng tư và Bảo mật", "Quyền riêng tư & Bảo mật"]
+    let localNetwork = ["Local Network", "Mạng cục bộ"]
+    if launchSettings(settings),
+       tapSettingsRow(in: settings, labels: privacy),
+       tapSettingsRow(in: settings, labels: localNetwork) {
+      return true
+    }
+    return openLocalNetworkViaSearch(settings)
+  }
+
+  private func launchSettings(_ settings: XCUIApplication) -> Bool {
+    settings.terminate()
+    settings.launch()
+    return settings.wait(for: .runningForeground, timeout: 8)
+  }
+
+  private func openLocalNetworkViaSearch(_ settings: XCUIApplication) -> Bool {
+    for query in ["Local Network", "Mạng cục bộ"] {
+      guard launchSettings(settings) else { continue }
+      let search = settings.searchFields.firstMatch
+      guard search.waitForExistence(timeout: 4) else { continue }
+      search.tap()
+      search.typeText(query)
+      if tapSettingsRow(in: settings, labels: [query], swipes: 1) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private func tapSettingsRow(in settings: XCUIApplication, labels: [String], swipes: Int = 4) -> Bool {
+    let predicate = NSPredicate(format: "label IN %@", labels)
+    for _ in 0...swipes {
+      let cell = settings.cells.matching(predicate).firstMatch
+      if cell.exists && cell.isHittable {
+        cell.tap()
+        return true
+      }
+      let button = settings.buttons.matching(predicate).firstMatch
+      if button.exists && button.isHittable {
+        button.tap()
+        return true
+      }
+      settings.swipeUp()
+    }
+    return false
+  }
+
+  private func enableDeviceBotLocalNetworkSwitch(in settings: XCUIApplication) -> Bool {
+    let names = ["Device Bot", "MobileMcpRealRunnerUITests-Runner", "MobileMcpRealRunnerUITests"]
+    let predicate = NSPredicate(format: "label IN %@", names)
+    for _ in 0...4 {
+      let toggle = settings.switches.matching(predicate).firstMatch
+      if toggle.exists && toggle.isHittable {
+        if !switchIsOn(toggle) {
+          toggle.tap()
+        }
+        print("Device Bot Local Network switch enabled")
+        return true
+      }
+      settings.swipeUp()
+    }
+    print("Device Bot is not listed yet. Turn on Device Bot on the open Local Network page.")
+    return false
+  }
+
+  private func switchIsOn(_ toggle: XCUIElement) -> Bool {
+    switch toggle.value {
+    case let number as NSNumber:
+      return number.intValue == 1
+    case let text as String:
+      return text == "1"
+    default:
+      return false
     }
   }
 }

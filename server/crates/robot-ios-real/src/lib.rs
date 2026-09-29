@@ -9,7 +9,7 @@ pub mod xctest_agent;
 pub mod xctest_robot;
 
 pub use xctest_agent::XCTestAgentBridge;
-pub use xctest_robot::IosXCTestRobot;
+pub use xctest_robot::{IosXCTestRobot, XCTestAgentLauncher};
 
 /// Finds the team ID belonging to the requested (or only) local Apple
 /// Development signing identity. Xcode still needs a valid login for that team

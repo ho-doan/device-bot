@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -8,19 +8,114 @@ use mobile_robot_core::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::{process::Command, sync::Mutex};
+use tokio::{
+    process::{Child, Command},
+    sync::Mutex,
+    time::sleep,
+};
 use url::Url;
 use uuid::Uuid;
 
 use crate::{quicktime_recording::QuickTimeRecording, xctest_agent::XCTestAgentBridge};
 
 const ACTION_TIMEOUT: Duration = Duration::from_secs(45);
+const AGENT_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const AGENT_START_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Launches the signed real-device XCTest command loop from the core driver.
+/// Keeping this in the driver makes a fresh MCP process reproducible: it no
+/// longer depends on an unrelated terminal that happened to start the agent.
+#[derive(Clone, Debug)]
+pub struct XCTestAgentLauncher {
+    xcodebuild_path: String,
+    project: PathBuf,
+    derived_data: PathBuf,
+    hosts: String,
+    port: u16,
+    token: Option<String>,
+}
+
+impl XCTestAgentLauncher {
+    pub fn new(
+        xcodebuild_path: impl Into<String>,
+        project: impl Into<PathBuf>,
+        derived_data: impl Into<PathBuf>,
+        hosts: impl Into<String>,
+        port: u16,
+        token: Option<String>,
+    ) -> Result<Self, RobotError> {
+        let raw_hosts = hosts.into();
+        let hosts = raw_hosts
+            .split(',')
+            .map(str::trim)
+            .filter(|host| !host.is_empty())
+            .collect::<Vec<_>>();
+        if hosts.is_empty()
+            || hosts.iter().any(|host| {
+                host.contains("//") || host.contains('/') || host.chars().any(char::is_whitespace)
+            })
+        {
+            return Err(RobotError::InvalidInput(
+                "DEVICE_BOT_IOS_AGENT_HOSTS must be a comma-separated list of IP addresses or hostnames"
+                    .into(),
+            ));
+        }
+        Ok(Self {
+            xcodebuild_path: xcodebuild_path.into(),
+            project: project.into(),
+            derived_data: derived_data.into(),
+            hosts: hosts.join(","),
+            port,
+            token: token.filter(|token| !token.is_empty()),
+        })
+    }
+
+    async fn start(&self, device_id: &str) -> Result<Child, RobotError> {
+        validate_device_id(device_id)?;
+        let project = self.project.to_string_lossy().into_owned();
+        let derived_data = self.derived_data.to_string_lossy().into_owned();
+        let destination = format!("platform=iOS,id={device_id}");
+        let mut command = Command::new(&self.xcodebuild_path);
+        command
+            .args([
+                "test-without-building",
+                "-project",
+                &project,
+                "-scheme",
+                "MobileMcpRealRunner",
+                "-destination",
+                &destination,
+                "-derivedDataPath",
+                &derived_data,
+                "-only-testing:MobileMcpRealRunnerUITests/MobileMcpRealRunnerUITests/testServe",
+            ])
+            .env_remove("SDKROOT")
+            .env("DEVICE_BOT_HOSTS", &self.hosts)
+            .env("DEVICE_BOT_PORT", self.port.to_string());
+        if let Some(token) = &self.token {
+            command.env("DEVICE_BOT_TOKEN", token);
+        }
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|error| {
+                RobotError::CommandFailed(format!(
+                    "could not start the real-iOS XCTest agent: {error}"
+                ))
+            })
+    }
+}
 
 pub struct IosXCTestRobot {
     xcrun_path: String,
     agent: XCTestAgentBridge,
     artifact_dir: PathBuf,
     recording: Arc<Mutex<Option<QuickTimeRecording>>>,
+    agent_launcher: Option<XCTestAgentLauncher>,
+    persistent_agents: Arc<Mutex<HashMap<String, Child>>>,
 }
 
 impl IosXCTestRobot {
@@ -38,7 +133,14 @@ impl IosXCTestRobot {
             agent,
             artifact_dir: artifact_dir.into(),
             recording: Arc::default(),
+            agent_launcher: None,
+            persistent_agents: Arc::default(),
         }
+    }
+
+    pub fn with_agent_launcher(mut self, launcher: XCTestAgentLauncher) -> Self {
+        self.agent_launcher = Some(launcher);
+        self
     }
 
     async fn xcrun(&self, args: &[&str]) -> Result<String, RobotError> {
@@ -59,8 +161,118 @@ impl IosXCTestRobot {
         )))
     }
 
-    async fn dispatch(&self, method: &str, params: Value) -> Result<Value, RobotError> {
+    async fn ensure_agent_started(&self, device_id: &str) -> Result<(), RobotError> {
+        let Some(launcher) = &self.agent_launcher else {
+            return Ok(());
+        };
+        let mut agents = self.persistent_agents.lock().await;
+        if let Some(agent) = agents.get_mut(device_id) {
+            if agent
+                .try_wait()
+                .map_err(|error| {
+                    RobotError::CommandFailed(format!(
+                        "could not inspect the real-iOS XCTest agent process: {error}"
+                    ))
+                })?
+                .is_none()
+            {
+                return Ok(());
+            }
+            agents.remove(device_id);
+        }
+        let agent = launcher.start(device_id).await?;
+        agents.insert(device_id.to_owned(), agent);
+        Ok(())
+    }
+
+    async fn dispatch(
+        &self,
+        device_id: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, RobotError> {
+        self.ensure_agent_started(device_id).await?;
         self.agent.dispatch(method, params, ACTION_TIMEOUT).await
+    }
+
+    async fn agent_exit_detail(&self, device_id: &str) -> Result<Option<String>, RobotError> {
+        let mut agents = self.persistent_agents.lock().await;
+        let Some(agent) = agents.get_mut(device_id) else {
+            return Ok(None);
+        };
+        let Some(status) = agent.try_wait().map_err(|error| {
+            RobotError::CommandFailed(format!(
+                "could not inspect the real-iOS XCTest agent process: {error}"
+            ))
+        })?
+        else {
+            return Ok(None);
+        };
+        agents.remove(device_id);
+        let log_path = self
+            .agent_launcher
+            .as_ref()
+            .map(|launcher| {
+                launcher
+                    .derived_data
+                    .join("Logs/Test")
+                    .display()
+                    .to_string()
+            })
+            .unwrap_or_else(|| "the XCTest derived-data Logs/Test directory".into());
+        Ok(Some(format!(
+            "the auto-started iOS XCTest agent exited with {status}; inspect {log_path}"
+        )))
+    }
+
+    async fn agent_status(&self, device_id: &str) -> UiRunnerStatus {
+        if let Err(error) = self.ensure_agent_started(device_id).await {
+            return UiRunnerStatus {
+                ready: false,
+                detail: error.to_string(),
+            };
+        }
+        let deadline = tokio::time::Instant::now()
+            + if self.agent_launcher.is_some() {
+                AGENT_START_TIMEOUT
+            } else {
+                AGENT_PROBE_TIMEOUT
+            };
+        loop {
+            if self
+                .agent
+                .dispatch("health", json!({}), AGENT_PROBE_TIMEOUT)
+                .await
+                .is_ok()
+            {
+                return UiRunnerStatus {
+                    ready: true,
+                    detail: "XCTest agent connected".into(),
+                };
+            }
+            match self.agent_exit_detail(device_id).await {
+                Ok(Some(detail)) => {
+                    return UiRunnerStatus {
+                        ready: false,
+                        detail,
+                    };
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return UiRunnerStatus {
+                        ready: false,
+                        detail: error.to_string(),
+                    };
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return UiRunnerStatus {
+                    ready: false,
+                    detail: self.agent.connection_diagnostic().await,
+                };
+            }
+            sleep(Duration::from_secs(1)).await;
+        }
     }
 
     async fn devicectl_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
@@ -122,7 +334,7 @@ impl IosXCTestRobot {
             return self.tap(device_id, Point { x, y }).await;
         }
         match self
-            .dispatch("tap-element", json!({ "filter": filter }))
+            .dispatch(device_id, "tap-element", json!({ "filter": filter }))
             .await
         {
             Ok(_) => return Ok(()),
@@ -221,7 +433,7 @@ impl Robot for IosXCTestRobot {
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
         validate_device_id(device_id)?;
-        let result = self.dispatch("screenshot", json!({})).await?;
+        let result = self.dispatch(device_id, "screenshot", json!({})).await?;
         let encoded = result
             .get("pngBase64")
             .and_then(Value::as_str)
@@ -273,7 +485,7 @@ impl Robot for IosXCTestRobot {
             app_id,
         ])
         .await?;
-        self.dispatch("launch", json!({ "bundleId": app_id }))
+        self.dispatch(device_id, "launch", json!({ "bundleId": app_id }))
             .await
             .map(|_| ())
     }
@@ -294,7 +506,7 @@ impl Robot for IosXCTestRobot {
         if let Some(app_id) = app_id {
             validate_app_id(app_id)?;
         }
-        self.dispatch("openUrl", json!({ "url": url, "appId": app_id }))
+        self.dispatch(device_id, "openUrl", json!({ "url": url, "appId": app_id }))
             .await
             .map(|_| ())
     }
@@ -338,7 +550,7 @@ impl Robot for IosXCTestRobot {
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
         validate_device_id(device_id)?;
         valid_point(point)?;
-        self.dispatch("tap", json!({ "x": point.x, "y": point.y }))
+        self.dispatch(device_id, "tap", json!({ "x": point.x, "y": point.y }))
             .await
             .map(|_| ())
     }
@@ -350,7 +562,7 @@ impl Robot for IosXCTestRobot {
                 "text must be non-empty and must not contain NUL".into(),
             ));
         }
-        self.dispatch("text", json!({ "text": text }))
+        self.dispatch(device_id, "text", json!({ "text": text }))
             .await
             .map(|_| ())
     }
@@ -366,6 +578,7 @@ impl Robot for IosXCTestRobot {
         valid_point(start)?;
         valid_point(end)?;
         self.dispatch(
+            device_id,
             "swipe",
             json!({
                 "fromX": start.x, "fromY": start.y,
@@ -437,7 +650,9 @@ impl Robot for IosXCTestRobot {
         if let Some(max_results) = max_results {
             params.insert("maxResults".into(), Value::from(max_results));
         }
-        let result = self.dispatch("dump", Value::Object(params)).await?;
+        let result = self
+            .dispatch(device_id, "dump", Value::Object(params))
+            .await?;
         let elements = result.get("elements").cloned().ok_or_else(|| {
             RobotError::CommandFailed("iOS XCTest agent returned no element list".into())
         })?;
@@ -452,20 +667,7 @@ impl Robot for IosXCTestRobot {
 
     async fn ui_runner_status(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
         validate_device_id(device_id)?;
-        match self
-            .agent
-            .dispatch("health", json!({}), Duration::from_secs(2))
-            .await
-        {
-            Ok(_) => Ok(UiRunnerStatus {
-                ready: true,
-                detail: "XCTest agent connected".into(),
-            }),
-            Err(error) => Ok(UiRunnerStatus {
-                ready: false,
-                detail: error.to_string(),
-            }),
-        }
+        Ok(self.agent_status(device_id).await)
     }
 }
 
@@ -723,5 +925,37 @@ mod tests {
         )];
 
         assert!(select_tappable_element(&elements, "Done").is_none());
+    }
+
+    #[test]
+    fn core_launcher_preserves_a_raw_ipv6_advertised_host() {
+        let launcher = XCTestAgentLauncher::new(
+            "xcodebuild",
+            "runner.xcodeproj",
+            "derived-data",
+            "fd54:ebfd:3d4f::2",
+            18787,
+            Some("token".into()),
+        )
+        .unwrap();
+
+        assert_eq!(launcher.hosts, "fd54:ebfd:3d4f::2");
+        assert_eq!(launcher.port, 18787);
+        assert_eq!(launcher.token.as_deref(), Some("token"));
+    }
+
+    #[test]
+    fn core_launcher_rejects_a_host_that_is_not_a_host_value() {
+        let error = XCTestAgentLauncher::new(
+            "xcodebuild",
+            "runner.xcodeproj",
+            "derived-data",
+            "http://192.168.50.56/next",
+            18787,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("DEVICE_BOT_IOS_AGENT_HOSTS"));
     }
 }

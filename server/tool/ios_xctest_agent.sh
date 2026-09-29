@@ -51,9 +51,9 @@ case "$command" in
       echo "Set DEVICE_BOT_IOS_AGENT_TOKEN to the token used by Device Bot." >&2
       exit 2
     }
-    export TEST_RUNNER_DEVICE_BOT_HOSTS="$hosts"
-    export TEST_RUNNER_DEVICE_BOT_PORT="$port"
-    export TEST_RUNNER_DEVICE_BOT_TOKEN="$token"
+    export DEVICE_BOT_HOSTS="$hosts"
+    export DEVICE_BOT_PORT="$port"
+    export DEVICE_BOT_TOKEN="$token"
     echo "Starting Device Bot XCTest agent -> $hosts:$port" >&2
     xcodebuild test-without-building "${common[@]}" \
       -only-testing:MobileMcpRealRunnerUITests/MobileMcpRealRunnerUITests/testServe

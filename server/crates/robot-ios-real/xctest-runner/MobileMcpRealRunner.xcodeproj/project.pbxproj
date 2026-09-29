@@ -241,7 +241,7 @@
 				DEVELOPMENT_TEAM = N7D3XWS9S5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Mobile MCP needs local network access to receive automation commands from this Mac.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Device Bot needs local network access to receive automation commands from this Mac.";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.hodoan.device-bot.tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -259,7 +259,7 @@
 				DEVELOPMENT_TEAM = N7D3XWS9S5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Mobile MCP needs local network access to receive automation commands from this Mac.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Device Bot needs local network access to receive automation commands from this Mac.";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.hodoan.device-bot.tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";

@@ -1,4 +1,4 @@
-//! Wire types shared by Mobile MCP transports and servers.
+//! Wire types shared by Device Bot MCP transports and servers.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -20,7 +20,7 @@ class MobileMcpCompanion extends StatelessWidget {
     );
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Mobile MCP Companion',
+      title: 'Device Bot Companion',
       theme: ThemeData(
         brightness: Brightness.dark,
         colorScheme: colors,

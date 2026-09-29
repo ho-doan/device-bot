@@ -1,6 +1,6 @@
-# Approach: Viết lại Mobile-MCP bằng Rust + Flutter
+# Approach: Xây dựng Device Bot bằng Rust + Flutter
 
-> Mục tiêu: xây một MCP server điều khiển thiết bị di động (iOS/Android, simulator/emulator/real device), giữ nguyên triết lý "one API, every target" và ưu tiên accessibility-tree hơn screenshot, nhưng thay Node.js bằng **Rust** (server + device engine) và thêm **Flutter** làm companion app (giám sát/cấu hình/debug).
+> Mục tiêu: xây một Device Bot điều khiển thiết bị (iOS/Android, simulator/emulator/real device), giữ nguyên triết lý "one API, every target" và ưu tiên accessibility-tree hơn screenshot, nhưng thay Node.js bằng **Rust** (server + device engine) và thêm **Flutter** làm companion app (giám sát/cấu hình/debug).
 
 ---
 
@@ -77,7 +77,7 @@
 ## 4. Cấu trúc repo đề xuất (Cargo workspace)
 
 ```
-mobile-mcp-rs/
+device-bot/
 ├── Cargo.toml                  # workspace
 ├── crates/
 │   ├── mcp-protocol/            # JSON-RPC + MCP message types, transport traits

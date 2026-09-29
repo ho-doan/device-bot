@@ -177,7 +177,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      'Mobile MCP Companion',
+                      'Device Bot Companion',
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
                     const SizedBox(height: 6),

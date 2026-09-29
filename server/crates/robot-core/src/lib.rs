@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -106,6 +107,11 @@ pub struct UiRunnerStatus {
 #[async_trait]
 pub trait Robot: Send + Sync {
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError>;
+    async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "listing installed apps is not supported for device {device_id}"
+        )))
+    }
     async fn boot_device(&self, device_id: &str) -> Result<(), RobotError> {
         Err(RobotError::Unsupported(format!(
             "boot is not supported for device {device_id}"
@@ -259,6 +265,9 @@ impl Robot for RobotRegistry {
             return Err(errors.remove(0));
         }
         Ok(devices)
+    }
+    async fn list_installed_apps(&self, id: &str) -> Result<Value, RobotError> {
+        self.driver_for(id).await?.list_installed_apps(id).await
     }
     async fn boot_device(&self, id: &str) -> Result<(), RobotError> {
         self.driver_for(id).await?.boot_device(id).await

@@ -20,6 +20,7 @@ use mobile_robot_ios_real::XCTestAgentBridge;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{
+    io::AsyncWriteExt,
     process::{Child, Command},
     sync::Mutex,
     time::{Instant, sleep},
@@ -144,6 +145,43 @@ impl IosSimulatorRobot {
                 .map_or_else(|| "unknown".to_owned(), |code| code.to_string()),
             String::from_utf8_lossy(&output.stderr).trim()
         )))
+    }
+
+    async fn simctl_json(&self, args: &[String]) -> Result<Value, RobotError> {
+        let plist = self.simctl(args).await?;
+        let mut converter = Command::new("plutil")
+            .args(["-convert", "json", "-o", "-", "--", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| {
+                RobotError::CommandFailed(format!("could not start plutil: {error}"))
+            })?;
+        let mut stdin = converter
+            .stdin
+            .take()
+            .ok_or_else(|| RobotError::CommandFailed("could not open plutil stdin".into()))?;
+        stdin.write_all(&plist).await.map_err(|error| {
+            RobotError::CommandFailed(format!("could not write simctl plist to plutil: {error}"))
+        })?;
+        drop(stdin);
+        let output = converter.wait_with_output().await.map_err(|error| {
+            RobotError::CommandFailed(format!("could not wait for plutil: {error}"))
+        })?;
+        if !output.status.success() {
+            return Err(RobotError::CommandFailed(format!(
+                "plutil exited with status {}: {}",
+                output
+                    .status
+                    .code()
+                    .map_or_else(|| "unknown".to_owned(), |code| code.to_string()),
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        serde_json::from_slice(&output.stdout).map_err(|error| {
+            RobotError::CommandFailed(format!("plutil returned invalid simctl app JSON: {error}"))
+        })
     }
 
     fn valid_id(value: &str, label: &str) -> Result<(), RobotError> {
@@ -634,6 +672,18 @@ impl Robot for IosSimulatorRobot {
         parse_simctl_devices(&String::from_utf8(stdout).map_err(|error| {
             RobotError::CommandFailed(format!("simctl returned invalid UTF-8: {error}"))
         })?)
+    }
+
+    async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {
+        Self::valid_device_id(device_id)?;
+        let apps = self
+            .simctl_json(&["simctl".into(), "listapps".into(), device_id.into()])
+            .await?;
+        Ok(json!({
+            "platform": "ios",
+            "deviceId": device_id,
+            "apps": apps,
+        }))
     }
 
     async fn boot_device(&self, device_id: &str) -> Result<(), RobotError> {

@@ -173,6 +173,52 @@ impl Robot for IosXCTestRobot {
         self.devicectl_devices().await
     }
 
+    async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {
+        validate_device_id(device_id)?;
+        let output_path =
+            std::env::temp_dir().join(format!("mobile-mcp-devicectl-apps-{}.json", Uuid::new_v4()));
+        let output_path_string = output_path.to_string_lossy().into_owned();
+        let output = Command::new(&self.xcrun_path)
+            .args([
+                "devicectl",
+                "device",
+                "info",
+                "apps",
+                "--device",
+                device_id,
+                "--include-all-apps",
+                "--json-output",
+                &output_path_string,
+            ])
+            .output()
+            .await
+            .map_err(|error| {
+                RobotError::CommandFailed(format!(
+                    "could not run xcrun devicectl device info apps: {error}"
+                ))
+            })?;
+        if !output.status.success() {
+            let _ = tokio::fs::remove_file(&output_path).await;
+            return Err(RobotError::CommandFailed(format!(
+                "xcrun devicectl device info apps failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        let contents = tokio::fs::read_to_string(&output_path)
+            .await
+            .map_err(|error| {
+                RobotError::CommandFailed(format!(
+                    "could not read devicectl apps JSON output: {error}"
+                ))
+            });
+        let _ = tokio::fs::remove_file(&output_path).await;
+        let contents = contents?;
+        let apps = serde_json::from_str::<Value>(&contents).map_err(|error| {
+            RobotError::CommandFailed(format!("invalid devicectl apps JSON output: {error}"))
+        })?;
+        Ok(apps)
+    }
+
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
         validate_device_id(device_id)?;
         let result = self.dispatch("screenshot", json!({})).await?;

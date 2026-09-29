@@ -1,6 +1,7 @@
 //! MCP tool catalogue and family-level dispatch.
 
 mod app;
+mod apps;
 mod arguments;
 mod batch;
 mod device;
@@ -36,6 +37,7 @@ impl ToolRegistry {
             runner_status::definition(),
         ];
         definitions.extend(app::definitions());
+        definitions.push(apps::definition());
         definitions.extend(recording::definitions());
         definitions.extend(screen::definitions());
         definitions
@@ -53,6 +55,7 @@ impl ToolRegistry {
             app::LAUNCH_NAME => app::launch(&self.robot, &params.arguments).await,
             app::INSTALL_NAME => app::install(&self.robot, &params.arguments).await,
             app::UNINSTALL_NAME => app::uninstall(&self.robot, &params.arguments).await,
+            apps::LIST_INSTALLED_APPS_NAME => apps::list_apps(&self.robot, &params.arguments).await,
             navigation::OPEN_URL_NAME => navigation::open_url(&self.robot, &params.arguments).await,
             input::TYPE_KEYS_NAME => input::type_keys(&self.robot, &params.arguments).await,
             screen::SCREENSHOT_NAME => screen::screenshot(&self.robot, &params.arguments).await,

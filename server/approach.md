@@ -57,7 +57,7 @@
 | Serialize | `serde`, `serde_json` | |
 | CLI / process control | `tokio::process` (gọi `adb`, `xcrun simctl`, `go-ios`) | |
 | HTTP/SSE server | `axum` | dùng cho `--listen` mode |
-| Auth | middleware Bearer token trong `axum` | tương đương `MOBILEMCP_AUTH` |
+| Auth | middleware Bearer token trong `axum` | tương đương `DEVICE_BOT_AUTH` |
 | Logging/telemetry | `tracing`, `tracing-subscriber` | telemetry nên **opt-in**, không mặc định gửi đi |
 | FFI/IPC với Flutter | `flutter_rust_bridge` hoặc HTTP local (`axum` server nội bộ) | xem mục 5 |
 | Error handling | `thiserror`, `anyhow` | |
@@ -156,7 +156,7 @@ Với mỗi tool: định nghĩa input/output schema bằng `serde` struct + JSO
 
 ### Phase 3 — HTTP/SSE transport + Auth
 - [ ] `axum` server, flag `--listen`.
-- [ ] Bearer token middleware tương đương `MOBILEMCP_AUTH`.
+- [ ] Bearer token middleware tương đương `DEVICE_BOT_AUTH`.
 
 ### Phase 4 — iOS Real Device (phức tạp nhất)
 - [ ] Tích hợp `go-ios` (gọi qua process hoặc port logic Go sang Rust nếu cần) + WebDriverAgent client (HTTP tới WDA đang chạy trên device) + device tunnel.

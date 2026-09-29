@@ -87,13 +87,13 @@ impl QuickTimeRecording {
             "mobile-mcp-ios-real-recording-{}-{sequence}.mp4",
             std::process::id()
         ));
-        let device_hint = std::env::var("MOBILE_MCP_IOS_QUICKTIME_DEVICE")
+        let device_hint = std::env::var("DEVICE_BOT_IOS_QUICKTIME_DEVICE")
             .unwrap_or_else(|_| device_hint.to_owned());
         let started_at = SystemTime::now();
         run_osascript(QUICKTIME_START_SCRIPT, &[device_hint.as_str()])
             .await
             .map_err(|error| {
-                RobotError::CommandFailed(format!("could not start QuickTime iPhone recording: {error}. Connect the trusted iPhone by USB, allow QuickTime automation, and set MOBILE_MCP_IOS_QUICKTIME_DEVICE if needed."))
+                RobotError::CommandFailed(format!("could not start QuickTime iPhone recording: {error}. Connect the trusted iPhone by USB, allow QuickTime automation, and set DEVICE_BOT_IOS_QUICKTIME_DEVICE if needed."))
             })?;
         Ok(Self {
             artifact_path,
@@ -221,7 +221,7 @@ async fn newest_movie(root: &Path, started_at: SystemTime) -> Result<Option<Path
 }
 
 async fn convert_movie_to_mp4(source: &Path, destination: &Path) -> Result<(), RobotError> {
-    let ffmpeg_path = std::env::var("MOBILE_MCP_FFMPEG_PATH").unwrap_or_else(|_| "ffmpeg".into());
+    let ffmpeg_path = std::env::var("DEVICE_BOT_FFMPEG_PATH").unwrap_or_else(|_| "ffmpeg".into());
     let output = Command::new(&ffmpeg_path)
         .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
         .arg(source)
@@ -234,7 +234,7 @@ async fn convert_movie_to_mp4(source: &Path, destination: &Path) -> Result<(), R
         .await
         .map_err(|error| {
             RobotError::CommandFailed(format!(
-                "could not run ffmpeg for QuickTime recording (set MOBILE_MCP_FFMPEG_PATH if needed): {error}"
+                "could not run ffmpeg for QuickTime recording (set DEVICE_BOT_FFMPEG_PATH if needed): {error}"
             ))
         })?;
     if !output.status.success() {
@@ -251,7 +251,7 @@ async fn run_osascript(script: &str, arguments: &[&str]) -> Result<String, Strin
         return Err("QuickTime recording is only available on macOS".into());
     }
     let osascript_path =
-        std::env::var("MOBILE_MCP_OSASCRIPT_PATH").unwrap_or_else(|_| "osascript".into());
+        std::env::var("DEVICE_BOT_OSASCRIPT_PATH").unwrap_or_else(|_| "osascript".into());
     let output = tokio::time::timeout(
         Duration::from_secs(30),
         Command::new(osascript_path)

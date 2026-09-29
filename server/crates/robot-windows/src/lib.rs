@@ -32,7 +32,7 @@ impl WindowsRobot {
     }
 
     pub fn from_env() -> Self {
-        Self::new(std::env::var("MOBILE_MCP_ARTIFACT_DIR").unwrap_or_else(|_| "artifacts".into()))
+        Self::new(std::env::var("DEVICE_BOT_ARTIFACT_DIR").unwrap_or_else(|_| "artifacts".into()))
     }
 
     fn require_device(&self, device_id: &str) -> Result<(), RobotError> {

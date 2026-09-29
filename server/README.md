@@ -38,7 +38,7 @@ cargo run -p mobile-mcp-server
 The binary executes `adb` and `xcrun` from `PATH`. Set `ANDROID_ADB_PATH` or
 `XCRUN_PATH` to use a specific installation. Set `GO_IOS_PATH` when the
 `go-ios` binary is not named `ios`. Recording artifacts are written to
-`artifacts/` by default; set `MOBILE_MCP_ARTIFACT_DIR` to override it.
+`artifacts/` by default; set `DEVICE_BOT_ARTIFACT_DIR` to override it.
 
 The process accepts one JSON-RPC message per stdin line and writes one response
 per stdout line. Diagnostic output is reserved for stderr.
@@ -49,12 +49,12 @@ Run an HTTP listener explicitly; prefer a loopback address unless a reverse
 proxy supplies the network boundary:
 
 ```bash
-MOBILEMCP_AUTH=replace-with-a-secret \
+DEVICE_BOT_AUTH=replace-with-a-secret \
   cargo run -p mobile-mcp-server -- --listen 127.0.0.1:3337
 ```
 
 `POST /mcp` implements the `2025-11-25` session lifecycle. Send the token as
-`Authorization: Bearer <token>` when `MOBILEMCP_AUTH` is non-empty. An
+`Authorization: Bearer <token>` when `DEVICE_BOT_AUTH` is non-empty. An
 `initialize` response returns `Mcp-Session-Id`; repeat it for subsequent calls,
 send `notifications/initialized`, then call tools. Responses are JSON by
 default, or one SSE `message` event when the client sends
@@ -165,7 +165,7 @@ The registered real-device driver uses Apple CoreDevice for paired-device
 discovery and app lifecycle, plus the signed XCTest agent for screenshots and
 UI automation. A real-device run requires a paired, trusted iPhone and an
 agent connection back to the MCP host. For wireless devices, configure
-`MOBILE_MCP_IOS_AGENT_BIND` with a LAN-reachable address and ensure the phone
+`DEVICE_BOT_IOS_AGENT_BIND` with a LAN-reachable address and ensure the phone
 can reach that address; `127.0.0.1` only works for a local host process, not an
 iPhone.
 
@@ -182,20 +182,20 @@ trusted iPhone must be connected by USB and visible as a `Screen` source under
 QuickTime's Movie Recording device menu. The server stops the recording through
 QuickTime, reads its autosave MOV, and uses `ffmpeg` to produce the MP4 artifact.
 The first run may ask for Automation/Accessibility permission. Set
-`MOBILE_MCP_IOS_QUICKTIME_DEVICE` when the device display name is not detected
-automatically, and set `MOBILE_MCP_FFMPEG_PATH` when `ffmpeg` is not on `PATH`.
+`DEVICE_BOT_IOS_QUICKTIME_DEVICE` when the device display name is not detected
+automatically, and set `DEVICE_BOT_FFMPEG_PATH` when `ffmpeg` is not on `PATH`.
 
 The Safari example supports a real iPhone after the signed XCTest agent is
 running. Use the same token and paired-device UDID for the agent and example:
 
 ```bash
-export MOBILE_MCP_IOS_DEVICE=<paired-iPhone-UDID>
-export MOBILE_MCP_IOS_AGENT_TOKEN=<long-random-token>
+export DEVICE_BOT_IOS_DEVICE=<paired-iPhone-UDID>
+export DEVICE_BOT_IOS_AGENT_TOKEN=<long-random-token>
 server/tool/ios_xctest_agent.sh build  # first time, or after runner changes
 server/tool/ios_xctest_agent.sh start
 
-DEVICE_ID="$MOBILE_MCP_IOS_DEVICE" \
-MOBILE_MCP_IOS_AGENT_TOKEN="$MOBILE_MCP_IOS_AGENT_TOKEN" \
+DEVICE_ID="$DEVICE_BOT_IOS_DEVICE" \
+DEVICE_BOT_IOS_AGENT_TOKEN="$DEVICE_BOT_IOS_AGENT_TOKEN" \
 server/examples/example_safari.sh ios-real
 ```
 
@@ -203,7 +203,7 @@ The example binds the bridge to `0.0.0.0:18787` by default, records the real
 iPhone through QuickTime when `RECORD_SCREEN=auto` or `1`, and uses the
 real-device XCTest driver's native filtered accessibility queries for Safari
 controls. Set `RECORD_SCREEN=0` to disable recording, or set
-`MOBILE_MCP_IOS_AGENT_HOSTS` if the agent cannot discover a LAN address
+`DEVICE_BOT_IOS_AGENT_HOSTS` if the agent cannot discover a LAN address
 automatically.
 
 Device-driver failures and invalid tool arguments return a normal MCP tool
@@ -225,7 +225,7 @@ remote debugging, for example:
 google-chrome --remote-debugging-port=9222
 ```
 
-Set `MOBILE_MCP_CHROME_DEBUG_ADDRESS` to use a different endpoint. Each debuggable
+Set `DEVICE_BOT_CHROME_DEBUG_ADDRESS` to use a different endpoint. Each debuggable
 page appears as a `chrome:<target-id>` device and supports screenshots, mouse/keyboard
 input, URL navigation, and DOM-backed element discovery.
 
@@ -233,10 +233,10 @@ input, URL navigation, and DOM-backed element discovery.
 requests Screen Recording permission automatically. The first request can require
 the user to approve macOS's prompt and retry. Chrome recording also writes an MP4
 from DevTools screenshots. Both recording drivers require `ffmpeg` (set
-`MOBILE_MCP_FFMPEG_PATH` when it is not on `PATH`).
+`DEVICE_BOT_FFMPEG_PATH` when it is not on `PATH`).
 macOS recording uses AVFoundation's named `Capture screen 0` source rather than
 a numeric device index, so a connected iPhone/Continuity camera cannot be
-selected accidentally. Set `MOBILE_MCP_MACOS_SCREEN_DEVICE` when recording a
+selected accidentally. Set `DEVICE_BOT_MACOS_SCREEN_DEVICE` when recording a
 different display.
 
 Install the recording dependency through the server itself on macOS:

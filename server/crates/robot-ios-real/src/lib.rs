@@ -50,7 +50,7 @@ pub async fn apple_development_team(identity_hint: Option<&str>) -> Result<Strin
             None => "no Apple Development signing identity was found in Keychain".into(),
         })),
         _ => Err(RobotError::CommandFailed(
-            "multiple Apple Development identities found; set MOBILE_MCP_IOS_TEAM or MOBILE_MCP_IOS_SIGNING_IDENTITY".into(),
+            "multiple Apple Development identities found; set DEVICE_BOT_IOS_TEAM or DEVICE_BOT_IOS_SIGNING_IDENTITY".into(),
         )),
     }
 }

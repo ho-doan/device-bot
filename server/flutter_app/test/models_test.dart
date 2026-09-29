@@ -34,7 +34,7 @@ void main() {
     );
 
     expect(options.arguments, ['--listen', '127.0.0.1:3337']);
-    expect(options.environment, {'MOBILEMCP_AUTH': 'local-secret'});
+    expect(options.environment, {'DEVICE_BOT_AUTH': 'local-secret'});
   });
 
   test('supports IPv6 local server addresses without an auth token', () {

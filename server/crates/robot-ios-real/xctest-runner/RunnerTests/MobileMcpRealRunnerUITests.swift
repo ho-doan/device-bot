@@ -6,12 +6,12 @@ import XCTest
 final class MobileMcpRealRunnerUITests: XCTestCase {
   func testServe() {
     let environment = ProcessInfo.processInfo.environment
-    let hosts = (environment["MOBILE_MCP_HOSTS"] ?? "")
+    let hosts = (environment["DEVICE_BOT_HOSTS"] ?? "")
       .split(separator: ",")
       .map(String.init)
       .filter { !$0.isEmpty }
-    let port = Int(environment["MOBILE_MCP_PORT"] ?? "18787") ?? 18787
-    let token = environment["MOBILE_MCP_TOKEN"]
+    let port = Int(environment["DEVICE_BOT_PORT"] ?? "18787") ?? 18787
+    let token = environment["DEVICE_BOT_TOKEN"]
     MobileMcpRealHostAgent(hosts: hosts, port: port, token: token).run()
   }
 }

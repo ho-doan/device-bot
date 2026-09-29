@@ -9,5 +9,6 @@ rust-version.workspace = true
 async-trait.workspace = true
 mobile-robot-core = { path = "../robot-core" }
 quick-xml = "0.39.1"
+serde_json.workspace = true
 tokio.workspace = true
 url = "2.5.8"

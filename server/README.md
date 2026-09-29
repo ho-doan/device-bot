@@ -120,7 +120,7 @@ The intended end-to-end sequence is:
    **New Tab** and the address bar; use the Chrome robot for page DOM elements,
    search results, links, playback controls, and Chrome recording.
 
-## Android tools
+## Device tools
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
@@ -129,6 +129,7 @@ The intended end-to-end sequence is:
 | `mobile_launch_app` | `{ "deviceId": "emulator-5554", "appId": "com.android.chrome" }` | Launch confirmation |
 | `mobile_install_app` | `{ "deviceId": "emulator-5554", "apkPath": "/host/app.apk" }` | Install/replace APK confirmation |
 | `mobile_uninstall_app` | `{ "deviceId": "emulator-5554", "appId": "com.example.app" }` | Uninstall confirmation |
+| `mobile_list_installed_apps` | `{ "deviceId": "device-id" }` | Installed-app inventory for Android, macOS, iOS, or Windows; the result is structured JSON |
 | `mobile_type_keys` | `{ "deviceId": "emulator-5554", "text": "babyshake" }` | Text-input confirmation |
 | `mobile_take_screenshot` | `{ "deviceId": "emulator-5554" }` | MCP `image` content (`image/png`, Base64) |
 | `mobile_click_on_screen_at_coordinates` | `{ "deviceId": "emulator-5554", "x": 100, "y": 240 }` | Text confirmation |
@@ -167,6 +168,14 @@ agent connection back to the MCP host. For wireless devices, configure
 `MOBILE_MCP_IOS_AGENT_BIND` with a LAN-reachable address and ensure the phone
 can reach that address; `127.0.0.1` only works for a local host process, not an
 iPhone.
+
+`mobile_list_installed_apps` is implemented by each native driver: Android uses
+`adb shell pm list packages -f`, macOS uses `system_profiler
+SPApplicationsDataType -json`, iOS Simulator uses `xcrun simctl listapps` plus
+`plutil`, real iOS uses `xcrun devicectl device info apps --include-all-apps`,
+and Windows reads the standard uninstall registry keys via PowerShell. The
+paired iOS device must be available to CoreDevice; its XCTest agent is not
+required for this inventory operation.
 
 Real-device screen recording uses QuickTime Player as a host-side fallback. The
 trusted iPhone must be connected by USB and visible as a `Screen` source under

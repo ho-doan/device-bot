@@ -25,6 +25,15 @@ impl Robot for RecordingRobot {
         }])
     }
 
+    async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {
+        assert_eq!(device_id, "emulator-5554");
+        Ok(json!({
+            "platform": "android",
+            "deviceId": device_id,
+            "apps": [],
+        }))
+    }
+
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
         if device_id == "emulator-5554" {
             Ok(vec![1, 2, 3])
@@ -195,6 +204,7 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
             "mobile_launch_app",
             "mobile_install_app",
             "mobile_uninstall_app",
+            "mobile_list_installed_apps",
             "mobile_start_screen_recording",
             "mobile_stop_screen_recording",
             "mobile_take_screenshot",
@@ -215,6 +225,20 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
         devices["result"]["structuredContent"]["devices"][0]["id"],
         "emulator-5554"
     );
+
+    let apps = server
+        .handle(request(
+            4,
+            "tools/call",
+            json!({
+                "name": "mobile_list_installed_apps",
+                "arguments": { "deviceId": "emulator-5554" }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(apps["result"]["structuredContent"]["platform"], "android");
+    assert_eq!(apps["result"]["structuredContent"]["apps"], json!([]));
 
     let screenshot = server
         .handle(request(

@@ -11,6 +11,7 @@ use std::{
 
 use async_trait::async_trait;
 use mobile_robot_core::{DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
+use serde_json::{Value, json};
 use tokio::process::Command;
 
 const DEVICE_ID: &str = "windows-host";
@@ -105,6 +106,44 @@ impl Robot for WindowsRobot {
             platform: Platform::Windows,
             state: DeviceState::Available,
         }])
+    }
+
+    async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {
+        self.require_device(device_id)?;
+        let script = r#"
+$paths = @(
+  'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+  'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+  'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
+)
+$apps = foreach ($path in $paths) {
+  Get-ItemProperty $path -ErrorAction SilentlyContinue |
+    Where-Object { $_.DisplayName } |
+    Select-Object @{Name='name'; Expression={$_.DisplayName}},
+                  @{Name='version'; Expression={$_.DisplayVersion}},
+                  @{Name='publisher'; Expression={$_.Publisher}},
+                  @{Name='installLocation'; Expression={$_.InstallLocation}}
+}
+if ($null -eq $apps) {
+  '[]'
+} else {
+  @($apps) | ConvertTo-Json -Depth 3 -Compress
+}
+"#;
+        let output = self.powershell(script.into()).await?;
+        let value = serde_json::from_slice::<Value>(&output).map_err(|error| {
+            RobotError::CommandFailed(format!("PowerShell returned invalid app JSON: {error}"))
+        })?;
+        let apps = match value {
+            Value::Null => json!([]),
+            Value::Array(_) => value,
+            other => Value::Array(vec![other]),
+        };
+        Ok(json!({
+            "platform": "windows",
+            "deviceId": device_id,
+            "apps": apps,
+        }))
     }
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {

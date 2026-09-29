@@ -21,6 +21,7 @@ use std::{
 
 use async_trait::async_trait;
 use mobile_robot_core::{DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
+use serde_json::{Value, json};
 use tokio::{
     process::{Child, Command},
     sync::Mutex,
@@ -952,6 +953,28 @@ impl Robot for MacosRobot {
             platform: Platform::Macos,
             state: DeviceState::Available,
         }])
+    }
+
+    async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {
+        self.require_device(device_id)?;
+        let output = self
+            .run(
+                "system_profiler",
+                &["SPApplicationsDataType".into(), "-json".into()],
+            )
+            .await?;
+        let report = serde_json::from_slice::<Value>(&output).map_err(|error| {
+            RobotError::CommandFailed(format!("system_profiler returned invalid JSON: {error}"))
+        })?;
+        let apps = report
+            .get("SPApplicationsDataType")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        Ok(json!({
+            "platform": "macos",
+            "deviceId": device_id,
+            "apps": apps,
+        }))
     }
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {

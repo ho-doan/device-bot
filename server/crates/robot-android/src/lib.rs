@@ -21,6 +21,7 @@ use quick_xml::{
     Reader,
     events::{BytesStart, Event},
 };
+use serde_json::{Value, json};
 use tokio::{process::Command, sync::Mutex};
 use url::Url;
 
@@ -140,6 +141,31 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
             RobotError::CommandFailed(format!("adb devices returned invalid UTF-8: {error}"))
         })?;
         Ok(parse_adb_devices(&text))
+    }
+
+    async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {
+        ensure_device_id(device_id)?;
+        let output = self
+            .run_adb(&[
+                "-s".into(),
+                device_id.into(),
+                "shell".into(),
+                "pm".into(),
+                "list".into(),
+                "packages".into(),
+                "-f".into(),
+            ])
+            .await?;
+        let text = String::from_utf8(output.stdout).map_err(|error| {
+            RobotError::CommandFailed(format!(
+                "adb package listing returned invalid UTF-8: {error}"
+            ))
+        })?;
+        Ok(json!({
+            "platform": "android",
+            "deviceId": device_id,
+            "apps": parse_adb_installed_apps(&text),
+        }))
     }
 
     async fn start_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
@@ -619,6 +645,21 @@ pub fn parse_adb_devices(output: &str) -> Vec<RobotDevice> {
     output.lines().filter_map(parse_device_line).collect()
 }
 
+/// Parses `adb shell pm list packages -f` output into portable app records.
+pub fn parse_adb_installed_apps(output: &str) -> Vec<Value> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let package = line.trim().strip_prefix("package:")?;
+            let (source_path, package_name) = package.rsplit_once('=')?;
+            Some(json!({
+                "packageName": package_name,
+                "sourcePath": source_path,
+            }))
+        })
+        .collect()
+}
+
 fn parse_device_line(line: &str) -> Option<RobotDevice> {
     let mut fields = line.split_whitespace();
     let id = fields.next()?;
@@ -710,6 +751,21 @@ mod tests {
         assert_eq!(devices[0].state, DeviceState::Available);
         assert_eq!(devices[1].state, DeviceState::Unauthorized);
         assert_eq!(devices[2].state, DeviceState::Offline);
+    }
+
+    #[test]
+    fn parses_installed_packages_with_apk_paths() {
+        let apps = parse_adb_installed_apps(
+            "package:/data/app/~~abc==/com.example.one-xyz==/base.apk=com.example.one\n\
+             package:/system/priv-app/Settings/Settings.apk=com.android.settings\n",
+        );
+
+        assert_eq!(apps.len(), 2);
+        assert_eq!(apps[0]["packageName"], "com.example.one");
+        assert_eq!(
+            apps[1]["sourcePath"],
+            "/system/priv-app/Settings/Settings.apk"
+        );
     }
 
     #[test]

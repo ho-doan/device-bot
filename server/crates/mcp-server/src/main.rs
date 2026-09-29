@@ -49,7 +49,7 @@ async fn install_chrome_recording_tools() -> std::io::Result<()> {
                 .map_or_else(|| "unknown".into(), |code| code.to_string())
         )));
     }
-    println!("Chrome recording tools installed. Restart mobile-mcp-server to use ffmpeg.");
+    println!("Chrome recording tools installed. Restart Device Bot to use ffmpeg.");
     Ok(())
 }
 

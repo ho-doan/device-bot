@@ -1,4 +1,4 @@
-# Mobile MCP Rust server
+# Device Bot
 
 The Rust server is intentionally independent of the Flutter plugin at the
 repository root. It implements the MCP transport and device abstractions; the

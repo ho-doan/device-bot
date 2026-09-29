@@ -1,2 +1,6 @@
 /target/
 /artifacts/
+
+# Generated XCTest build products and per-user Xcode state.
+/**/xctest-runner/build/
+/**/xctest-runner/**/xcuserdata/

@@ -80,7 +80,7 @@ impl Server {
                     tools: ToolsCapability {},
                 },
                 server_info: Implementation {
-                    name: "mobile-mcp-rs".to_owned(),
+                    name: "device-bot".to_owned(),
                     version: env!("CARGO_PKG_VERSION").to_owned(),
                 },
             },

@@ -13,7 +13,7 @@ void main() {
   testWidgets('renders the local server connection controls', (tester) async {
     await tester.pumpWidget(const MobileMcpCompanion());
 
-    expect(find.text('Mobile MCP Companion'), findsOneWidget);
+    expect(find.text('Device Bot Companion'), findsOneWidget);
     expect(find.text('Admin API URL'), findsOneWidget);
     expect(find.text('Server executable'), findsOneWidget);
     expect(find.text('Refresh'), findsOneWidget);

@@ -13,15 +13,14 @@ pub(super) fn definitions() -> [ToolDefinition; 2] {
     [
         ToolDefinition {
             name: START_NAME.into(),
-            title: Some("Start iOS Simulator screen recording".into()),
-            description: "Start recording an iOS Simulator screen to an MP4 artifact.".into(),
+            title: Some("Start device screen recording".into()),
+            description: "Start recording a supported device screen to a video artifact.".into(),
             input_schema: device_id_schema(),
         },
         ToolDefinition {
             name: STOP_NAME.into(),
-            title: Some("Stop iOS Simulator screen recording".into()),
-            description: "Stop the iOS Simulator recording and return its MP4 artifact path."
-                .into(),
+            title: Some("Stop device screen recording".into()),
+            description: "Stop the device recording and return its video artifact path.".into(),
             input_schema: device_id_schema(),
         },
     ]

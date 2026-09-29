@@ -3,7 +3,9 @@
 # Dùng khi thiết bị không có Chrome. Cần jq để đọc structuredContent trả về từ MCP.
 #
 # Chạy macOS: ./server/examples/example_safari.sh
-# Chạy iOS Simulator: DEVICE_ID=<simulator-id> APP_ID=com.apple.mobilesafari ./server/examples/example_safari.sh
+# Chạy iOS Simulator: DEVICE_ID=<simulator-id> ./server/examples/example_safari.sh ios-sim
+# Chạy iPhone thật: DEVICE_ID=<iphone-udid> MOBILE_MCP_IOS_AGENT_TOKEN=<token> \
+#   ./server/examples/example_safari.sh ios-real
 
 set -euo pipefail
 
@@ -13,11 +15,53 @@ unset SDKROOT
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SERVER_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-readonly DEVICE_ID="${DEVICE_ID:-macos-host}"
+readonly REQUESTED_TARGET="${1:-${DEVICE_PLATFORM:-auto}}"
+[[ "$#" -le 1 ]] || {
+  printf 'Dùng: %s [macos|ios-sim|ios-real].\n' "$0" >&2
+  exit 2
+}
+
+requested_app_id="${APP_ID:-}"
+target="$REQUESTED_TARGET"
+if [[ "$target" == auto ]]; then
+  if [[ "$requested_app_id" == "com.apple.mobilesafari" ]]; then
+    if [[ -n "${MOBILE_MCP_IOS_DEVICE:-}" || -n "${MOBILE_MCP_IOS_AGENT_BIND:-}" ]]; then
+      target=ios-real
+    else
+      target=ios-sim
+    fi
+  else
+    target=macos
+  fi
+fi
+case "$target" in
+  macos|ios-sim|ios-real) ;;
+  *)
+    printf 'Target không hợp lệ %q; chọn macos, ios-sim hoặc ios-real.\n' "$target" >&2
+    exit 2
+    ;;
+esac
+readonly TARGET="$target"
+
+if [[ "$TARGET" == "ios-real" ]]; then
+  readonly DEVICE_ID="${DEVICE_ID:-${MOBILE_MCP_IOS_DEVICE:-}}"
+  [[ -n "$DEVICE_ID" ]] || {
+    printf 'ios-real cần DEVICE_ID hoặc MOBILE_MCP_IOS_DEVICE là UDID iPhone.\n' >&2
+    exit 2
+  }
+  readonly APP_ID="${APP_ID:-com.apple.mobilesafari}"
+else
+  readonly DEVICE_ID="${DEVICE_ID:-macos-host}"
+  if [[ "$TARGET" == "ios-sim" ]]; then
+    readonly APP_ID="${APP_ID:-com.apple.mobilesafari}"
+  else
+    readonly APP_ID="${APP_ID:-Safari}"
+  fi
+fi
 # `Safari` is the macOS application name. Override APP_ID with the platform's
 # Safari identifier (for example, com.apple.mobilesafari on an iOS Simulator).
-readonly APP_ID="${APP_ID:-Safari}"
 readonly SETTLE_SECONDS="${SETTLE_SECONDS:-3}"
+readonly RECORD_SCREEN_MODE="${RECORD_SCREEN:-auto}"
 # XCTest needs a larger request budget on iOS to attach to Safari. This is not
 # a build budget: after warm-up, requests still use test-without-building.
 if [[ "$APP_ID" == "com.apple.mobilesafari" ]]; then
@@ -39,6 +83,25 @@ command -v jq >/dev/null || { printf 'Kịch bản cần jq.\n' >&2; exit 1; }
   printf 'XCTEST_WARMUP_TIMEOUT_MS phải là số nguyên trong khoảng 1..60000.\n' >&2
   exit 2
 }
+[[ "$RECORD_SCREEN_MODE" =~ ^(auto|0|1)$ ]] || {
+  printf 'RECORD_SCREEN phải là auto, 0 hoặc 1.\n' >&2
+  exit 2
+}
+if [[ "$TARGET" == "ios-real" ]]; then
+  [[ -n "${MOBILE_MCP_IOS_AGENT_TOKEN:-}" ]] || {
+    printf 'ios-real cần MOBILE_MCP_IOS_AGENT_TOKEN giống token của ios_xctest_agent.sh start.\n' >&2
+    exit 2
+  }
+  if [[ "${MOBILE_MCP_IOS_AGENT_BIND:-}" =~ ^(127\.0\.0\.1|localhost)(:|$) ]]; then
+    printf 'MOBILE_MCP_IOS_AGENT_BIND của ios-real phải là địa chỉ LAN, không phải loopback.\n' >&2
+    exit 2
+  fi
+fi
+
+record_screen=1
+if [[ "$RECORD_SCREEN_MODE" == 0 ]]; then
+  record_screen=0
+fi
 
 readonly SESSION_DIR="$(mktemp -d "${TMPDIR:-/tmp}/device-robot-mcp.XXXXXX")"
 readonly INPUT_PIPE="$SESSION_DIR/input"
@@ -47,10 +110,14 @@ readonly OUTPUT_PIPE="$SESSION_DIR/output"
 # processes and later example/test runs share one machine-local build cache.
 readonly XCTEST_DERIVED_DATA_DIR="${MOBILE_MCP_IOS_XCTEST_DERIVED_DATA:-$SERVER_DIR/target/mobile-mcp-ios-xctest-derived-data-persistent-agent}"
 export MOBILE_MCP_IOS_XCTEST_DERIVED_DATA="$XCTEST_DERIVED_DATA_DIR"
-# The server always starts an iOS XCTest bridge, although this Safari example
-# uses an iOS Simulator and does not need it. An ephemeral port keeps repeated
-# example runs from colliding with another local server.
-export MOBILE_MCP_IOS_AGENT_BIND="${MOBILE_MCP_IOS_AGENT_BIND:-127.0.0.1:0}"
+# The real-device XCTest agent runs on the iPhone and must connect back to a
+# stable, LAN-reachable bridge. Simulator runs can keep an ephemeral loopback
+# port because their runner is launched by the host.
+if [[ "$TARGET" == "ios-real" ]]; then
+  export MOBILE_MCP_IOS_AGENT_BIND="${MOBILE_MCP_IOS_AGENT_BIND:-0.0.0.0:${MOBILE_MCP_IOS_AGENT_PORT:-18787}}"
+else
+  export MOBILE_MCP_IOS_AGENT_BIND="${MOBILE_MCP_IOS_AGENT_BIND:-127.0.0.1:0}"
+fi
 mkfifo "$INPUT_PIPE" "$OUTPUT_PIPE"
 cargo run -q --manifest-path "$SERVER_DIR/Cargo.toml" -p mobile-mcp-server \
   <"$INPUT_PIPE" >"$OUTPUT_PIPE" &
@@ -91,6 +158,20 @@ call_tool() {
     jq -r '.result.content[]?.text // "MCP tool thất bại"' <<<"$last_response" >&2
     return 1
   fi
+}
+
+wait_for_real_ios_agent() {
+  local arguments attempt
+  arguments="$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device}')"
+  for ((attempt = 1; attempt <= 30; attempt++)); do
+    if call_tool mobile_get_ui_runner_status "$arguments" &&
+      [[ "$(jq -r '.result.structuredContent.ready // false' <<<"$last_response")" == true ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  printf 'iOS XCTest agent chưa sẵn sàng sau 30 giây trên %s.\n' "$DEVICE_ID" >&2
+  return 1
 }
 
 tap_first_element() {
@@ -155,16 +236,23 @@ tap_address_bar() {
 ios_safari_address_center=''
 
 find_ios_safari_address_center() {
-  local arguments candidate
-  arguments="$(jq -cn --arg device "$DEVICE_ID" \
-    '{deviceId:$device, filter:"Address", maxResults:10}')"
+  local arguments candidate address_filter="Address"
+  if [[ "$TARGET" == "ios-real" ]]; then
+    address_filter='TabBarItemTitle'
+  fi
+  arguments="$(jq -cn --arg device "$DEVICE_ID" --arg filter "$address_filter" \
+    '{deviceId:$device, filter:$filter, maxResults:10}')"
   call_tool mobile_list_elements_on_screen "$arguments"
   candidate="$(jq -cer '
     [
       .result.structuredContent.elements[]
       | select(
           .clickable == true and
-          ((.contentDescription // "") == "Address" or (.text // "") == "Address") and
+          (
+            ((.resourceId // "") == "TabBarItemTitle") or
+            ((.contentDescription // "") | ascii_downcase | IN("address")) or
+            ((.text // "") | ascii_downcase | IN("address"))
+          ) and
           .bounds.left != null and .bounds.right != null and
           .bounds.top != null and .bounds.bottom != null
         )
@@ -191,18 +279,63 @@ search_for_chatgpt() {
       --argjson x "$x" \
       --argjson y "$y" \
       '[{type:"tap", x:$x, y:$y}, {type:"type", text:"chatgpt.com"}] | {deviceId:$device, actions:.}')"
-    tap_first_element 'Go' false 3 ||
+      tap_first_element 'Go' false 3 ||
       tap_first_element 'Search' false 3 ||
-      tap_first_element 'Return' false 3
+      tap_first_element 'Return' false 3 ||
+      tap_first_element 'Done' false 3
   else
     tap_address_bar
     call_tool mobile_type_keys "$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device, text:"chatgpt.com"}')"
-    tap_first_element 'Go' false 3 || tap_first_element 'Search' false 3
+    tap_first_element 'Go' false 3 ||
+      tap_first_element 'Search' false 3 ||
+      tap_first_element 'Return' false 3
   fi
 }
 
 tap_accessibility_element() {
   local filter="$1" max_attempts="${2:-12}" arguments attempt
+  if [[ "$TARGET" == "ios-real" ]]; then
+    local real_filter
+    case "$filter" in
+      Tabs) real_filter='TabOverviewButton' ;;
+      Private) real_filter='Private, Tab Group' ;;
+      Done) real_filter='DoneButton' ;;
+      Add) real_filter='NewTabButton' ;;
+      *) real_filter="$filter" ;;
+    esac
+    arguments="$(jq -cn --arg device "$DEVICE_ID" --arg filter "$real_filter" \
+      '{deviceId:$device, actions:[{type:"tap_element", filter:$filter}]}')"
+    if call_tool mobile_execute_ui_actions "$arguments"; then
+      return 0
+    fi
+    case "$filter" in
+      Tabs)
+        tap_first_element 'TabOverviewButton' true "$max_attempts" ||
+          tap_first_element 'Tab' true "$max_attempts" ||
+          tap_first_element 'Tabs' true "$max_attempts"
+        ;;
+      Private)
+        tap_first_element 'Private, Tab Group' true "$max_attempts" ||
+          tap_first_element 'CapsuleTabGroup' true "$max_attempts" ||
+          tap_first_element 'Private' true "$max_attempts" ||
+          tap_first_element 'Private Browsing' true "$max_attempts"
+        ;;
+      Done)
+        tap_first_element 'DoneButton' false "$max_attempts" ||
+          tap_first_element 'Done' false "$max_attempts" ||
+          tap_first_element 'Close' false "$max_attempts"
+        ;;
+      Add)
+        tap_first_element 'NewTabButton' true "$max_attempts" ||
+          tap_first_element 'Add' true "$max_attempts" ||
+          tap_first_element 'New Tab' true "$max_attempts"
+        ;;
+      *)
+        tap_first_element "$filter" true "$max_attempts"
+        ;;
+    esac
+    return
+  fi
   arguments="$(jq -cn --arg device "$DEVICE_ID" --arg filter "$filter" \
     '{deviceId:$device, actions:[{type:"tap_element", filter:$filter}]}')"
   for ((attempt = 1; attempt <= max_attempts; attempt++)); do
@@ -214,11 +347,39 @@ tap_accessibility_element() {
   return 1
 }
 
+tap_send_button() {
+  tap_accessibility_element 'Send message' 12 ||
+    tap_accessibility_element 'Send prompt' 12 ||
+    tap_accessibility_element 'Send' 12 ||
+    tap_first_element 'Send message' true 12 top-edge ||
+    tap_first_element 'Send prompt' true ||
+    tap_first_element 'Send' true
+}
+
+has_accessibility_element() {
+  local filter="$1" arguments
+  arguments="$(jq -cn --arg device "$DEVICE_ID" --arg filter "$filter" \
+    '{deviceId:$device, filter:$filter, maxResults:1}')"
+  call_tool mobile_list_elements_on_screen "$arguments" >/dev/null &&
+    jq -e --arg filter "$filter" '
+      (.result.structuredContent.elements // [])[]
+      | ((.resourceId // "") == $filter or
+         (.contentDescription // "") == $filter or
+         (.text // "") == $filter)
+    ' <<<"$last_response" >/dev/null
+}
+
 open_ios_safari_new_tab() {
   # Use Safari Private before creating the tab so ChatGPT cannot restore a
   # draft from the regular tab group. All controls are located through the
   # accessibility tree; no screen coordinates are assumed.
-  tap_accessibility_element 'Tabs' 12
+  if [[ "$TARGET" == "ios-real" ]]; then
+    if ! has_accessibility_element 'TabOverview'; then
+      tap_accessibility_element 'Tabs' 12
+    fi
+  else
+    tap_accessibility_element 'Tabs' 12
+  fi
   sleep "$SETTLE_SECONDS"
   tap_accessibility_element 'Private' 12 ||
     tap_accessibility_element 'Private Browsing' 12
@@ -268,25 +429,51 @@ require_element() {
 }
 
 require_sent_message() {
-  local arguments candidate attempt
-  arguments="$(jq -cn --arg device "$DEVICE_ID" --arg filter "hello" \
-    '{deviceId:$device, filter:$filter, maxResults:20}')"
+  local arguments composer_top input_has_hello candidate attempt
+  arguments="$(jq -cn --arg device "$DEVICE_ID" \
+    '{deviceId:$device, maxResults:100}')"
   for ((attempt = 1; attempt <= 12; attempt++)); do
     call_tool mobile_list_elements_on_screen "$arguments"
+    input_has_hello="$(jq -r '
+      [
+        .result.structuredContent.elements[]?
+        | select((.className // .role // "") == "textField")
+        | [(.text // ""), (.contentDescription // ""), (.value // "")]
+        | join(" ")
+      ]
+      | join(" ")
+      | ascii_downcase
+      | contains("hello")
+    ' <<<"$last_response")"
+    composer_top="$(jq -r '
+      [
+        .result.structuredContent.elements[]?
+        | select((.className // .role // "") == "textField")
+        | .bounds.top
+        | numbers
+      ]
+      | min // null
+    ' <<<"$last_response")"
     if [[ "${DEVICE_ROBOT_DEBUG:-}" == "1" ]]; then
-      jq -c '.result.structuredContent.elements' <<<"$last_response" >&2
+      jq -c --arg input_has_hello "$input_has_hello" --arg composer_top "$composer_top" \
+        '{input_has_hello:$input_has_hello, composer_top:$composer_top, elements:.result.structuredContent.elements}' \
+        <<<"$last_response" >&2
     fi
-    candidate="$(jq -cer '
-      .result.structuredContent.elements[]
-      | select((.role // "") != "textField")
-      | select(
-          [(.text // ""), (.contentDescription // ""), (.value // "")]
-          | join(" ")
-          | ascii_downcase
-          | contains("hello")
-        )
-      | select(.bounds.left != null and .bounds.right != null and .bounds.top != null and .bounds.bottom != null)
-    ' <<<"$last_response" 2>/dev/null || true)"
+    candidate=''
+    if [[ "$input_has_hello" != true ]]; then
+      candidate="$(jq -cer --argjson composer_top "$composer_top" '
+        .result.structuredContent.elements[]
+        | select((.className // .role // "") != "textField")
+        | select(
+            [(.text // ""), (.contentDescription // ""), (.value // "")]
+            | join(" ")
+            | ascii_downcase
+            | contains("hello")
+          )
+        | select(.bounds.left != null and .bounds.right != null and .bounds.top != null and .bounds.bottom != null)
+        | select($composer_top == null or .bounds.bottom <= $composer_top)
+      ' <<<"$last_response" 2>/dev/null || true)"
+    fi
     [[ -n "$candidate" ]] && return 0
     sleep 0.25
   done
@@ -347,13 +534,26 @@ receive 1
 send '{"jsonrpc":"2.0","method":"notifications/initialized"}'
 next_id=2
 
+if [[ "$TARGET" == "ios-real" ]]; then
+  wait_for_real_ios_agent
+fi
 call_tool mobile_list_available_devices '{}'
-call_tool mobile_start_screen_recording "$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device}')"
-recording_started=true
+if [[ "$record_screen" == 1 ]]; then
+  call_tool mobile_start_screen_recording "$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device}')"
+  recording_started=true
+fi
+if [[ "$TARGET" == "ios-real" ]]; then
+  runner_status_arguments="$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device}')"
+  call_tool mobile_get_ui_runner_status "$runner_status_arguments"
+  if [[ "$(jq -r '.result.structuredContent.ready // false' <<<"$last_response")" != true ]]; then
+    jq -r '.result.structuredContent.detail // "iOS XCTest agent chưa sẵn sàng"' <<<"$last_response" >&2
+    exit 1
+  fi
+fi
 call_tool mobile_launch_app "$(jq -cn --arg device "$DEVICE_ID" --arg app "$APP_ID" '{deviceId:$device, appId:$app}')"
 sleep "$SETTLE_SECONDS"
 
-if [[ "$APP_ID" == "com.apple.mobilesafari" ]]; then
+if [[ "$TARGET" == "ios-sim" || "$TARGET" == "ios-real" ]]; then
   warm_up_ios_xctest_runner
   open_ios_safari_new_tab
 else
@@ -383,9 +583,7 @@ clear_chatgpt_draft() {
 }
 clear_chatgpt_draft
 call_tool mobile_type_keys "$(jq -cn --arg device "$DEVICE_ID" '{deviceId:$device, text:"hello"}')"
-tap_first_element 'Send message' true 12 top-edge ||
-  tap_first_element 'Send prompt' true ||
-  tap_first_element 'Send' true
+tap_send_button
 # Sau khi gửi, tin nhắn của người dùng phải xuất hiện trong conversation.
 require_sent_message
 sleep "$SETTLE_SECONDS"

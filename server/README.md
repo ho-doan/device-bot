@@ -99,7 +99,7 @@ claim that macOS, Windows, Android, or iOS browser automation is supported.
 | --- | --- | --- |
 | Android device or emulator | discovery, app install/uninstall/launch, screenshot, MP4 recording, tap, text, swipe, accessibility elements | Requires ADB and a connected or booted device. Chrome UI flow still requires the Chrome DevTools robot. |
 | iOS Simulator | boot, app install/uninstall/launch, screenshot, MP4 recording, tap, text, swipe, XCTest elements | Requires Xcode and the bundled XCTest runner to be buildable for the target app. Chrome UI flow still requires the Chrome DevTools robot. |
-| Real iOS device | CoreDevice discovery, install/uninstall, app launch, and XCTest screenshot/input/swipe/elements when the signed XCTest agent is reachable | No real-device screen recording. A wireless device is discoverable, but its XCTest agent must bind to a LAN-reachable MCP host; the default loopback bind is not sufficient. |
+| Real iOS device | CoreDevice discovery, install/uninstall, app launch, XCTest screenshot/input/swipe/elements, and QuickTime MP4 recording when the signed XCTest agent is reachable | Recording uses QuickTime's iPhone capture device and therefore requires the trusted iPhone to be connected by USB. A wireless device is discoverable, but its XCTest agent must bind to a LAN-reachable MCP host; the default loopback bind is not sufficient. |
 | macOS host | screenshot, MP4 recording, launch app, tap, text, accessibility elements | No installer/uninstaller or drag. Requires Screen Recording permission for recording and Accessibility permission for input. |
 | Windows host | screenshot, launch app, tap, text, drag | No recording, installer/uninstaller, or accessibility-tree discovery. The temporary OmniParser coordinate fallback for Flutter is not implemented. Requires an interactive Windows session and UI-automation access. |
 | Chrome DevTools page | screenshot, MP4 recording, click, text, drag, DOM elements, navigate the attached page | It requires a reachable DevTools endpoint. |
@@ -168,7 +168,34 @@ agent connection back to the MCP host. For wireless devices, configure
 can reach that address; `127.0.0.1` only works for a local host process, not an
 iPhone.
 
-Screen recording is not yet implemented for real iOS devices.
+Real-device screen recording uses QuickTime Player as a host-side fallback. The
+trusted iPhone must be connected by USB and visible as a `Screen` source under
+QuickTime's Movie Recording device menu. The server stops the recording through
+QuickTime, reads its autosave MOV, and uses `ffmpeg` to produce the MP4 artifact.
+The first run may ask for Automation/Accessibility permission. Set
+`MOBILE_MCP_IOS_QUICKTIME_DEVICE` when the device display name is not detected
+automatically, and set `MOBILE_MCP_FFMPEG_PATH` when `ffmpeg` is not on `PATH`.
+
+The Safari example supports a real iPhone after the signed XCTest agent is
+running. Use the same token and paired-device UDID for the agent and example:
+
+```bash
+export MOBILE_MCP_IOS_DEVICE=<paired-iPhone-UDID>
+export MOBILE_MCP_IOS_AGENT_TOKEN=<long-random-token>
+server/tool/ios_xctest_agent.sh build  # first time, or after runner changes
+server/tool/ios_xctest_agent.sh start
+
+DEVICE_ID="$MOBILE_MCP_IOS_DEVICE" \
+MOBILE_MCP_IOS_AGENT_TOKEN="$MOBILE_MCP_IOS_AGENT_TOKEN" \
+server/examples/example_safari.sh ios-real
+```
+
+The example binds the bridge to `0.0.0.0:18787` by default, records the real
+iPhone through QuickTime when `RECORD_SCREEN=auto` or `1`, and uses the
+real-device XCTest driver's native filtered accessibility queries for Safari
+controls. Set `RECORD_SCREEN=0` to disable recording, or set
+`MOBILE_MCP_IOS_AGENT_HOSTS` if the agent cannot discover a LAN address
+automatically.
 
 Device-driver failures and invalid tool arguments return a normal MCP tool
 result with `isError: true`, so clients can present actionable retry feedback.

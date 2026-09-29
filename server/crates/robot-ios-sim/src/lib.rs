@@ -591,6 +591,32 @@ impl IosSimulatorRobot {
             ))),
         }
     }
+
+    async fn tap_element_by_filter(&self, device_id: &str, filter: &str) -> Result<(), RobotError> {
+        let elements = self
+            .list_elements_filtered(device_id, Some(filter), Some(20))
+            .await?;
+        let element = elements
+            .into_iter()
+            .find(|element| {
+                element.enabled
+                    && element.clickable
+                    && element.bounds.right > element.bounds.left
+                    && element.bounds.bottom > element.bounds.top
+            })
+            .ok_or_else(|| {
+                RobotError::CommandFailed(format!("could not find UI element matching {filter:?}"))
+            })?;
+        let width = element.bounds.right - element.bounds.left;
+        let height = element.bounds.bottom - element.bounds.top;
+        let x = f64::from(element.bounds.left + element.bounds.right) / 2.0;
+        let y = if filter.to_ascii_lowercase().contains("send") && height > width * 3 {
+            f64::from(element.bounds.top) + 12.0_f64.min(f64::from(height) / 2.0)
+        } else {
+            f64::from(element.bounds.top + element.bounds.bottom) / 2.0
+        };
+        self.tap(device_id, Point { x, y }).await
+    }
 }
 
 #[async_trait]
@@ -822,6 +848,7 @@ impl Robot for IosSimulatorRobot {
         .await
         .map(|_| ())
     }
+
     async fn swipe(
         &self,
         device_id: &str,
@@ -886,20 +913,24 @@ impl Robot for IosSimulatorRobot {
                             "tap element filter must not be empty".into(),
                         ));
                     }
-                    let result = self
-                        .run_xctest(
-                            device_id,
-                            &app_id,
-                            "tap-element",
-                            &[("MOBILE_MCP_ELEMENT_FILTER", filter.clone())],
-                            None,
-                        )
-                        .await?;
-                    if result.get("ok").and_then(Value::as_bool) == Some(false) {
-                        return Err(RobotError::CommandFailed(format!(
-                            "could not tap UI element matching {:?}",
-                            filter
-                        )));
+                    if filter.to_ascii_lowercase().contains("send") {
+                        self.tap_element_by_filter(device_id, filter).await?;
+                    } else {
+                        let result = self
+                            .run_xctest(
+                                device_id,
+                                &app_id,
+                                "tap-element",
+                                &[("MOBILE_MCP_ELEMENT_FILTER", filter.clone())],
+                                None,
+                            )
+                            .await?;
+                        if result.get("ok").and_then(Value::as_bool) == Some(false) {
+                            return Err(RobotError::CommandFailed(format!(
+                                "could not tap UI element matching {:?}",
+                                filter
+                            )));
+                        }
                     }
                 }
                 UiAction::Type { text } => {

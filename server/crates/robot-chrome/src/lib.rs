@@ -1,7 +1,7 @@
 //! Chrome driver using the local Chrome DevTools Protocol (CDP).
 //!
 //! Start Chrome with `--remote-debugging-port=9222`, or point
-//! `MOBILE_MCP_CHROME_DEBUG_ADDRESS` at another local DevTools endpoint.
+//! `DEVICE_BOT_CHROME_DEBUG_ADDRESS` at another local DevTools endpoint.
 
 use std::{
     collections::HashMap,
@@ -75,13 +75,13 @@ impl ChromeRobot {
 
     pub fn from_env() -> Self {
         let mut robot = Self::new(
-            std::env::var("MOBILE_MCP_CHROME_DEBUG_ADDRESS")
+            std::env::var("DEVICE_BOT_CHROME_DEBUG_ADDRESS")
                 .unwrap_or_else(|_| "127.0.0.1:9222".into()),
         );
-        robot.artifact_dir = std::env::var("MOBILE_MCP_ARTIFACT_DIR")
+        robot.artifact_dir = std::env::var("DEVICE_BOT_ARTIFACT_DIR")
             .unwrap_or_else(|_| "artifacts".into())
             .into();
-        robot.ffmpeg_path = std::env::var("MOBILE_MCP_FFMPEG_PATH").unwrap_or_else(|_| {
+        robot.ffmpeg_path = std::env::var("DEVICE_BOT_FFMPEG_PATH").unwrap_or_else(|_| {
             [
                 "/opt/homebrew/opt/ffmpeg/bin/ffmpeg",
                 "/usr/local/opt/ffmpeg/bin/ffmpeg",
@@ -356,7 +356,7 @@ impl Robot for ChromeRobot {
             .spawn()
             .map_err(|error| {
                 RobotError::CommandFailed(format!(
-                    "could not start ffmpeg for Chrome recording (set MOBILE_MCP_FFMPEG_PATH if needed): {error}"
+                    "could not start ffmpeg for Chrome recording (set DEVICE_BOT_FFMPEG_PATH if needed): {error}"
                 ))
             })?;
         let mut stdin = encoder.stdin.take().ok_or_else(|| {

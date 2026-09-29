@@ -4,7 +4,7 @@
 #
 # Chạy macOS: ./server/examples/example_safari.sh
 # Chạy iOS Simulator: DEVICE_ID=<simulator-id> ./server/examples/example_safari.sh ios-sim
-# Chạy iPhone thật: DEVICE_ID=<iphone-udid> MOBILE_MCP_IOS_AGENT_TOKEN=<token> \
+# Chạy iPhone thật: DEVICE_ID=<iphone-udid> DEVICE_BOT_IOS_AGENT_TOKEN=<token> \
 #   ./server/examples/example_safari.sh ios-real
 
 set -euo pipefail
@@ -25,7 +25,7 @@ requested_app_id="${APP_ID:-}"
 target="$REQUESTED_TARGET"
 if [[ "$target" == auto ]]; then
   if [[ "$requested_app_id" == "com.apple.mobilesafari" ]]; then
-    if [[ -n "${MOBILE_MCP_IOS_DEVICE:-}" || -n "${MOBILE_MCP_IOS_AGENT_BIND:-}" ]]; then
+    if [[ -n "${DEVICE_BOT_IOS_DEVICE:-}" || -n "${DEVICE_BOT_IOS_AGENT_BIND:-}" ]]; then
       target=ios-real
     else
       target=ios-sim
@@ -44,9 +44,9 @@ esac
 readonly TARGET="$target"
 
 if [[ "$TARGET" == "ios-real" ]]; then
-  readonly DEVICE_ID="${DEVICE_ID:-${MOBILE_MCP_IOS_DEVICE:-}}"
+  readonly DEVICE_ID="${DEVICE_ID:-${DEVICE_BOT_IOS_DEVICE:-}}"
   [[ -n "$DEVICE_ID" ]] || {
-    printf 'ios-real cần DEVICE_ID hoặc MOBILE_MCP_IOS_DEVICE là UDID iPhone.\n' >&2
+    printf 'ios-real cần DEVICE_ID hoặc DEVICE_BOT_IOS_DEVICE là UDID iPhone.\n' >&2
     exit 2
   }
   readonly APP_ID="${APP_ID:-com.apple.mobilesafari}"
@@ -88,12 +88,12 @@ command -v jq >/dev/null || { printf 'Kịch bản cần jq.\n' >&2; exit 1; }
   exit 2
 }
 if [[ "$TARGET" == "ios-real" ]]; then
-  [[ -n "${MOBILE_MCP_IOS_AGENT_TOKEN:-}" ]] || {
-    printf 'ios-real cần MOBILE_MCP_IOS_AGENT_TOKEN giống token của ios_xctest_agent.sh start.\n' >&2
+  [[ -n "${DEVICE_BOT_IOS_AGENT_TOKEN:-}" ]] || {
+    printf 'ios-real cần DEVICE_BOT_IOS_AGENT_TOKEN giống token của ios_xctest_agent.sh start.\n' >&2
     exit 2
   }
-  if [[ "${MOBILE_MCP_IOS_AGENT_BIND:-}" =~ ^(127\.0\.0\.1|localhost)(:|$) ]]; then
-    printf 'MOBILE_MCP_IOS_AGENT_BIND của ios-real phải là địa chỉ LAN, không phải loopback.\n' >&2
+  if [[ "${DEVICE_BOT_IOS_AGENT_BIND:-}" =~ ^(127\.0\.0\.1|localhost)(:|$) ]]; then
+    printf 'DEVICE_BOT_IOS_AGENT_BIND của ios-real phải là địa chỉ LAN, không phải loopback.\n' >&2
     exit 2
   fi
 fi
@@ -108,15 +108,15 @@ readonly INPUT_PIPE="$SESSION_DIR/input"
 readonly OUTPUT_PIPE="$SESSION_DIR/output"
 # Keep the XCTest products in the workspace target directory so separate MCP
 # processes and later example/test runs share one machine-local build cache.
-readonly XCTEST_DERIVED_DATA_DIR="${MOBILE_MCP_IOS_XCTEST_DERIVED_DATA:-$SERVER_DIR/target/mobile-mcp-ios-xctest-derived-data-persistent-agent}"
-export MOBILE_MCP_IOS_XCTEST_DERIVED_DATA="$XCTEST_DERIVED_DATA_DIR"
+readonly XCTEST_DERIVED_DATA_DIR="${DEVICE_BOT_IOS_XCTEST_DERIVED_DATA:-$SERVER_DIR/target/mobile-mcp-ios-xctest-derived-data-persistent-agent}"
+export DEVICE_BOT_IOS_XCTEST_DERIVED_DATA="$XCTEST_DERIVED_DATA_DIR"
 # The real-device XCTest agent runs on the iPhone and must connect back to a
 # stable, LAN-reachable bridge. Simulator runs can keep an ephemeral loopback
 # port because their runner is launched by the host.
 if [[ "$TARGET" == "ios-real" ]]; then
-  export MOBILE_MCP_IOS_AGENT_BIND="${MOBILE_MCP_IOS_AGENT_BIND:-0.0.0.0:${MOBILE_MCP_IOS_AGENT_PORT:-18787}}"
+  export DEVICE_BOT_IOS_AGENT_BIND="${DEVICE_BOT_IOS_AGENT_BIND:-0.0.0.0:${DEVICE_BOT_IOS_AGENT_PORT:-18787}}"
 else
-  export MOBILE_MCP_IOS_AGENT_BIND="${MOBILE_MCP_IOS_AGENT_BIND:-127.0.0.1:0}"
+  export DEVICE_BOT_IOS_AGENT_BIND="${DEVICE_BOT_IOS_AGENT_BIND:-127.0.0.1:0}"
 fi
 mkfifo "$INPUT_PIPE" "$OUTPUT_PIPE"
 cargo run -q --manifest-path "$SERVER_DIR/Cargo.toml" -p mobile-mcp-server \

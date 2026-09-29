@@ -8,7 +8,7 @@ Start the Rust server first:
 
 ```bash
 cd ..
-MOBILEMCP_AUTH=local-secret cargo run -p mobile-mcp-server -- --listen 127.0.0.1:3337
+DEVICE_BOT_AUTH=local-secret cargo run -p mobile-mcp-server -- --listen 127.0.0.1:3337
 ```
 
 Then run this Flutter project and enter the same base URL and bearer token.

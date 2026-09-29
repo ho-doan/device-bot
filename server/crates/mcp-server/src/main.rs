@@ -92,7 +92,7 @@ async fn main() -> std::io::Result<()> {
                 "--ios-development-team accepts no arguments",
             ));
         }
-        let identity_hint = std::env::var("MOBILE_MCP_IOS_SIGNING_IDENTITY").ok();
+        let identity_hint = std::env::var("DEVICE_BOT_IOS_SIGNING_IDENTITY").ok();
         let team = mobile_robot_ios_real::apple_development_team(identity_hint.as_deref())
             .await
             .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -114,8 +114,8 @@ async fn main() -> std::io::Result<()> {
         }
         let project = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../robot-ios-real/xctest-runner/MobileMcpRealRunner.xcodeproj");
-        let team = std::env::var("MOBILE_MCP_IOS_TEAM").ok();
-        let identity_hint = std::env::var("MOBILE_MCP_IOS_SIGNING_IDENTITY").ok();
+        let team = std::env::var("DEVICE_BOT_IOS_TEAM").ok();
+        let identity_hint = std::env::var("DEVICE_BOT_IOS_SIGNING_IDENTITY").ok();
         mobile_robot_ios_real::provision_xctest_runner(
             &project,
             &device_id,
@@ -130,16 +130,16 @@ async fn main() -> std::io::Result<()> {
     let adb_path = android_adb_path();
     let xcrun_path = std::env::var("XCRUN_PATH").unwrap_or_else(|_| "xcrun".into());
     let artifact_dir =
-        std::env::var("MOBILE_MCP_ARTIFACT_DIR").unwrap_or_else(|_| "artifacts".into());
+        std::env::var("DEVICE_BOT_ARTIFACT_DIR").unwrap_or_else(|_| "artifacts".into());
     let ios_agent_address =
-        std::env::var("MOBILE_MCP_IOS_AGENT_BIND").unwrap_or_else(|_| "127.0.0.1:18787".into());
+        std::env::var("DEVICE_BOT_IOS_AGENT_BIND").unwrap_or_else(|_| "127.0.0.1:18787".into());
     let ios_agent_address: SocketAddr = ios_agent_address.parse().map_err(|error| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("invalid MOBILE_MCP_IOS_AGENT_BIND address: {error}"),
+            format!("invalid DEVICE_BOT_IOS_AGENT_BIND address: {error}"),
         )
     })?;
-    let ios_agent = XCTestAgentBridge::new(std::env::var("MOBILE_MCP_IOS_AGENT_TOKEN").ok());
+    let ios_agent = XCTestAgentBridge::new(std::env::var("DEVICE_BOT_IOS_AGENT_TOKEN").ok());
     let listener = tokio::net::TcpListener::bind(ios_agent_address).await?;
     let agent_router = ios_agent.router();
     tokio::spawn(async move {
@@ -148,15 +148,15 @@ async fn main() -> std::io::Result<()> {
         }
     });
     let ios_sim_agent_address =
-        std::env::var("MOBILE_MCP_IOS_SIM_AGENT_BIND").unwrap_or_else(|_| "127.0.0.1:18788".into());
+        std::env::var("DEVICE_BOT_IOS_SIM_AGENT_BIND").unwrap_or_else(|_| "127.0.0.1:18788".into());
     let ios_sim_agent_address: SocketAddr = ios_sim_agent_address.parse().map_err(|error| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("invalid MOBILE_MCP_IOS_SIM_AGENT_BIND address: {error}"),
+            format!("invalid DEVICE_BOT_IOS_SIM_AGENT_BIND address: {error}"),
         )
     })?;
     let ios_sim_agent =
-        XCTestAgentBridge::new(std::env::var("MOBILE_MCP_IOS_SIM_AGENT_TOKEN").ok());
+        XCTestAgentBridge::new(std::env::var("DEVICE_BOT_IOS_SIM_AGENT_TOKEN").ok());
     let ios_sim_listener = tokio::net::TcpListener::bind(ios_sim_agent_address).await?;
     let ios_sim_agent_router = ios_sim_agent.router();
     tokio::spawn(async move {
@@ -207,7 +207,7 @@ async fn main() -> std::io::Result<()> {
                     format!("invalid listen address: {error}"),
                 )
             })?;
-            let bearer_token = std::env::var("MOBILEMCP_AUTH")
+            let bearer_token = std::env::var("DEVICE_BOT_AUTH")
                 .ok()
                 .filter(|token| !token.is_empty());
             mobile_mcp_server::http::serve(address, robot, bearer_token).await

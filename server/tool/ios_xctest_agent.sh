@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: MOBILE_MCP_IOS_DEVICE=<xcode-udid> $0 build|start" >&2
+  echo "Usage: DEVICE_BOT_IOS_DEVICE=<xcode-udid> $0 build|start" >&2
   echo "  build  compile and sign the real-device XCTest agent" >&2
   echo "  start  run the already-built agent and connect it to Device Bot" >&2
   exit 2
@@ -11,7 +11,7 @@ usage() {
 command="${1:-}"
 [[ "$command" == "build" || "$command" == "start" ]] || usage
 
-device="${MOBILE_MCP_IOS_DEVICE:-${DEVICE_KIT_DEVICE:-}}"
+device="${DEVICE_BOT_IOS_DEVICE:-${DEVICE_KIT_DEVICE:-}}"
 [[ -n "$device" ]] || usage
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,7 +34,7 @@ case "$command" in
       -p mobile-mcp-server -- --provision-ios-xctest "$device"
     ;;
   start)
-    hosts="${MOBILE_MCP_IOS_AGENT_HOSTS:-}"
+    hosts="${DEVICE_BOT_IOS_AGENT_HOSTS:-}"
     if [[ -z "$hosts" ]]; then
       for interface in en0 en1; do
         hosts="$(ipconfig getifaddr "$interface" 2>/dev/null || true)"
@@ -42,18 +42,18 @@ case "$command" in
       done
     fi
     [[ -n "$hosts" ]] || {
-      echo "Set MOBILE_MCP_IOS_AGENT_HOSTS to this Mac's LAN IPv4 address." >&2
+      echo "Set DEVICE_BOT_IOS_AGENT_HOSTS to this Mac's LAN IPv4 address." >&2
       exit 2
     }
-    port="${MOBILE_MCP_IOS_AGENT_PORT:-18787}"
-    token="${MOBILE_MCP_IOS_AGENT_TOKEN:-}"
+    port="${DEVICE_BOT_IOS_AGENT_PORT:-18787}"
+    token="${DEVICE_BOT_IOS_AGENT_TOKEN:-}"
     [[ -n "$token" ]] || {
-      echo "Set MOBILE_MCP_IOS_AGENT_TOKEN to the token used by Device Bot." >&2
+      echo "Set DEVICE_BOT_IOS_AGENT_TOKEN to the token used by Device Bot." >&2
       exit 2
     }
-    export TEST_RUNNER_MOBILE_MCP_HOSTS="$hosts"
-    export TEST_RUNNER_MOBILE_MCP_PORT="$port"
-    export TEST_RUNNER_MOBILE_MCP_TOKEN="$token"
+    export TEST_RUNNER_DEVICE_BOT_HOSTS="$hosts"
+    export TEST_RUNNER_DEVICE_BOT_PORT="$port"
+    export TEST_RUNNER_DEVICE_BOT_TOKEN="$token"
     echo "Starting Device Bot XCTest agent -> $hosts:$port" >&2
     xcodebuild test-without-building "${common[@]}" \
       -only-testing:MobileMcpRealRunnerUITests/MobileMcpRealRunnerUITests/testServe

@@ -727,11 +727,11 @@ impl MacosRobot {
     }
 
     pub fn from_env() -> Self {
-        Self::new(std::env::var("MOBILE_MCP_ARTIFACT_DIR").unwrap_or_else(|_| "artifacts".into()))
+        Self::new(std::env::var("DEVICE_BOT_ARTIFACT_DIR").unwrap_or_else(|_| "artifacts".into()))
     }
 
     fn ffmpeg_path() -> String {
-        std::env::var("MOBILE_MCP_FFMPEG_PATH").unwrap_or_else(|_| {
+        std::env::var("DEVICE_BOT_FFMPEG_PATH").unwrap_or_else(|_| {
             [
                 "/opt/homebrew/opt/ffmpeg/bin/ffmpeg",
                 "/usr/local/opt/ffmpeg/bin/ffmpeg",
@@ -743,7 +743,7 @@ impl MacosRobot {
     }
 
     fn screen_capture_device() -> String {
-        std::env::var("MOBILE_MCP_MACOS_SCREEN_DEVICE")
+        std::env::var("DEVICE_BOT_MACOS_SCREEN_DEVICE")
             .unwrap_or_else(|_| "Capture screen 0".into())
     }
 
@@ -1055,7 +1055,7 @@ impl Robot for MacosRobot {
             .spawn()
             .map_err(|error| {
                 RobotError::CommandFailed(format!(
-                    "could not start ffmpeg screen recording (run --install-chrome-recording-tools or set MOBILE_MCP_FFMPEG_PATH): {error}"
+                    "could not start ffmpeg screen recording (run --install-chrome-recording-tools or set DEVICE_BOT_FFMPEG_PATH): {error}"
                 ))
             })?;
         *recording = Some(ActiveRecording {
@@ -1109,7 +1109,7 @@ impl Robot for MacosRobot {
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
         let mut launch_args = vec!["-a".into(), app_id.into()];
-        if let Ok(arguments) = std::env::var("MOBILE_MCP_MACOS_APP_ARGS") {
+        if let Ok(arguments) = std::env::var("DEVICE_BOT_MACOS_APP_ARGS") {
             let arguments = arguments.split_whitespace().collect::<Vec<_>>();
             if !arguments.is_empty() {
                 // `open -a` ignores `--args` when the application is already

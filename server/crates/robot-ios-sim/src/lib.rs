@@ -226,7 +226,7 @@ impl IosSimulatorRobot {
     }
 
     fn xctest_derived_data() -> PathBuf {
-        std::env::var_os("MOBILE_MCP_IOS_XCTEST_DERIVED_DATA")
+        std::env::var_os("DEVICE_BOT_IOS_XCTEST_DERIVED_DATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 std::env::temp_dir().join("mobile-mcp-ios-xctest-derived-data-persistent-agent")
@@ -505,16 +505,16 @@ impl IosSimulatorRobot {
                 "-derivedDataPath",
                 &derived_data_argument,
             ])
-            .env("TEST_RUNNER_MOBILE_MCP_HOSTS", &self.simulator_agent_host)
+            .env("TEST_RUNNER_DEVICE_BOT_HOSTS", &self.simulator_agent_host)
             .env(
-                "TEST_RUNNER_MOBILE_MCP_PORT",
+                "TEST_RUNNER_DEVICE_BOT_PORT",
                 self.simulator_agent_port.to_string(),
             )
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
-        if let Ok(token) = std::env::var("MOBILE_MCP_IOS_SIM_AGENT_TOKEN") {
-            command.env("TEST_RUNNER_MOBILE_MCP_TOKEN", token);
+        if let Ok(token) = std::env::var("DEVICE_BOT_IOS_SIM_AGENT_TOKEN") {
+            command.env("TEST_RUNNER_DEVICE_BOT_TOKEN", token);
         }
         // Keep the long-lived XCTest process outside the MCP server's process
         // group so stopping one MCP session does not stop the cached agent.
@@ -585,17 +585,17 @@ impl IosSimulatorRobot {
         let params = values
             .iter()
             .filter_map(|(name, value)| match *name {
-                "MOBILE_MCP_X" => Some(("x", json!(value.parse::<f64>().ok()?))),
-                "MOBILE_MCP_Y" => Some(("y", json!(value.parse::<f64>().ok()?))),
-                "MOBILE_MCP_END_X" => Some(("toX", json!(value.parse::<f64>().ok()?))),
-                "MOBILE_MCP_END_Y" => Some(("toY", json!(value.parse::<f64>().ok()?))),
-                "MOBILE_MCP_DURATION_SECONDS" => Some((
+                "DEVICE_BOT_X" => Some(("x", json!(value.parse::<f64>().ok()?))),
+                "DEVICE_BOT_Y" => Some(("y", json!(value.parse::<f64>().ok()?))),
+                "DEVICE_BOT_END_X" => Some(("toX", json!(value.parse::<f64>().ok()?))),
+                "DEVICE_BOT_END_Y" => Some(("toY", json!(value.parse::<f64>().ok()?))),
+                "DEVICE_BOT_DURATION_SECONDS" => Some((
                     "durationMs",
                     json!(value.parse::<f64>().ok()?.mul_add(1000.0, 0.0) as u64),
                 )),
-                "MOBILE_MCP_TEXT" => Some(("text", json!(value))),
-                "MOBILE_MCP_ELEMENT_FILTER" => Some(("filter", json!(value))),
-                "MOBILE_MCP_MAX_RESULTS" => {
+                "DEVICE_BOT_TEXT" => Some(("text", json!(value))),
+                "DEVICE_BOT_ELEMENT_FILTER" => Some(("filter", json!(value))),
+                "DEVICE_BOT_MAX_RESULTS" => {
                     Some(("maxResults", json!(value.parse::<usize>().ok()?)))
                 }
                 _ => None,
@@ -872,8 +872,8 @@ impl Robot for IosSimulatorRobot {
             &app_id,
             "tap",
             &[
-                ("MOBILE_MCP_X", point.x.to_string()),
-                ("MOBILE_MCP_Y", point.y.to_string()),
+                ("DEVICE_BOT_X", point.x.to_string()),
+                ("DEVICE_BOT_Y", point.y.to_string()),
             ],
             None,
         )
@@ -892,7 +892,7 @@ impl Robot for IosSimulatorRobot {
             device_id,
             &app_id,
             "type",
-            &[("MOBILE_MCP_TEXT", text.into())],
+            &[("DEVICE_BOT_TEXT", text.into())],
             None,
         )
         .await
@@ -914,12 +914,12 @@ impl Robot for IosSimulatorRobot {
             &app_id,
             "swipe",
             &[
-                ("MOBILE_MCP_X", start.x.to_string()),
-                ("MOBILE_MCP_Y", start.y.to_string()),
-                ("MOBILE_MCP_END_X", end.x.to_string()),
-                ("MOBILE_MCP_END_Y", end.y.to_string()),
+                ("DEVICE_BOT_X", start.x.to_string()),
+                ("DEVICE_BOT_Y", start.y.to_string()),
+                ("DEVICE_BOT_END_X", end.x.to_string()),
+                ("DEVICE_BOT_END_Y", end.y.to_string()),
                 (
-                    "MOBILE_MCP_DURATION_SECONDS",
+                    "DEVICE_BOT_DURATION_SECONDS",
                     format!("{:.3}", duration_ms.unwrap_or(100) as f64 / 1_000.0),
                 ),
             ],
@@ -950,8 +950,8 @@ impl Robot for IosSimulatorRobot {
                         &app_id,
                         "tap",
                         &[
-                            ("MOBILE_MCP_X", x.to_string()),
-                            ("MOBILE_MCP_Y", y.to_string()),
+                            ("DEVICE_BOT_X", x.to_string()),
+                            ("DEVICE_BOT_Y", y.to_string()),
                         ],
                         None,
                     )
@@ -971,7 +971,7 @@ impl Robot for IosSimulatorRobot {
                                 device_id,
                                 &app_id,
                                 "tap-element",
-                                &[("MOBILE_MCP_ELEMENT_FILTER", filter.clone())],
+                                &[("DEVICE_BOT_ELEMENT_FILTER", filter.clone())],
                                 None,
                             )
                             .await?;
@@ -993,7 +993,7 @@ impl Robot for IosSimulatorRobot {
                         device_id,
                         &app_id,
                         "type",
-                        &[("MOBILE_MCP_TEXT", text.clone())],
+                        &[("DEVICE_BOT_TEXT", text.clone())],
                         None,
                     )
                     .await?;
@@ -1024,12 +1024,12 @@ impl Robot for IosSimulatorRobot {
                         &app_id,
                         "swipe",
                         &[
-                            ("MOBILE_MCP_X", start_x.to_string()),
-                            ("MOBILE_MCP_Y", start_y.to_string()),
-                            ("MOBILE_MCP_END_X", end_x.to_string()),
-                            ("MOBILE_MCP_END_Y", end_y.to_string()),
+                            ("DEVICE_BOT_X", start_x.to_string()),
+                            ("DEVICE_BOT_Y", start_y.to_string()),
+                            ("DEVICE_BOT_END_X", end_x.to_string()),
+                            ("DEVICE_BOT_END_Y", end_y.to_string()),
                             (
-                                "MOBILE_MCP_DURATION_SECONDS",
+                                "DEVICE_BOT_DURATION_SECONDS",
                                 format!("{:.3}", duration_ms.unwrap_or(100) as f64 / 1_000.0),
                             ),
                         ],
@@ -1064,10 +1064,10 @@ impl Robot for IosSimulatorRobot {
         let app_id = self.active_app(device_id).await?;
         let mut values = Vec::new();
         if let Some(filter) = filter {
-            values.push(("MOBILE_MCP_ELEMENT_FILTER", filter.to_owned()));
+            values.push(("DEVICE_BOT_ELEMENT_FILTER", filter.to_owned()));
         }
         if let Some(max_results) = max_results {
-            values.push(("MOBILE_MCP_MAX_RESULTS", max_results.to_string()));
+            values.push(("DEVICE_BOT_MAX_RESULTS", max_results.to_string()));
         }
         let result = self
             .run_xctest(device_id, &app_id, "list-elements", &values, None)

@@ -148,7 +148,7 @@ impl IosXCTestRobot {
     }
 
     async fn quicktime_device_hint(&self, device_id: &str) -> String {
-        if let Ok(hint) = std::env::var("MOBILE_MCP_IOS_QUICKTIME_DEVICE")
+        if let Ok(hint) = std::env::var("DEVICE_BOT_IOS_QUICKTIME_DEVICE")
             && !hint.trim().is_empty()
         {
             return hint;

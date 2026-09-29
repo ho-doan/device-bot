@@ -57,7 +57,7 @@ class ServerLaunchOptions {
 
   Map<String, String>? get environment => bearerToken.trim().isEmpty
       ? null
-      : {'MOBILEMCP_AUTH': bearerToken.trim()};
+      : {'DEVICE_BOT_AUTH': bearerToken.trim()};
 
   List<String> get arguments => ['--listen', listenAddress];
 }

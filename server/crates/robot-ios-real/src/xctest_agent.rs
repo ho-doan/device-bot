@@ -29,6 +29,7 @@ struct StateData {
     token: Option<String>,
     commands: Mutex<VecDeque<AgentCommand>>,
     waiters: Mutex<HashMap<String, oneshot::Sender<AgentResult>>>,
+    last_authenticated_request: Mutex<Option<std::time::Instant>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -57,6 +58,7 @@ impl XCTestAgentBridge {
                 token: token.filter(|value| !value.is_empty()),
                 commands: Mutex::new(VecDeque::new()),
                 waiters: Mutex::new(HashMap::new()),
+                last_authenticated_request: Mutex::new(None),
             }),
         }
     }
@@ -86,8 +88,13 @@ impl XCTestAgentBridge {
         let result = tokio::time::timeout(timeout, receiver).await;
         if result.is_err() {
             self.state.waiters.lock().await.remove(&id);
+            self.state
+                .commands
+                .lock()
+                .await
+                .retain(|command| command.id != id);
             return Err(RobotError::CommandFailed(
-                "iOS XCTest agent did not respond; build and start server/crates/robot-ios-real/xctest-runner on the paired device".into(),
+                self.connection_diagnostic().await,
             ));
         }
         let result = result.unwrap().map_err(|_| {
@@ -103,6 +110,16 @@ impl XCTestAgentBridge {
                 .message
                 .unwrap_or_else(|| "iOS XCTest action failed".into()),
         ))
+    }
+
+    pub async fn connection_diagnostic(&self) -> String {
+        match *self.state.last_authenticated_request.lock().await {
+            Some(last_seen) => format!(
+                "iOS XCTest agent last contacted the bridge {}s ago but did not respond; inspect its XCTest log",
+                last_seen.elapsed().as_secs()
+            ),
+            None => "no authenticated iOS XCTest agent has contacted the bridge; provision the runner and configure a reachable DEVICE_BOT_IOS_AGENT_HOSTS value".into(),
+        }
     }
 }
 
@@ -120,6 +137,7 @@ async fn next(State(state): State<Arc<StateData>>, headers: HeaderMap) -> Respon
     if !authorized(&headers, &state) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    *state.last_authenticated_request.lock().await = Some(std::time::Instant::now());
     match state.commands.lock().await.pop_front() {
         Some(command) => Json(command).into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
@@ -134,6 +152,7 @@ async fn result(
     if !authorized(&headers, &state) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    *state.last_authenticated_request.lock().await = Some(std::time::Instant::now());
     if let Some(waiter) = state.waiters.lock().await.remove(&result.id) {
         let _ = waiter.send(result);
         StatusCode::NO_CONTENT.into_response()
@@ -176,5 +195,23 @@ mod tests {
             })
             .unwrap();
         assert_eq!(waiting.await.unwrap(), serde_json::json!({ "ready": true }));
+    }
+
+    #[tokio::test]
+    async fn timeout_removes_the_stale_command_from_the_poll_queue() {
+        let bridge = XCTestAgentBridge::new(None);
+
+        let error = bridge
+            .dispatch("health", serde_json::json!({}), Duration::from_millis(1))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("no authenticated iOS XCTest agent")
+        );
+        assert!(bridge.state.commands.lock().await.is_empty());
+        assert!(bridge.state.waiters.lock().await.is_empty());
     }
 }

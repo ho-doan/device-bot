@@ -206,6 +206,43 @@ controls. Set `RECORD_SCREEN=0` to disable recording, or set
 `DEVICE_BOT_IOS_AGENT_HOSTS` if the agent cannot discover a LAN address
 automatically.
 
+### Known issue — Codex MCP on a real iPhone (deferred)
+
+As of 2026-09-29, a direct Codex/MCP run against a paired iPhone can discover
+the device, list installed apps, and make a QuickTime recording, but UI
+automation remains blocked until the XCTest agent completes its callback to
+the bridge. The observed device-side error was `Local network prohibited`; an
+IPv6 CoreDevice-tunnel retry also produced no agent request. Do not treat a
+successful device discovery or recording as a successful UI-automation run.
+
+The Safari example is not equivalent to an arbitrary Codex MCP configuration:
+it starts this repository's `mobile-mcp-server`, binds the agent bridge to a
+LAN-reachable address, supplies a shared token, and polls the agent before
+automation. A Codex configuration that starts another package (for example,
+`@mobilenext/mobile-mcp`) does not exercise this server or its real-iOS agent.
+Likewise, the server default of `127.0.0.1:18787` is reachable only from the
+Mac, not from the iPhone.
+
+There is also an unresolved environment-name mismatch in the current agent
+launcher: `server/tool/ios_xctest_agent.sh` exports
+`TEST_RUNNER_DEVICE_BOT_HOSTS`, `TEST_RUNNER_DEVICE_BOT_PORT`, and
+`TEST_RUNNER_DEVICE_BOT_TOKEN`, while the XCTest runner reads
+`DEVICE_BOT_HOSTS`, `DEVICE_BOT_PORT`, and `DEVICE_BOT_TOKEN`. This must be
+corrected before relying on the launcher for real-device runs.
+
+Deferred remediation and verification:
+
+1. Configure Codex to start this repository's `mobile-mcp-server` with an
+   explicit `DEVICE_BOT_IOS_AGENT_BIND` on a LAN-reachable interface and the
+   same `DEVICE_BOT_IOS_AGENT_TOKEN` used by the XCTest agent. Never commit
+   that token.
+2. Correct the launcher/XCTest environment-name mismatch, rebuild and
+   reinstall the signed XCTest runner, then explicitly allow its iOS Local
+   Network permission prompt.
+3. Verify `mobile_get_ui_runner_status` returns `ready: true` before calling
+   any UI tool. Only then validate launch, element dump, tap, text input, and
+   screenshot on the physical device.
+
 Device-driver failures and invalid tool arguments return a normal MCP tool
 result with `isError: true`, so clients can present actionable retry feedback.
 

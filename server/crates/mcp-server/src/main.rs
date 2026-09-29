@@ -4,7 +4,7 @@ use mobile_mcp_server::Server;
 use mobile_robot_android::AndroidRobot;
 use mobile_robot_chrome::ChromeRobot;
 use mobile_robot_core::RobotRegistry;
-use mobile_robot_ios_real::{IosXCTestRobot, XCTestAgentBridge};
+use mobile_robot_ios_real::{IosXCTestRobot, XCTestAgentBridge, XCTestAgentLauncher};
 use mobile_robot_ios_sim::IosSimulatorRobot;
 use mobile_robot_macos::MacosRobot;
 use mobile_robot_windows::WindowsRobot;
@@ -24,6 +24,16 @@ fn android_adb_path() -> String {
         }
     }
     executable.into()
+}
+
+fn real_ios_agent_hosts(bind_address: SocketAddr) -> Option<String> {
+    std::env::var("DEVICE_BOT_IOS_AGENT_HOSTS")
+        .ok()
+        .filter(|hosts| !hosts.trim().is_empty())
+        .or_else(|| {
+            (!bind_address.ip().is_unspecified() && !bind_address.ip().is_loopback())
+                .then(|| bind_address.ip().to_string())
+        })
 }
 
 async fn install_chrome_recording_tools() -> std::io::Result<()> {
@@ -147,6 +157,27 @@ async fn main() -> std::io::Result<()> {
             eprintln!("iOS XCTest agent bridge stopped: {error}");
         }
     });
+    let ios_agent_launcher = real_ios_agent_hosts(ios_agent_address)
+        .map(|hosts| {
+            let project = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../robot-ios-real/xctest-runner/MobileMcpRealRunner.xcodeproj");
+            let derived_data = project
+                .parent()
+                .expect("real-iOS XCTest project has a parent directory")
+                .join("build");
+            XCTestAgentLauncher::new(
+                "xcodebuild",
+                project,
+                derived_data,
+                hosts,
+                ios_agent_address.port(),
+                std::env::var("DEVICE_BOT_IOS_AGENT_TOKEN").ok(),
+            )
+        })
+        .transpose()
+        .map_err(|error| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
+        })?;
     let ios_sim_agent_address =
         std::env::var("DEVICE_BOT_IOS_SIM_AGENT_BIND").unwrap_or_else(|_| "127.0.0.1:18788".into());
     let ios_sim_agent_address: SocketAddr = ios_sim_agent_address.parse().map_err(|error| {
@@ -164,14 +195,15 @@ async fn main() -> std::io::Result<()> {
             eprintln!("iOS Simulator XCTest agent bridge stopped: {error}");
         }
     });
+    let mut real_ios =
+        IosXCTestRobot::with_artifact_dir(xcrun_path.clone(), ios_agent, artifact_dir.clone());
+    if let Some(launcher) = ios_agent_launcher {
+        real_ios = real_ios.with_agent_launcher(launcher);
+    }
     let drivers: Vec<Arc<dyn mobile_robot_core::Robot>> = vec![
         Arc::new(AndroidRobot::new(adb_path, artifact_dir.clone())),
         Arc::new(ChromeRobot::from_env()),
-        Arc::new(IosXCTestRobot::with_artifact_dir(
-            xcrun_path.clone(),
-            ios_agent,
-            artifact_dir.clone(),
-        )),
+        Arc::new(real_ios),
         Arc::new(IosSimulatorRobot::with_xctest_runner_and_agent(
             xcrun_path,
             "xcodebuild",

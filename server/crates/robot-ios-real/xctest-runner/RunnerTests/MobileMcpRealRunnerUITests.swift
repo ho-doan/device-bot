@@ -12,7 +12,23 @@ final class MobileMcpRealRunnerUITests: XCTestCase {
       .filter { !$0.isEmpty }
     let port = Int(environment["DEVICE_BOT_PORT"] ?? "18787") ?? 18787
     let token = environment["DEVICE_BOT_TOKEN"]
+    requestLocalNetworkPermission(host: hosts.first, port: port)
     MobileMcpRealHostAgent(hosts: hosts, port: port, token: token).run()
+  }
+
+  /// A fresh XCTest runner may show the system Local Network permission sheet
+  /// before its command loop can reach the Device Bot bridge. Trigger the
+  /// request and accept that sheet as part of the test harness setup.
+  private func requestLocalNetworkPermission(host: String?, port: Int) {
+    guard let host, let url = bridgeUrl(host: host, port: port, path: "/next") else { return }
+    URLSession.shared.dataTask(with: url).resume()
+
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    let allow = springboard.buttons["Allow"]
+    if allow.waitForExistence(timeout: 5) {
+      allow.tap()
+      print("Device Bot Local Network permission allowed")
+    }
   }
 }
 
@@ -309,7 +325,7 @@ private final class MobileMcpRealHostAgent {
 
   private func nextCommand() -> Command? {
     for host in hosts {
-      if let command = getCommand(url: "http://\(host):\(port)/next") { return command }
+      if let command = getCommand(host: host) { return command }
     }
     return nil
   }
@@ -318,11 +334,12 @@ private final class MobileMcpRealHostAgent {
     var payload = body
     payload["id"] = id
     for host in hosts {
-      if post(url: "http://\(host):\(port)/result", json: payload) { return }
+      if post(host: host, json: payload) { return }
     }
   }
 
-  private func getCommand(url: String) -> Command? {
+  private func getCommand(host: String) -> Command? {
+    guard let url = bridgeUrl(host: host, port: port, path: "/next") else { return nil }
     guard let data = request(url: url, method: "GET", body: nil),
           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let id = object["id"] as? String,
@@ -330,14 +347,14 @@ private final class MobileMcpRealHostAgent {
     return Command(id: id, method: method, params: object["params"] as? [String: Any] ?? [:])
   }
 
-  private func post(url: String, json: [String: Any]) -> Bool {
+  private func post(host: String, json: [String: Any]) -> Bool {
+    guard let url = bridgeUrl(host: host, port: port, path: "/result") else { return false }
     guard let body = try? JSONSerialization.data(withJSONObject: json) else { return false }
     return request(url: url, method: "POST", body: body) != nil
   }
 
-  private func request(url: String, method: String, body: Data?) -> Data? {
-    guard let requestUrl = URL(string: url) else { return nil }
-    var request = URLRequest(url: requestUrl)
+  private func request(url: URL, method: String, body: Data?) -> Data? {
+    var request = URLRequest(url: url)
     request.httpMethod = method
     request.timeoutInterval = 20
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -349,7 +366,11 @@ private final class MobileMcpRealHostAgent {
     let semaphore = DispatchSemaphore(value: 0)
     URLSession.shared.dataTask(with: request) { data, response, error in
       defer { semaphore.signal() }
-      guard error == nil else { failed = true; return }
+      guard error == nil else {
+        print("Device Bot bridge request failed (\(method) \(url.absoluteString)): \(error!.localizedDescription)")
+        failed = true
+        return
+      }
       let status = (response as? HTTPURLResponse)?.statusCode ?? 0
       if status == 204 { return }
       if (200..<300).contains(status) { result = data } else { failed = true }
@@ -375,6 +396,20 @@ private final class MobileMcpRealHostAgent {
     if let text = string(value), let parsed = Int(text) { return parsed }
     return nil
   }
+}
+
+private func bridgeUrl(host: String, port: Int, path: String) -> URL? {
+  let host = host.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard !host.isEmpty, path.hasPrefix("/") else { return nil }
+  let formattedHost: String
+  if host.hasPrefix("[") && host.hasSuffix("]") {
+    formattedHost = host
+  } else if host.contains(":") {
+    formattedHost = "[\(host)]"
+  } else {
+    formattedHost = host
+  }
+  return URL(string: "http://\(formattedHost):\(port)\(path)")
 }
 
 private struct Command {

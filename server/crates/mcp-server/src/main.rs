@@ -167,7 +167,11 @@ async fn main() -> std::io::Result<()> {
     let drivers: Vec<Arc<dyn mobile_robot_core::Robot>> = vec![
         Arc::new(AndroidRobot::new(adb_path, artifact_dir.clone())),
         Arc::new(ChromeRobot::from_env()),
-        Arc::new(IosXCTestRobot::new(xcrun_path.clone(), ios_agent)),
+        Arc::new(IosXCTestRobot::with_artifact_dir(
+            xcrun_path.clone(),
+            ios_agent,
+            artifact_dir.clone(),
+        )),
         Arc::new(IosSimulatorRobot::with_xctest_runner_and_agent(
             xcrun_path,
             "xcodebuild",

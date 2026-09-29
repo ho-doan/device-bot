@@ -1,30 +1,43 @@
-use std::time::Duration;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use mobile_robot_core::{
-    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement, UiRunnerStatus,
+    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiAction, UiElement,
+    UiRunnerStatus,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::process::Command;
+use tokio::{process::Command, sync::Mutex};
 use url::Url;
 use uuid::Uuid;
 
-use crate::xctest_agent::XCTestAgentBridge;
+use crate::{quicktime_recording::QuickTimeRecording, xctest_agent::XCTestAgentBridge};
 
 const ACTION_TIMEOUT: Duration = Duration::from_secs(45);
 
 pub struct IosXCTestRobot {
     xcrun_path: String,
     agent: XCTestAgentBridge,
+    artifact_dir: PathBuf,
+    recording: Arc<Mutex<Option<QuickTimeRecording>>>,
 }
 
 impl IosXCTestRobot {
     pub fn new(xcrun_path: impl Into<String>, agent: XCTestAgentBridge) -> Self {
+        Self::with_artifact_dir(xcrun_path, agent, "artifacts")
+    }
+
+    pub fn with_artifact_dir(
+        xcrun_path: impl Into<String>,
+        agent: XCTestAgentBridge,
+        artifact_dir: impl Into<PathBuf>,
+    ) -> Self {
         Self {
             xcrun_path: xcrun_path.into(),
             agent,
+            artifact_dir: artifact_dir.into(),
+            recording: Arc::default(),
         }
     }
 
@@ -84,6 +97,74 @@ impl IosXCTestRobot {
         let _ = tokio::fs::remove_file(&output_path).await;
         parse_devicectl_devices(&contents?)
     }
+
+    async fn tap_element_by_filter(&self, device_id: &str, filter: &str) -> Result<(), RobotError> {
+        if filter.trim().is_empty() {
+            return Err(RobotError::InvalidInput(
+                "tap element filter must not be empty".into(),
+            ));
+        }
+        if filter.to_ascii_lowercase().contains("send") {
+            let elements = self
+                .list_elements_filtered(device_id, Some(filter), Some(20))
+                .await?;
+            let element = select_tappable_element(&elements, filter).ok_or_else(|| {
+                RobotError::CommandFailed(format!("could not find UI element matching {filter:?}"))
+            })?;
+            let width = element.bounds.right - element.bounds.left;
+            let height = element.bounds.bottom - element.bounds.top;
+            let x = f64::from(element.bounds.left + element.bounds.right) / 2.0;
+            let y = if height > width * 3 {
+                f64::from(element.bounds.top) + 12.0_f64.min(f64::from(height) / 2.0)
+            } else {
+                f64::from(element.bounds.top + element.bounds.bottom) / 2.0
+            };
+            return self.tap(device_id, Point { x, y }).await;
+        }
+        match self
+            .dispatch("tap-element", json!({ "filter": filter }))
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(error) if error.to_string().contains("unknown_method") => {}
+            Err(error) => return Err(error),
+        }
+
+        // Keep compatibility with an older signed runner while the real-device
+        // XCTest bundle is being updated. New runners handle the selector in
+        // XCTest directly, avoiding a full accessibility dump per tap.
+        let elements = self.list_elements(device_id).await?;
+        let element = select_tappable_element(&elements, filter).ok_or_else(|| {
+            RobotError::CommandFailed(format!("could not find UI element matching {filter:?}"))
+        })?;
+        self.tap(
+            device_id,
+            Point {
+                x: f64::from(element.bounds.left + element.bounds.right) / 2.0,
+                y: f64::from(element.bounds.top + element.bounds.bottom) / 2.0,
+            },
+        )
+        .await
+    }
+
+    async fn quicktime_device_hint(&self, device_id: &str) -> String {
+        if let Ok(hint) = std::env::var("MOBILE_MCP_IOS_QUICKTIME_DEVICE")
+            && !hint.trim().is_empty()
+        {
+            return hint;
+        }
+        self.devicectl_devices()
+            .await
+            .ok()
+            .and_then(|devices| devices.into_iter().find(|device| device.id == device_id))
+            .map(|device| {
+                let name = device.name;
+                name.split_once(" (")
+                    .map_or(name.clone(), |(name, _)| name.to_owned())
+            })
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| "iPhone".into())
+    }
 }
 
 #[async_trait]
@@ -92,7 +173,8 @@ impl Robot for IosXCTestRobot {
         self.devicectl_devices().await
     }
 
-    async fn take_screenshot(&self, _: &str) -> Result<Vec<u8>, RobotError> {
+    async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
+        validate_device_id(device_id)?;
         let result = self.dispatch("screenshot", json!({})).await?;
         let encoded = result
             .get("pngBase64")
@@ -105,6 +187,31 @@ impl Robot for IosXCTestRobot {
                 "iOS XCTest agent returned invalid screenshot: {error}"
             ))
         })
+    }
+
+    async fn start_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
+        validate_device_id(device_id)?;
+        let mut recording = self.recording.lock().await;
+        if recording.is_some() {
+            return Err(RobotError::InvalidInput(format!(
+                "an iOS real-device screen recording is already running for {device_id}"
+            )));
+        }
+        let device_hint = self.quicktime_device_hint(device_id).await;
+        let quicktime = QuickTimeRecording::start(&self.artifact_dir, &device_hint).await?;
+        let path = quicktime.path();
+        *recording = Some(quicktime);
+        Ok(path)
+    }
+
+    async fn stop_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
+        validate_device_id(device_id)?;
+        let Some(recording) = self.recording.lock().await.take() else {
+            return Err(RobotError::InvalidInput(format!(
+                "no iOS real-device screen recording is running for {device_id}"
+            )));
+        };
+        recording.stop().await
     }
 
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
@@ -125,7 +232,13 @@ impl Robot for IosXCTestRobot {
             .map(|_| ())
     }
 
-    async fn open_url(&self, _: &str, url: &str, app_id: Option<&str>) -> Result<(), RobotError> {
+    async fn open_url(
+        &self,
+        device_id: &str,
+        url: &str,
+        app_id: Option<&str>,
+    ) -> Result<(), RobotError> {
+        validate_device_id(device_id)?;
         let parsed = Url::parse(url).map_err(|_| RobotError::InvalidInput("invalid URL".into()))?;
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err(RobotError::InvalidInput(
@@ -176,16 +289,20 @@ impl Robot for IosXCTestRobot {
         .map(|_| ())
     }
 
-    async fn tap(&self, _: &str, point: Point) -> Result<(), RobotError> {
+    async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
+        validate_device_id(device_id)?;
         valid_point(point)?;
         self.dispatch("tap", json!({ "x": point.x, "y": point.y }))
             .await
             .map(|_| ())
     }
 
-    async fn type_text(&self, _: &str, text: &str) -> Result<(), RobotError> {
-        if text.is_empty() {
-            return Err(RobotError::InvalidInput("text must not be empty".into()));
+    async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {
+        validate_device_id(device_id)?;
+        if text.is_empty() || text.contains('\0') {
+            return Err(RobotError::InvalidInput(
+                "text must be non-empty and must not contain NUL".into(),
+            ));
         }
         self.dispatch("text", json!({ "text": text }))
             .await
@@ -194,11 +311,12 @@ impl Robot for IosXCTestRobot {
 
     async fn swipe(
         &self,
-        _: &str,
+        device_id: &str,
         start: Point,
         end: Point,
         duration_ms: Option<u64>,
     ) -> Result<(), RobotError> {
+        validate_device_id(device_id)?;
         valid_point(start)?;
         valid_point(end)?;
         self.dispatch(
@@ -206,15 +324,74 @@ impl Robot for IosXCTestRobot {
             json!({
                 "fromX": start.x, "fromY": start.y,
                 "toX": end.x, "toY": end.y,
-                "durationMs": duration_ms.unwrap_or(500),
+                "durationMs": duration_ms.unwrap_or(100),
             }),
         )
         .await
         .map(|_| ())
     }
 
-    async fn list_elements(&self, _: &str) -> Result<Vec<UiElement>, RobotError> {
-        let result = self.dispatch("dump", json!({})).await?;
+    async fn execute_ui_actions(
+        &self,
+        device_id: &str,
+        actions: &[UiAction],
+    ) -> Result<(), RobotError> {
+        if actions.is_empty() {
+            return Err(RobotError::InvalidInput("actions must not be empty".into()));
+        }
+        validate_device_id(device_id)?;
+        for action in actions {
+            match action {
+                UiAction::Tap { x, y } => self.tap(device_id, Point { x: *x, y: *y }).await?,
+                UiAction::TapElement { filter } => {
+                    self.tap_element_by_filter(device_id, filter).await?
+                }
+                UiAction::Type { text } => self.type_text(device_id, text).await?,
+                UiAction::Swipe {
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    duration_ms,
+                } => {
+                    self.swipe(
+                        device_id,
+                        Point {
+                            x: *start_x,
+                            y: *start_y,
+                        },
+                        Point {
+                            x: *end_x,
+                            y: *end_y,
+                        },
+                        *duration_ms,
+                    )
+                    .await?
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        self.list_elements_filtered(device_id, None, None).await
+    }
+
+    async fn list_elements_filtered(
+        &self,
+        device_id: &str,
+        filter: Option<&str>,
+        max_results: Option<usize>,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        validate_device_id(device_id)?;
+        let mut params = serde_json::Map::new();
+        if let Some(filter) = filter {
+            params.insert("filter".into(), Value::String(filter.into()));
+        }
+        if let Some(max_results) = max_results {
+            params.insert("maxResults".into(), Value::from(max_results));
+        }
+        let result = self.dispatch("dump", Value::Object(params)).await?;
         let elements = result.get("elements").cloned().ok_or_else(|| {
             RobotError::CommandFailed("iOS XCTest agent returned no element list".into())
         })?;
@@ -227,7 +404,8 @@ impl Robot for IosXCTestRobot {
             .collect())
     }
 
-    async fn ui_runner_status(&self, _: &str) -> Result<UiRunnerStatus, RobotError> {
+    async fn ui_runner_status(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
+        validate_device_id(device_id)?;
         match self
             .agent
             .dispatch("health", json!({}), Duration::from_secs(2))
@@ -318,6 +496,49 @@ fn valid_point(point: Point) -> Result<(), RobotError> {
     }
 }
 
+fn select_tappable_element<'a>(elements: &'a [UiElement], filter: &str) -> Option<&'a UiElement> {
+    let filter = filter.to_lowercase();
+    elements
+        .iter()
+        .filter(|element| {
+            element.enabled
+                && element.clickable
+                && element.bounds.right > element.bounds.left
+                && element.bounds.bottom > element.bounds.top
+                && ui_element_matches(element, &filter)
+        })
+        .min_by_key(|element| {
+            (
+                !ui_element_has_exact_match(element, &filter),
+                !element.class_name.eq_ignore_ascii_case("button"),
+            )
+        })
+}
+
+fn ui_element_matches(element: &UiElement, filter: &str) -> bool {
+    [
+        Some(element.class_name.as_str()),
+        element.resource_id.as_deref(),
+        element.text.as_deref(),
+        element.content_description.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value.to_lowercase().contains(filter))
+}
+
+fn ui_element_has_exact_match(element: &UiElement, filter: &str) -> bool {
+    [
+        Some(element.class_name.as_str()),
+        element.resource_id.as_deref(),
+        element.text.as_deref(),
+        element.content_description.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value.to_lowercase() == filter)
+}
+
 #[derive(Deserialize)]
 struct DeviceList {
     result: DeviceListResult,
@@ -396,5 +617,65 @@ mod tests {
         assert_eq!(devices.len(), 1);
         assert_eq!(devices[0].id, "00008130-000959E43EDA001C");
         assert_eq!(devices[0].platform, Platform::Ios);
+    }
+
+    fn element(
+        class_name: &str,
+        resource_id: Option<&str>,
+        content_description: Option<&str>,
+        clickable: bool,
+        enabled: bool,
+    ) -> UiElement {
+        UiElement {
+            class_name: class_name.into(),
+            resource_id: resource_id.map(str::to_owned),
+            text: None,
+            content_description: content_description.map(str::to_owned),
+            bounds: Bounds {
+                left: 0,
+                top: 0,
+                right: 100,
+                bottom: 100,
+            },
+            clickable,
+            enabled,
+        }
+    }
+
+    #[test]
+    fn tap_element_selection_matches_simulator_semantics() {
+        let elements = vec![
+            element("textField", None, Some("Private"), true, true),
+            element(
+                "button",
+                Some("PrivateTabGroup"),
+                Some("Private, Tab Group"),
+                true,
+                true,
+            ),
+            element(
+                "button",
+                Some("DisabledPrivate"),
+                Some("Private"),
+                true,
+                false,
+            ),
+        ];
+
+        let selected = select_tappable_element(&elements, "Private, Tab Group").unwrap();
+        assert_eq!(selected.resource_id.as_deref(), Some("PrivateTabGroup"));
+    }
+
+    #[test]
+    fn tap_element_selection_rejects_non_hittable_elements() {
+        let elements = vec![element(
+            "button",
+            Some("DoneButton"),
+            Some("Done"),
+            false,
+            true,
+        )];
+
+        assert!(select_tappable_element(&elements, "Done").is_none());
     }
 }

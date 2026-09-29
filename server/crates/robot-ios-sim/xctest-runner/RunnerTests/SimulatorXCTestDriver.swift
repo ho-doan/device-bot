@@ -113,8 +113,34 @@ final class DeviceKitXCTestDriver {
     ]
     for query in queries {
       let element = query.matching(predicate).firstMatch
-      if element.exists && element.isHittable {
+      guard element.exists && element.isEnabled else { continue }
+
+      let frame = element.frame
+      guard frame.width > 0, frame.height > 0 else { continue }
+
+      // Safari exposes the ChatGPT send control as a tall web button. Its
+      // reported hit-test state is unstable, and element.tap() can return
+      // successfully without activating the visible control. Tap the
+      // control's top edge, matching the real-device XCTest runner.
+      if normalizedFilter.localizedCaseInsensitiveContains("send") {
+        let y = frame.height > frame.width * 3
+          ? frame.minY + min(12, frame.height / 2)
+          : frame.midY
+        if tap(x: frame.midX, y: y) {
+          return true
+        }
+        continue
+      }
+
+      if element.isHittable {
         element.tap()
+        return true
+      }
+
+      // Web-content controls can report isHittable=false while still having
+      // a valid frame. Use the same dynamic frame-based coordinate fallback
+      // as mobile_click_on_screen_at_coordinates.
+      if tap(x: frame.midX, y: frame.midY) {
         return true
       }
     }

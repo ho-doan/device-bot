@@ -43,6 +43,57 @@ The binary executes `adb` and `xcrun` from `PATH`. Set `ANDROID_ADB_PATH` or
 The process accepts one JSON-RPC message per stdin line and writes one response
 per stdout line. Diagnostic output is reserved for stderr.
 
+## Install a released MCP server
+
+The release installers target the native MCP binary `mobile-mcp-server` and
+verify the downloaded archive against the release `checksums.txt` manifest.
+
+macOS:
+
+```bash
+curl --fail --silent --show-error --location \
+  https://raw.githubusercontent.com/ho-doan/device-bot/master/scripts/install.sh \
+  | sh
+```
+
+Windows PowerShell:
+
+```powershell
+$script = Join-Path $env:TEMP "device-bot-install.ps1"
+Invoke-WebRequest -UseBasicParsing `
+  https://raw.githubusercontent.com/ho-doan/device-bot/master/scripts/install.ps1 `
+  -OutFile $script
+powershell -ExecutionPolicy Bypass -File $script
+Remove-Item $script
+```
+
+Set `DEVICE_BOT_VERSION` to pin a release and `DEVICE_BOT_INSTALL_DIR` to
+override the default install directory. The release archives must be named
+`mobile-mcp-server-v<VERSION>-<TARGET>.tar.gz` on macOS and `.zip` on Windows.
+After installation, configure the MCP client to launch `mobile-mcp-server`
+over stdio, or pass `--listen HOST:PORT` for the HTTP transport.
+
+## Upgrade a released MCP server
+
+The server follows my-cleaner's explicit upgrade behavior: it does not check
+or replace itself in the background. `--check-update` queries the latest
+GitHub release and returns update metadata only after the platform archive is
+present in `checksums.txt`; `--upgrade` then reruns the verified installer for
+the current installation directory.
+
+```bash
+mobile-mcp-server --version
+mobile-mcp-server --check-update
+mobile-mcp-server --upgrade
+```
+
+On Windows, `--upgrade` schedules the PowerShell installer, exits the running
+server, waits for that process to release the `.exe`, and then replaces it.
+Development builds under `target/` refuse automatic upgrade; install a
+release binary first. Network failures are reported and never alter the
+current binary. Re-running either platform installer is also a supported
+manual upgrade path.
+
 ## HTTP transport and auth
 
 Run an HTTP listener explicitly; prefer a loopback address unless a reverse
@@ -101,7 +152,7 @@ claim that macOS, Windows, Android, or iOS browser automation is supported.
 | iOS Simulator | boot, app install/uninstall/launch, screenshot, MP4 recording, tap, text, swipe, XCTest elements | Requires Xcode and the bundled XCTest runner to be buildable for the target app. Chrome UI flow still requires the Chrome DevTools robot. |
 | Real iOS device | CoreDevice discovery, install/uninstall, app launch, XCTest screenshot/input/swipe/elements, and QuickTime MP4 recording when the signed XCTest agent is reachable | Recording uses QuickTime's iPhone capture device and therefore requires the trusted iPhone to be connected by USB. A wireless device is discoverable, but its XCTest agent must bind to a LAN-reachable MCP host; the default loopback bind is not sufficient. |
 | macOS host | screenshot, MP4 recording, launch app, tap, text, accessibility elements | No installer/uninstaller or drag. Requires Screen Recording permission for recording and Accessibility permission for input. |
-| Windows host | screenshot, launch app, tap, text, drag | No recording, installer/uninstaller, or accessibility-tree discovery. The temporary OmniParser coordinate fallback for Flutter is not implemented. Requires an interactive Windows session and UI-automation access. |
+| Windows host | screenshot, launch app, tap, text, drag, UIA accessibility elements | No recording, installer/uninstaller, or OmniParser coordinate fallback. UIA uses the raw view and requires an interactive Windows session; target and MCP process elevation/desktop session must be compatible. |
 | Chrome DevTools page | screenshot, MP4 recording, click, text, drag, DOM elements, navigate the attached page | It requires a reachable DevTools endpoint. |
 
 The compatibility methods named `open_url` still exist in several platform

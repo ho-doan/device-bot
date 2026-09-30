@@ -6,28 +6,40 @@
 use std::{
     path::PathBuf,
     process::Stdio,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
 };
 
 use async_trait::async_trait;
-use mobile_robot_core::{DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
+use mobile_robot_core::{
+    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
+};
 use serde_json::{Value, json};
-use tokio::process::Command;
+use tokio::{process::Command, sync::Mutex};
 
 const DEVICE_ID: &str = "windows-host";
+const MAX_UI_NODES: usize = 5_000;
+const MAX_UI_DEPTH: usize = 128;
+const UIA_QUERY_TIMEOUT: Duration = Duration::from_millis(2_500);
 static SCREENSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct WindowsRobot {
     artifact_dir: PathBuf,
     powershell_path: String,
+    active_process_id: Arc<Mutex<Option<u32>>>,
 }
 
 impl WindowsRobot {
     pub fn new(artifact_dir: impl Into<PathBuf>) -> Self {
         Self {
             artifact_dir: artifact_dir.into(),
-            powershell_path: "powershell.exe".into(),
+            powershell_path: std::env::var("DEVICE_BOT_POWERSHELL_PATH")
+                .unwrap_or_else(|_| "powershell.exe".into()),
+            active_process_id: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -70,6 +82,52 @@ impl WindowsRobot {
             )))
         }
     }
+
+    async fn uia_elements(
+        &self,
+        filter: Option<&str>,
+        max_results: Option<usize>,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        if max_results == Some(0) {
+            return Ok(vec![]);
+        }
+
+        self.activate_target().await?;
+        let process_id = *self.active_process_id.lock().await;
+        let script = build_uia_script(process_id, filter, max_results);
+        let output = tokio::time::timeout(UIA_QUERY_TIMEOUT, self.powershell(script))
+            .await
+            .map_err(|_| {
+                RobotError::CommandFailed(
+                    "Windows UI Automation traversal exceeded its 2.5 second deadline".into(),
+                )
+            })??;
+        parse_uia_elements(&output)
+    }
+
+    async fn activate_target(&self) -> Result<(), RobotError> {
+        let Some(process_id) = *self.active_process_id.lock().await else {
+            return Ok(());
+        };
+        let script = format!(
+            r#"
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class DeviceBotWindow {{
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+}}
+'@
+$process = Get-Process -Id {process_id} -ErrorAction Stop
+$window = $process.MainWindowHandle
+if ($window -eq [IntPtr]::Zero) {{ throw "Windows process {process_id} has no main window." }}
+[void][DeviceBotWindow]::ShowWindow($window, 9)
+[void][DeviceBotWindow]::SetForegroundWindow($window)
+"#
+        );
+        self.powershell(script).await.map(|_| ())
+    }
 }
 
 fn ps_quote(value: &str) -> String {
@@ -91,6 +149,260 @@ fn send_keys_literal(text: &str) -> String {
 
 fn mouse_helpers() -> &'static str {
     "Add-Type @'\nusing System;\nusing System.Runtime.InteropServices;\npublic static class MobileMcpMouse {\n  [DllImport(\"user32.dll\")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);\n}\n'@\nAdd-Type -AssemblyName System.Windows.Forms\nAdd-Type -AssemblyName System.Drawing"
+}
+
+fn parse_process_id(output: &[u8]) -> Result<u32, RobotError> {
+    String::from_utf8_lossy(output)
+        .lines()
+        .rev()
+        .filter_map(|line| {
+            line.trim()
+                .trim_start_matches('\u{feff}')
+                .parse::<u32>()
+                .ok()
+        })
+        .find(|process_id| *process_id > 0)
+        .ok_or_else(|| {
+            RobotError::CommandFailed(
+                "PowerShell did not return a usable Windows target process id".into(),
+            )
+        })
+}
+
+fn build_uia_script(
+    process_id: Option<u32>,
+    filter: Option<&str>,
+    max_results: Option<usize>,
+) -> String {
+    let mut script = r#"
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class DeviceBotWindow {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+}
+'@
+
+$processId = [uint32]__PROCESS_ID__
+if ($processId -eq 0) {
+  $foreground = [DeviceBotWindow]::GetForegroundWindow()
+  if ($foreground -ne [IntPtr]::Zero) {
+    [void][DeviceBotWindow]::GetWindowThreadProcessId($foreground, [ref]$processId)
+  }
+}
+if ($processId -eq 0) {
+  throw 'The foreground Windows process id is not available.'
+}
+
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$condition = New-Object System.Windows.Automation.PropertyCondition -ArgumentList @(
+  [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
+  [int]$processId
+)
+$target = $root.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $condition)
+if ($null -eq $target) {
+  throw "UI Automation could not find a window for process id $processId. The target may be elevated or running in another desktop session."
+}
+
+$walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+$nodes = New-Object 'System.Collections.Generic.List[object]'
+$filter = __FILTER__
+$maxResults = [int]__MAX_RESULTS__
+$maxNodes = [int]__MAX_NODES__
+$maxDepth = [int]__MAX_DEPTH__
+
+function Normalize-Text($value) {
+  if ($null -eq $value) { return $null }
+  $text = [string]$value
+  if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+  return $text
+}
+
+function Get-Role([int]$controlType) {
+  switch ($controlType) {
+    50000 { return 'button' }
+    50002 { return 'checkbox' }
+    50003 { return 'combobox' }
+    50004 { return 'textField' }
+    50005 { return 'link' }
+    50006 { return 'image' }
+    50007 { return 'listItem' }
+    50008 { return 'list' }
+    50009 { return 'menu' }
+    50011 { return 'menuItem' }
+    50012 { return 'progressBar' }
+    50013 { return 'radio' }
+    50014 { return 'scrollView' }
+    50015 { return 'slider' }
+    50018 { return 'list' }
+    50020 { return 'text' }
+    50023 { return 'list' }
+    50024 { return 'listItem' }
+    50032 { return 'window' }
+    default { return 'unknown' }
+  }
+}
+
+function Add-Element([System.Windows.Automation.AutomationElement]$element, [int]$depth) {
+  if ($null -eq $element -or $depth -gt $maxDepth -or $nodes.Count -ge $maxNodes) { return }
+
+  $role = 'unknown'
+  $automationId = $null
+  $name = $null
+  $helpText = $null
+  $left = 0
+  $top = 0
+  $right = 0
+  $bottom = 0
+  $enabled = $true
+
+  try { $role = Get-Role ([int]$element.Current.ControlType.Id) } catch { }
+  try { $automationId = Normalize-Text $element.Current.AutomationId } catch { }
+  try { $name = Normalize-Text $element.Current.Name } catch { }
+  try { $helpText = Normalize-Text $element.Current.HelpText } catch { }
+  try {
+    $rectangle = $element.Current.BoundingRectangle
+    $left = [int][Math]::Round($rectangle.Left)
+    $top = [int][Math]::Round($rectangle.Top)
+    $right = [int][Math]::Round($rectangle.Right)
+    $bottom = [int][Math]::Round($rectangle.Bottom)
+  } catch { }
+  try { $enabled = [bool]$element.Current.IsEnabled } catch { }
+
+  $matches = [string]::IsNullOrEmpty($filter)
+  if (-not $matches) {
+    foreach ($field in @($role, $automationId, $name, $helpText)) {
+      if ($null -ne $field -and $field.ToLowerInvariant().Contains($filter)) {
+        $matches = $true
+        break
+      }
+    }
+  }
+
+  if ($matches -and $right -gt $left -and $bottom -gt $top -and $nodes.Count -lt $maxResults) {
+    $contentDescription = $helpText
+    if ($null -eq $contentDescription) { $contentDescription = $name }
+    [void]$nodes.Add([pscustomobject]@{
+      className = $role
+      resourceId = $automationId
+      text = $name
+      contentDescription = $contentDescription
+      left = $left
+      top = $top
+      right = $right
+      bottom = $bottom
+      clickable = @('button', 'link', 'menuItem', 'radio', 'checkbox') -contains $role
+      enabled = $enabled
+    })
+  }
+
+  if ($nodes.Count -ge $maxResults -or $nodes.Count -ge $maxNodes) { return }
+  try {
+    $child = $walker.GetFirstChild($element)
+    while ($null -ne $child -and $nodes.Count -lt $maxResults -and $nodes.Count -lt $maxNodes) {
+      Add-Element $child ($depth + 1)
+      $next = $walker.GetNextSibling($child)
+      if ($null -eq $next -or $next.Equals($child)) { break }
+      $child = $next
+    }
+  } catch { }
+}
+
+Add-Element $target 0
+if ($nodes.Count -eq 0) { '[]' } else { $nodes | ConvertTo-Json -Depth 4 -Compress }
+"#
+    .to_owned();
+    script = script.replace("__PROCESS_ID__", &process_id.unwrap_or(0).to_string());
+    script = script.replace(
+        "__FILTER__",
+        &ps_quote(&filter.unwrap_or("").to_lowercase()),
+    );
+    script = script.replace(
+        "__MAX_RESULTS__",
+        &max_results
+            .unwrap_or(MAX_UI_NODES)
+            .min(MAX_UI_NODES)
+            .to_string(),
+    );
+    script = script.replace("__MAX_NODES__", &MAX_UI_NODES.to_string());
+    script.replace("__MAX_DEPTH__", &MAX_UI_DEPTH.to_string())
+}
+
+fn parse_uia_elements(output: &[u8]) -> Result<Vec<UiElement>, RobotError> {
+    let output = output.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(output);
+    let value = serde_json::from_slice::<Value>(output).map_err(|error| {
+        RobotError::CommandFailed(format!(
+            "PowerShell returned invalid UI Automation JSON: {error}"
+        ))
+    })?;
+    let values = match value {
+        Value::Null => vec![],
+        Value::Array(values) => values,
+        value => vec![value],
+    };
+
+    values
+        .into_iter()
+        .map(|value| {
+            let object = value.as_object().ok_or_else(|| {
+                RobotError::CommandFailed("Windows UI Automation returned a non-object node".into())
+            })?;
+            let required_string = |key: &str| {
+                object
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        RobotError::CommandFailed(format!(
+                            "Windows UI Automation node is missing {key}"
+                        ))
+                    })
+            };
+            let coordinate = |key: &str| {
+                object
+                    .get(key)
+                    .and_then(Value::as_i64)
+                    .and_then(|value| i32::try_from(value).ok())
+                    .ok_or_else(|| {
+                        RobotError::CommandFailed(format!(
+                            "Windows UI Automation node has an invalid {key} coordinate"
+                        ))
+                    })
+            };
+            let optional_string = |key: &str| {
+                object
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+            };
+            Ok(UiElement {
+                class_name: required_string("className")?,
+                resource_id: optional_string("resourceId"),
+                text: optional_string("text"),
+                content_description: optional_string("contentDescription"),
+                bounds: Bounds {
+                    left: coordinate("left")?,
+                    top: coordinate("top")?,
+                    right: coordinate("right")?,
+                    bottom: coordinate("bottom")?,
+                },
+                clickable: object
+                    .get("clickable")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                enabled: object
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+            })
+        })
+        .collect()
 }
 
 #[async_trait]
@@ -176,6 +488,7 @@ if ($null -eq $apps) {
 
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
         self.require_device(device_id)?;
+        self.activate_target().await?;
         self.powershell(format!(
             "{}; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {}); [MobileMcpMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); [MobileMcpMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)",
             mouse_helpers(), point.x.round(), point.y.round()
@@ -184,9 +497,18 @@ if ($null -eq $apps) {
 
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
-        self.powershell(format!("Start-Process -FilePath {}", ps_quote(app_id)))
-            .await
-            .map(|_| ())
+        if app_id.trim().is_empty() {
+            return Err(RobotError::InvalidInput("app id must not be empty".into()));
+        }
+        let output = self
+            .powershell(format!(
+                "$target = {}; $name = [System.IO.Path]::GetFileNameWithoutExtension($target); $process = Get-Process -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1; if ($null -eq $process) {{ $process = Start-Process -FilePath $target -PassThru }}; if ($null -eq $process) {{ throw \"could not start $target\" }}; try {{ $process.WaitForInputIdle(5000) | Out-Null }} catch {{}}; [Console]::WriteLine([int]$process.Id)",
+                ps_quote(app_id)
+            ))
+            .await?;
+        let process_id = parse_process_id(&output)?;
+        *self.active_process_id.lock().await = Some(process_id);
+        Ok(())
     }
 
     async fn open_url(
@@ -205,6 +527,7 @@ if ($null -eq $apps) {
 
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
+        self.activate_target().await?;
         self.powershell(format!(
             "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait({})",
             ps_quote(&send_keys_literal(text))
@@ -219,6 +542,7 @@ if ($null -eq $apps) {
         duration_ms: Option<u64>,
     ) -> Result<(), RobotError> {
         self.require_device(device_id)?;
+        self.activate_target().await?;
         let steps = 12_u64;
         let delay = duration_ms.unwrap_or(300) / steps;
         self.powershell(format!(
@@ -243,9 +567,17 @@ if ($null -eq $apps) {
 
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.require_device(device_id)?;
-        Err(RobotError::Unsupported(
-            "accessibility-tree discovery is not supported by the Windows robot".into(),
-        ))
+        self.uia_elements(None, None).await
+    }
+
+    async fn list_elements_filtered(
+        &self,
+        device_id: &str,
+        filter: Option<&str>,
+        max_results: Option<usize>,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        self.require_device(device_id)?;
+        self.uia_elements(filter, max_results).await
     }
 }
 
@@ -257,5 +589,65 @@ mod tests {
     fn powershell_literals_are_quoted_and_sendkeys_is_escaped() {
         assert_eq!(ps_quote("O'Brien"), "'O''Brien'");
         assert_eq!(send_keys_literal("a+b\n"), "a{+}b{ENTER}");
+    }
+
+    #[test]
+    fn parses_process_id_output() {
+        assert_eq!(parse_process_id(b"\r\n1234\r\n").unwrap(), 1234);
+        assert_eq!(parse_process_id("\u{feff}5678\n".as_bytes()).unwrap(), 5678);
+        assert!(parse_process_id(b"not-a-process").is_err());
+    }
+
+    #[test]
+    fn uia_script_uses_raw_view_and_process_condition() {
+        let script = build_uia_script(Some(1234), None, None);
+        assert!(script.contains("UIAutomationClient"));
+        assert!(script.contains("TreeWalker]::RawViewWalker"));
+        assert!(script.contains("ProcessIdProperty"));
+        assert!(script.contains("[uint32]1234"));
+    }
+
+    #[test]
+    fn uia_script_embeds_case_insensitive_filter_and_bounded_results() {
+        let script = build_uia_script(None, Some("Save\' As"), Some(20));
+        assert!(script.contains("$filter = 'save'' as'"));
+        assert!(script.contains("$maxResults = [int]20"));
+        assert!(script.contains("$maxNodes = [int]5000"));
+        assert!(script.contains("$maxDepth = [int]128"));
+    }
+
+    #[test]
+    fn parses_uia_payload_into_portable_elements() {
+        let elements = parse_uia_elements(
+            br#"[{"className":"button","resourceId":"save","text":"Save","contentDescription":"Save","left":10,"top":20,"right":70,"bottom":50,"clickable":true,"enabled":false}]"#,
+        )
+        .unwrap();
+        assert_eq!(elements.len(), 1);
+        assert_eq!(elements[0].class_name, "button");
+        assert_eq!(elements[0].resource_id.as_deref(), Some("save"));
+        assert_eq!(
+            elements[0].bounds,
+            Bounds {
+                left: 10,
+                top: 20,
+                right: 70,
+                bottom: 50
+            }
+        );
+        assert!(elements[0].clickable);
+        assert!(!elements[0].enabled);
+    }
+
+    #[test]
+    fn parses_uia_payload_with_a_utf8_bom() {
+        let mut output = vec![0xef, 0xbb, 0xbf];
+        output.extend_from_slice(br#"[]"#);
+        assert!(parse_uia_elements(&output).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn zero_max_results_does_not_start_powershell() {
+        let robot = WindowsRobot::new("artifacts");
+        assert!(robot.uia_elements(None, Some(0)).await.unwrap().is_empty());
     }
 }

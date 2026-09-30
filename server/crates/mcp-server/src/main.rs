@@ -9,6 +9,8 @@ use mobile_robot_ios_sim::IosSimulatorRobot;
 use mobile_robot_macos::MacosRobot;
 use mobile_robot_windows::WindowsRobot;
 
+mod update;
+
 fn android_adb_path() -> String {
     if let Ok(path) = std::env::var("ANDROID_ADB_PATH") {
         return path;
@@ -130,6 +132,59 @@ async fn install_chrome_recording_tools() -> std::io::Result<()> {
 async fn main() -> std::io::Result<()> {
     let mut arguments = std::env::args().skip(1);
     let command = arguments.next();
+    if matches!(command.as_deref(), Some("--version")) {
+        if arguments.next().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "--version accepts no arguments",
+            ));
+        }
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if matches!(command.as_deref(), Some("--check-update")) {
+        if arguments.next().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "--check-update accepts no arguments",
+            ));
+        }
+        match update::check_latest_release(env!("CARGO_PKG_VERSION"))? {
+            Some(update) => {
+                let encoded = serde_json::to_string_pretty(&update).map_err(|error| {
+                    std::io::Error::other(format!("encode update information: {error}"))
+                })?;
+                println!("{encoded}");
+            }
+            None => println!(
+                "mobile-mcp-server {} is up to date.",
+                env!("CARGO_PKG_VERSION")
+            ),
+        }
+        return Ok(());
+    }
+    if matches!(command.as_deref(), Some("--upgrade")) {
+        if arguments.next().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "--upgrade accepts no arguments",
+            ));
+        }
+        match update::check_latest_release(env!("CARGO_PKG_VERSION"))? {
+            Some(update) => {
+                println!(
+                    "Upgrading mobile-mcp-server {} -> {}...",
+                    update.current_version, update.latest_version
+                );
+                update::perform_upgrade(&update)?;
+            }
+            None => println!(
+                "mobile-mcp-server {} is up to date.",
+                env!("CARGO_PKG_VERSION")
+            ),
+        }
+        return Ok(());
+    }
     if matches!(
         command.as_deref(),
         Some("--request-screen-recording-permission")

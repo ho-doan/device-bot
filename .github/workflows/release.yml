@@ -1,0 +1,75 @@
+name: Release MCP server
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: macos-14
+            target: x86_64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --manifest-path server/Cargo.toml --release --locked -p mobile-mcp-server --target ${{ matrix.target }}
+      - name: Package macOS binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          staging="mobile-mcp-server-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "$staging"
+          cp "server/target/${{ matrix.target }}/release/mobile-mcp-server" "$staging/mobile-mcp-server"
+          tar -czf "${staging}.tar.gz" -C "$staging" mobile-mcp-server
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $staging = "mobile-mcp-server-${env:GITHUB_REF_NAME}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $staging -Force | Out-Null
+          Copy-Item "server\target\${{ matrix.target }}\release\mobile-mcp-server.exe" "$staging\mobile-mcp-server.exe"
+          Compress-Archive -Path "$staging\mobile-mcp-server.exe" -DestinationPath "$staging.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-mcp-server-${{ matrix.target }}
+          path: |
+            mobile-mcp-server-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+            mobile-mcp-server-${{ github.ref_name }}-${{ matrix.target }}.zip
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate release checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum mobile-mcp-server-*.tar.gz mobile-mcp-server-*.zip > checksums.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/mobile-mcp-server-*.tar.gz
+            dist/mobile-mcp-server-*.zip
+            dist/checksums.txt

@@ -178,35 +178,6 @@ To drive a connected phone from the host — the same split Mobile MCP uses —
 use the Rust server's iOS XCTest agent or Android `adb`/accessibility driver.
 This path does not call `@mobilenext/mobilecli`.
 
-```bash
-DEVICE_KIT_IOS_PROJECT=/path/to/ios/Runner.xcodeproj \
-  dart run bin/device_kit_lib.dart --device <device-id-or-name> --http --port 8787
-```
-
-`DEVICE_KIT_IOS_PROJECT` is the Xcode project that owns the signed UI-test
-runner. A product app can use its own project after adding the same
-`DeviceKitHttpAgentTests/testServe` UI test. `session.start` only connects to
-the running XCTest agent; it does not invoke `xcodebuild` itself.
-
-Build the agent **once**, then start the last products (no compile):
-
-```bash
-export DEVICE_KIT_IOS_PROJECT="$PWD/server/crates/robot-ios-real/xctest-runner/MobileMcpRealRunner.xcodeproj"
-export DEVICE_KIT_DEVICE=<paired-iPhone-UDID-or-name>
-tool/ios_xctest_agent.sh build    # first time, or after Swift/agent changes
-tool/ios_xctest_agent.sh start    # every later session
-```
-
-Before the first build, open the project in Xcode and select your Apple
-development team for both `Runner` and `RunnerUITests`; the phone must trust
-that certificate. Keep `start` running, then call `session.start`. The target
-app is whatever bundle id you pass to `app.launch`. The iPhone and Mac must
-be on the same Wi-Fi, and macOS must allow the test bundle's local-network HTTP
-connection when prompted. If Xcode needs a precise destination rather than a
-visible device name, set `DEVICE_KIT_IOS_DESTINATION` to the complete
-`platform=iOS,id=<xcode-destination-id>` value shown by
-`xcodebuild -showdestinations`.
-
 The Rust Mobile MCP real-device path is self-contained under `server/*`: it
 uses Apple `xcrun devicectl` for paired-device/app lifecycle and a signed
 XCTest agent for cross-app UI. It does not require `go-ios`, a userspace tunnel,

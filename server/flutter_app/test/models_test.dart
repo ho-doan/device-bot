@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_mcp_companion/companion_home.dart';
 import 'package:mobile_mcp_companion/models.dart';
@@ -54,6 +56,48 @@ void main() {
     expect(app.name, 'Example App');
     expect(app.identifier, 'com.example.app');
     expect(app.version, '1.2.3');
+  });
+
+  test('scales logical accessibility bounds to a retina screenshot', () {
+    final element = AdminElement.fromJson({
+      'className': 'button',
+      'resourceId': 'save',
+      'text': 'Save',
+      'contentDescription': null,
+      'bounds': {'left': 0, 'top': 0, 'right': 393, 'bottom': 852},
+      'clickable': true,
+      'enabled': true,
+    });
+
+    expect(
+      inspectorCoordinateScale(
+        imageSize: const ui.Size(1179, 2556),
+        elements: [element],
+        platform: 'ios',
+      ),
+      closeTo(3, 0.01),
+    );
+  });
+
+  test('infers iOS pixel scale when elements do not cover the full screen', () {
+    final element = AdminElement.fromJson({
+      'className': 'button',
+      'resourceId': 'save',
+      'text': 'Save',
+      'contentDescription': null,
+      'bounds': {'left': 20, 'top': 100, 'right': 320, 'bottom': 450},
+      'clickable': true,
+      'enabled': true,
+    });
+
+    expect(
+      inspectorCoordinateScale(
+        imageSize: const ui.Size(1179, 2556),
+        elements: [element],
+        platform: 'ios',
+      ),
+      closeTo(3, 0.01),
+    );
   });
 
   test('explains how to recover when the simulator has no active app', () {

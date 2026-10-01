@@ -24,6 +24,35 @@ String elementInspectionErrorMessage(Object error) {
   return 'Could not find accessibility elements.\n\n$message';
 }
 
+double inspectorCoordinateScale({
+  required ui.Size imageSize,
+  required List<AdminElement> elements,
+  required String platform,
+}) {
+  if (!platform.toLowerCase().contains('ios') || elements.isEmpty) return 1.0;
+
+  final maxRight = elements.fold<double>(
+    0,
+    (maximum, element) => math.max(maximum, element.bounds.right.toDouble()),
+  );
+  final maxBottom = elements.fold<double>(
+    0,
+    (maximum, element) => math.max(maximum, element.bounds.bottom.toDouble()),
+  );
+  if (maxRight <= 0 || maxBottom <= 0) return 1.0;
+
+  final xScale = imageSize.width / maxRight;
+  if (!xScale.isFinite || xScale <= 0) return 1.0;
+
+  const commonIosPixelScales = [1.0, 2.0, 3.0];
+  return commonIosPixelScales.reduce(
+    (closest, candidate) =>
+        (candidate - xScale).abs() < (closest - xScale).abs()
+        ? candidate
+        : closest,
+  );
+}
+
 class CompanionHome extends StatefulWidget {
   const CompanionHome({super.key});
 
@@ -622,6 +651,7 @@ steps:
                     selectedIndex: _selectedIndex,
                     onSelectElement: _selectElement,
                     deviceName: widget.device.name,
+                    platform: widget.device.platform,
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -802,6 +832,7 @@ class _ScreenshotCanvas extends StatefulWidget {
     required this.selectedIndex,
     required this.onSelectElement,
     required this.deviceName,
+    required this.platform,
   });
 
   final Uint8List bytes;
@@ -809,6 +840,7 @@ class _ScreenshotCanvas extends StatefulWidget {
   final int? selectedIndex;
   final ValueChanged<int> onSelectElement;
   final String deviceName;
+  final String platform;
 
   @override
   State<_ScreenshotCanvas> createState() => _ScreenshotCanvasState();
@@ -880,6 +912,16 @@ class _ScreenshotCanvasState extends State<_ScreenshotCanvas> {
               constraints.maxHeight / image.height,
             );
             final safeScale = scale.isFinite && scale > 0 ? scale : 1.0;
+            final coordinateScale =
+                safeScale *
+                inspectorCoordinateScale(
+                  imageSize: ui.Size(
+                    image.width.toDouble(),
+                    image.height.toDouble(),
+                  ),
+                  elements: widget.elements,
+                  platform: widget.platform,
+                );
             final size = Size(
               image.width * safeScale,
               image.height * safeScale,
@@ -907,14 +949,14 @@ class _ScreenshotCanvasState extends State<_ScreenshotCanvas> {
                           onTapUp: (details) {
                             final index = _elementAt(
                               details.localPosition,
-                              safeScale,
+                              coordinateScale,
                             );
                             if (index != null) widget.onSelectElement(index);
                           },
                           child: CustomPaint(
                             painter: _ElementOverlayPainter(
                               elements: widget.elements,
-                              scale: safeScale,
+                              scale: coordinateScale,
                               selectedIndex: widget.selectedIndex,
                             ),
                           ),
@@ -945,55 +987,69 @@ class _ElementOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    for (var index = 0; index < elements.length; index += 1) {
+    final order = [
+      for (var index = 0; index < elements.length; index += 1)
+        if (index != selectedIndex) index,
+      if (selectedIndex != null && selectedIndex! < elements.length)
+        selectedIndex!,
+    ];
+
+    for (final index in order) {
       final bounds = elements[index].bounds;
-      final rect = Rect.fromLTRB(
-        bounds.left * scale,
-        bounds.top * scale,
-        bounds.right * scale,
-        bounds.bottom * scale,
-      );
       final selected = selectedIndex == index;
+      final rect = Rect.fromLTRB(
+        (bounds.left * scale).clamp(0.0, size.width).toDouble(),
+        (bounds.top * scale).clamp(0.0, size.height).toDouble(),
+        (bounds.right * scale).clamp(0.0, size.width).toDouble(),
+        (bounds.bottom * scale).clamp(0.0, size.height).toDouble(),
+      );
       final border = Paint()
-        ..color = selected ? const Color(0xff00e5ff) : const Color(0xffffb300)
+        ..color = selected ? const Color(0xfff44336) : const Color(0xffffb300)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = selected ? 3 : 2;
+        ..strokeWidth = selected ? 4 : 2;
       canvas.drawRect(rect, border);
 
-      final labelWidth = math.min(260.0, math.max(96.0, rect.width));
+      final element = elements[index];
+      final selector = element.resourceId ?? element.name;
+      final labelText = selected
+          ? '${element.className} ($selector)'
+          : '${index + 1} ${element.name}';
       final label = TextPainter(
         text: TextSpan(
-          text: '${index + 1} ${elements[index].name}',
-          style: const TextStyle(
+          text: labelText,
+          style: TextStyle(
             color: Colors.white,
-            fontSize: 10,
+            fontSize: selected ? 12 : 10,
             fontWeight: FontWeight.w600,
           ),
         ),
         textDirection: TextDirection.ltr,
         maxLines: 1,
         ellipsis: '…',
-      )..layout(maxWidth: labelWidth);
+      )..layout(maxWidth: math.min(280.0, math.max(120.0, size.width - 12)));
+      final labelWidth = math.min(280.0, math.max(120.0, label.width + 10));
+      final labelHeight = label.height + 8;
       final labelLeft = rect.left
           .clamp(0.0, math.max(0.0, size.width - labelWidth))
           .toDouble();
-      final labelTop = (rect.top - label.height - 2)
-          .clamp(0.0, math.max(0.0, size.height - label.height))
-          .toDouble();
-      final labelRect = Rect.fromLTWH(
-        labelLeft,
-        labelTop,
-        labelWidth,
-        label.height + 2,
+      final labelTop =
+          (rect.top - labelHeight - 2 >= 0
+                  ? rect.top - labelHeight - 2
+                  : rect.top)
+              .clamp(0.0, math.max(0.0, size.height - labelHeight))
+              .toDouble();
+      final labelRect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(labelLeft, labelTop, labelWidth, labelHeight),
+        const Radius.circular(3),
       );
-      canvas.drawRect(
+      canvas.drawRRect(
         labelRect,
         Paint()
           ..color = selected
-              ? const Color(0xff006064)
-              : const Color(0xff5d4037),
+              ? const Color(0xffc62828)
+              : const Color(0xcc111111),
       );
-      label.paint(canvas, Offset(labelLeft + 4, labelTop + 1));
+      label.paint(canvas, Offset(labelLeft + 5, labelTop + 4));
     }
   }
 

@@ -31,7 +31,7 @@ case "$command" in
   build)
     echo "Provisioning and building Device Bot real-device XCTest agent -> $destination" >&2
     cargo run --quiet --manifest-path "$server_dir/Cargo.toml" \
-      -p mobile-mcp-server -- --provision-ios-xctest "$device"
+      -p device-bot -- --provision-ios-xctest "$device"
     ;;
   start)
     hosts="${DEVICE_BOT_IOS_AGENT_HOSTS:-}"

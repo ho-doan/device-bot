@@ -119,7 +119,7 @@ else
   export DEVICE_BOT_IOS_AGENT_BIND="${DEVICE_BOT_IOS_AGENT_BIND:-127.0.0.1:0}"
 fi
 mkfifo "$INPUT_PIPE" "$OUTPUT_PIPE"
-cargo run -q --manifest-path "$SERVER_DIR/Cargo.toml" -p mobile-mcp-server \
+cargo run -q --manifest-path "$SERVER_DIR/Cargo.toml" -p device-bot \
   <"$INPUT_PIPE" >"$OUTPUT_PIPE" &
 readonly MCP_SERVER_PID=$!
 exec 3>"$INPUT_PIPE"

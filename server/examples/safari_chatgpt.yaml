@@ -1,0 +1,36 @@
+version: 1
+name: safari_chatgpt
+description: Open ChatGPT in Safari, send a deterministic smoke-test message, and capture evidence.
+steps:
+  - id: select_macos_host
+    select_device:
+      id: macos-host
+      platform: macos
+  - id: start_recording
+    start_screen_recording: {}
+  - id: launch_safari
+    launch_app:
+      app_id: Safari
+  - id: open_chatgpt
+    open_url:
+      url: https://chatgpt.com
+      app_id: Safari
+  - id: settle_browser
+    wait:
+      ms: 3000
+  - id: focus_message_box
+    tap_element:
+      filter: Message
+      max_results: 10
+  - id: type_smoke_message
+    type_text:
+      text: hello
+  - id: assert_message_box
+    assert_element:
+      filter: Message
+      max_results: 10
+  - id: capture_screenshot
+    screenshot:
+      path: artifacts/flows/safari_chatgpt.png
+  - id: stop_recording
+    stop_screen_recording: {}

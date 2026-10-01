@@ -20,7 +20,7 @@ const INSTALL_SCRIPT_WINDOWS: &str =
 const RELEASE_CHECKSUMS: &str =
     "https://github.com/ho-doan/device-bot/releases/download/v{version}/checksums.txt";
 const INSTALLER_READY_ATTEMPTS: usize = 6;
-const BINARY_NAME: &str = "mobile-mcp-server";
+const BINARY_NAME: &str = "device-bot";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct UpdateInfo {
@@ -43,7 +43,7 @@ pub fn check_latest_release(current_version: &str) -> io::Result<Option<UpdateIn
         io::Error::other("GitHub latest release has an invalid numeric version tag")
     })?;
     let current_version = normalize_version(current_version)
-        .ok_or_else(|| io::Error::other("mobile-mcp-server has an invalid package version"))?;
+        .ok_or_else(|| io::Error::other("device-bot has an invalid package version"))?;
 
     if compare_versions(&latest_version, &current_version).is_gt() {
         wait_for_installer_ready(&latest_version)?;
@@ -69,12 +69,12 @@ pub fn perform_upgrade(update: &UpdateInfo) -> io::Result<()> {
             .eq_ignore_ascii_case(std::ffi::OsStr::new("target"))
     }) {
         return Err(io::Error::other(
-            "cannot upgrade a development build; install mobile-mcp-server with the release installer",
+            "cannot upgrade a development build; install device-bot with the release installer",
         ));
     }
 
     let install_dir = executable.parent().ok_or_else(|| {
-        io::Error::other("running mobile-mcp-server has no parent installation directory")
+        io::Error::other("running device-bot has no parent installation directory")
     })?;
     let installer = wait_for_installer_script(&update.latest_version)?;
     run_installer_script(&installer, &update.latest_version, install_dir)
@@ -398,14 +398,14 @@ mod tests {
 
     #[test]
     fn checksum_manifest_requires_a_verified_archive_entry() {
-        let manifest = "abc\n1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef  mobile-mcp-server-v0.1.6-x86_64-pc-windows-msvc.zip\n";
+        let manifest = "abc\n1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef  device-bot-v0.1.6-x86_64-pc-windows-msvc.zip\n";
         assert!(checksum_manifest_has_archive(
             manifest,
-            "mobile-mcp-server-v0.1.6-x86_64-pc-windows-msvc.zip"
+            "device-bot-v0.1.6-x86_64-pc-windows-msvc.zip"
         ));
         assert!(!checksum_manifest_has_archive(
             manifest,
-            "mobile-mcp-server-v0.1.6-aarch64-pc-windows-msvc.zip"
+            "device-bot-v0.1.6-aarch64-pc-windows-msvc.zip"
         ));
     }
 
@@ -418,7 +418,7 @@ mod tests {
         };
         assert_eq!(
             archive_name("0.1.0", "aarch64-apple-darwin"),
-            format!("mobile-mcp-server-v0.1.0-aarch64-apple-darwin.{extension}")
+            format!("device-bot-v0.1.0-aarch64-apple-darwin.{extension}")
         );
     }
 }

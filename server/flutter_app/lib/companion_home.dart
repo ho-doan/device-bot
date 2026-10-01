@@ -21,7 +21,7 @@ class _CompanionHomeState extends State<CompanionHome> {
   );
   final _tokenController = TextEditingController();
   final _serverExecutableController = TextEditingController(
-    text: 'mobile-mcp-server',
+    text: 'device-bot',
   );
   final _serverController = LocalServerController();
   late Future<DashboardSnapshot> _snapshot;

@@ -25,7 +25,7 @@ readonly CHROME_PROFILE_DIR="$SESSION_DIR/chrome-profile"
 # enabled even when the user's ordinary Chrome profile is already running.
 export DEVICE_BOT_MACOS_APP_ARGS="${DEVICE_BOT_MACOS_APP_ARGS:---user-data-dir=$CHROME_PROFILE_DIR --incognito --no-first-run --no-default-browser-check --force-renderer-accessibility}"
 mkfifo "$INPUT_PIPE" "$OUTPUT_PIPE"
-cargo run -q --manifest-path "$SERVER_DIR/Cargo.toml" -p mobile-mcp-server \
+cargo run -q --manifest-path "$SERVER_DIR/Cargo.toml" -p device-bot \
   <"$INPUT_PIPE" >"$OUTPUT_PIPE" &
 readonly MCP_SERVER_PID=$!
 exec 3>"$INPUT_PIPE"

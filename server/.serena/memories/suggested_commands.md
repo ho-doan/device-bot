@@ -1,1 +1,1 @@
-From `server/`: `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace`. Run MCP manually with `cargo run -p mobile-mcp-server` and JSON-RPC lines over stdin.
+From `server/`: `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace`. Run MCP manually with `cargo run -p device-bot` and JSON-RPC lines over stdin.

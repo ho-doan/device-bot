@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use mobile_mcp_server::Server;
+use device_bot::Server;
 use mobile_robot_android::AndroidRobot;
 use mobile_robot_chrome::ChromeRobot;
 use mobile_robot_core::RobotRegistry;
@@ -156,10 +156,7 @@ async fn main() -> std::io::Result<()> {
                 })?;
                 println!("{encoded}");
             }
-            None => println!(
-                "mobile-mcp-server {} is up to date.",
-                env!("CARGO_PKG_VERSION")
-            ),
+            None => println!("device-bot {} is up to date.", env!("CARGO_PKG_VERSION")),
         }
         return Ok(());
     }
@@ -173,15 +170,12 @@ async fn main() -> std::io::Result<()> {
         match update::check_latest_release(env!("CARGO_PKG_VERSION"))? {
             Some(update) => {
                 println!(
-                    "Upgrading mobile-mcp-server {} -> {}...",
+                    "Upgrading device-bot {} -> {}...",
                     update.current_version, update.latest_version
                 );
                 update::perform_upgrade(&update)?;
             }
-            None => println!(
-                "mobile-mcp-server {} is up to date.",
-                env!("CARGO_PKG_VERSION")
-            ),
+            None => println!("device-bot {} is up to date.", env!("CARGO_PKG_VERSION")),
         }
         return Ok(());
     }
@@ -347,7 +341,7 @@ async fn main() -> std::io::Result<()> {
     ];
     let robot = Arc::new(RobotRegistry::new(drivers));
     match command.as_deref() {
-        None => mobile_mcp_server::stdio::serve(Server::new(robot)).await,
+        None => device_bot::stdio::serve(Server::new(robot)).await,
         Some("--listen") => {
             let address = arguments.next().ok_or_else(|| {
                 std::io::Error::new(
@@ -370,7 +364,7 @@ async fn main() -> std::io::Result<()> {
             let bearer_token = std::env::var("DEVICE_BOT_AUTH")
                 .ok()
                 .filter(|token| !token.is_empty());
-            mobile_mcp_server::http::serve(address, robot, bearer_token).await
+            device_bot::http::serve(address, robot, bearer_token).await
         }
         Some(argument) => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,

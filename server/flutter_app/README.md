@@ -8,11 +8,11 @@ Start the Rust server first:
 
 ```bash
 cd ..
-DEVICE_BOT_AUTH=local-secret cargo run -p mobile-mcp-server -- --listen 127.0.0.1:3337
+DEVICE_BOT_AUTH=local-secret cargo run -p device-bot -- --listen 127.0.0.1:3337
 ```
 
 Then run this Flutter project and enter the same base URL and bearer token.
-The companion can alternatively launch the local `mobile-mcp-server` binary:
+The companion can alternatively launch the local `device-bot` binary:
 enter its executable path, the desired local URL, and token, then select
 **Start server**. It only stops a process that it launched itself; attaching to
 an existing server remains read-only and safe.

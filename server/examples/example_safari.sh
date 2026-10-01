@@ -107,7 +107,7 @@ readonly SESSION_DIR="$(mktemp -d "${TMPDIR:-/tmp}/device-robot-mcp.XXXXXX")"
 readonly INPUT_PIPE="$SESSION_DIR/input"
 readonly OUTPUT_PIPE="$SESSION_DIR/output"
 # Keep the XCTest products in the workspace target directory so separate MCP
-# processes and later example/test runs share one machine-local build cache.
+# processes and later test runs share one machine-local build cache.
 readonly XCTEST_DERIVED_DATA_DIR="${DEVICE_BOT_IOS_XCTEST_DERIVED_DATA:-$SERVER_DIR/target/mobile-mcp-ios-xctest-derived-data-persistent-agent}"
 export DEVICE_BOT_IOS_XCTEST_DERIVED_DATA="$XCTEST_DERIVED_DATA_DIR"
 # The real-device XCTest agent runs on the iPhone and must connect back to a

@@ -12,11 +12,11 @@ use std::{
 };
 
 use async_trait::async_trait;
-use mobile_robot_core::{
+use robot_core::{
     Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiAction, UiElement,
     UiRunnerStatus,
 };
-use mobile_robot_ios_real::XCTestAgentBridge;
+use robot_ios_real::XCTestAgentBridge;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{

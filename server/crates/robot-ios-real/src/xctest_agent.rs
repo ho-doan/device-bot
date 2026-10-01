@@ -16,7 +16,7 @@ use serde_json::Value;
 use tokio::sync::{Mutex, oneshot};
 use uuid::Uuid;
 
-use mobile_robot_core::RobotError;
+use robot_core::RobotError;
 
 const TOKEN_HEADER: &str = "x-mobilemcp-token";
 

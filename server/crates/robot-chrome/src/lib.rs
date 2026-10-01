@@ -17,9 +17,7 @@ use std::{
 use async_trait::async_trait;
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
-use mobile_robot_core::{
-    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
-};
+use robot_core::{Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{

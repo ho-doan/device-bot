@@ -2,7 +2,7 @@
 
 use std::io;
 
-use mobile_mcp_protocol::{JsonRpcRequest, RpcError};
+use device_mcp_protocol::{JsonRpcRequest, RpcError};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::{Server, response};
@@ -39,7 +39,7 @@ pub async fn serve(mut server: Server) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use mobile_mcp_protocol::RpcError;
+    use device_mcp_protocol::RpcError;
     use serde_json::{Value, json};
 
     use crate::response;

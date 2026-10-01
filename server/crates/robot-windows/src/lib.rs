@@ -14,9 +14,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use mobile_robot_core::{
-    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
-};
+use robot_core::{Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
 use serde_json::{Value, json};
 use tokio::{process::Command, sync::Mutex};
 

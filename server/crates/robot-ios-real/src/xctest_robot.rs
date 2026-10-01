@@ -5,7 +5,7 @@ use std::{
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use mobile_robot_core::{
+use robot_core::{
     Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiAction, UiElement,
     UiRunnerStatus,
 };

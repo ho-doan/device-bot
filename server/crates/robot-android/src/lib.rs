@@ -14,13 +14,11 @@ use std::{
 };
 
 use async_trait::async_trait;
-use mobile_robot_core::{
-    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
-};
 use quick_xml::{
     Reader,
     events::{BytesStart, Event},
 };
+use robot_core::{Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
 use serde_json::{Value, json};
 use tokio::{process::Command, sync::Mutex};
 use url::Url;
@@ -935,7 +933,7 @@ mod tests {
             successful(vec![]),
             successful(vec![]),
         ]);
-        let artifact_dir = std::env::temp_dir().join("mobile-robot-android-recording-test");
+        let artifact_dir = std::env::temp_dir().join("robot-android-recording-test");
         let robot = AndroidRobot::with_runner_and_artifact_dir("adb-test", &artifact_dir, runner);
 
         let started = robot.start_screen_recording("emulator-5554").await.unwrap();

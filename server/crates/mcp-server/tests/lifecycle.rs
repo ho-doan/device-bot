@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use device_bot::Server;
-use mobile_mcp_protocol::{JsonRpcRequest, PROTOCOL_VERSION};
-use mobile_robot_core::{Point, Robot, RobotDevice, RobotError};
+use device_mcp_protocol::{JsonRpcRequest, PROTOCOL_VERSION};
+use robot_core::{Point, Robot, RobotDevice, RobotError};
 use serde_json::{Value, json};
 
 struct NoopRobot;
@@ -76,7 +76,7 @@ impl Robot for NoopRobot {
     async fn list_elements(
         &self,
         _device_id: &str,
-    ) -> Result<Vec<mobile_robot_core::UiElement>, RobotError> {
+    ) -> Result<Vec<robot_core::UiElement>, RobotError> {
         Err(RobotError::Unsupported(
             "not used by lifecycle tests".into(),
         ))

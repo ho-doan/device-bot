@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use mobile_mcp_protocol::ToolResult;
+use device_mcp_protocol::ToolResult;
 
 pub(super) fn required_string(arguments: &Value, key: &str) -> Result<String, ToolResult> {
     arguments

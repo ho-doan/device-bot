@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
-use mobile_mcp_protocol::{ToolDefinition, ToolResult};
-use mobile_robot_core::{Point, Robot};
+use device_mcp_protocol::{ToolDefinition, ToolResult};
+use robot_core::{Point, Robot};
 use serde_json::{Value, json};
 
 use super::arguments::{optional_u64, required_number, required_string};

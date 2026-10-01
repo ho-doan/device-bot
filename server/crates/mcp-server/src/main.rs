@@ -1,13 +1,13 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use device_bot::Server;
-use mobile_robot_android::AndroidRobot;
-use mobile_robot_chrome::ChromeRobot;
-use mobile_robot_core::RobotRegistry;
-use mobile_robot_ios_real::{IosXCTestRobot, XCTestAgentBridge, XCTestAgentLauncher};
-use mobile_robot_ios_sim::IosSimulatorRobot;
-use mobile_robot_macos::MacosRobot;
-use mobile_robot_windows::WindowsRobot;
+use robot_android::AndroidRobot;
+use robot_chrome::ChromeRobot;
+use robot_core::RobotRegistry;
+use robot_ios_real::{IosXCTestRobot, XCTestAgentBridge, XCTestAgentLauncher};
+use robot_ios_sim::IosSimulatorRobot;
+use robot_macos::MacosRobot;
+use robot_windows::WindowsRobot;
 
 mod update;
 
@@ -189,7 +189,7 @@ async fn main() -> std::io::Result<()> {
                 "--request-screen-recording-permission accepts no arguments",
             ));
         }
-        if mobile_robot_macos::request_screen_recording_permission() {
+        if robot_macos::request_screen_recording_permission() {
             println!("Screen Recording permission is already granted.");
             return Ok(());
         }
@@ -215,7 +215,7 @@ async fn main() -> std::io::Result<()> {
             ));
         }
         let identity_hint = std::env::var("DEVICE_BOT_IOS_SIGNING_IDENTITY").ok();
-        let team = mobile_robot_ios_real::apple_development_team(identity_hint.as_deref())
+        let team = robot_ios_real::apple_development_team(identity_hint.as_deref())
             .await
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         println!("{team}");
@@ -238,7 +238,7 @@ async fn main() -> std::io::Result<()> {
             .join("../robot-ios-real/xctest-runner/MobileMcpRealRunner.xcodeproj");
         let team = std::env::var("DEVICE_BOT_IOS_TEAM").ok();
         let identity_hint = std::env::var("DEVICE_BOT_IOS_SIGNING_IDENTITY").ok();
-        mobile_robot_ios_real::provision_xctest_runner(
+        robot_ios_real::provision_xctest_runner(
             &project,
             &device_id,
             team.as_deref(),
@@ -322,7 +322,7 @@ async fn main() -> std::io::Result<()> {
     if let Some(launcher) = ios_agent_launcher {
         real_ios = real_ios.with_agent_launcher(launcher);
     }
-    let drivers: Vec<Arc<dyn mobile_robot_core::Robot>> = vec![
+    let drivers: Vec<Arc<dyn robot_core::Robot>> = vec![
         Arc::new(AndroidRobot::new(adb_path, artifact_dir.clone())),
         Arc::new(ChromeRobot::from_env()),
         Arc::new(real_ios),

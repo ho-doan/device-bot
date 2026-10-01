@@ -1,6 +1,6 @@
 use super::arguments::required_string;
-use mobile_mcp_protocol::{ToolDefinition, ToolResult};
-use mobile_robot_core::Robot;
+use device_mcp_protocol::{ToolDefinition, ToolResult};
+use robot_core::Robot;
 use serde_json::{Value, json};
 use std::sync::Arc;
 pub(super) const NAME: &str = "mobile_get_ui_runner_status";

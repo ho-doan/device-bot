@@ -2,10 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use device_bot::Server;
-use mobile_mcp_protocol::{JsonRpcRequest, PROTOCOL_VERSION};
-use mobile_robot_core::{
-    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
-};
+use device_mcp_protocol::{JsonRpcRequest, PROTOCOL_VERSION};
+use robot_core::{Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
 use serde_json::{Value, json};
 
 #[derive(Default)]

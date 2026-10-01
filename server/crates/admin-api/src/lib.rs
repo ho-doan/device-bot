@@ -22,7 +22,7 @@ use axum::{
     },
     routing::get,
 };
-use mobile_robot_core::Robot;
+use robot_core::Robot;
 use serde::Serialize;
 use tokio::sync::{Mutex, broadcast};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
@@ -204,7 +204,7 @@ fn is_authorized(headers: &HeaderMap, expected_token: Option<&str>) -> bool {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DevicesResponse {
-    devices: Vec<mobile_robot_core::RobotDevice>,
+    devices: Vec<robot_core::RobotDevice>,
 }
 
 #[derive(Serialize)]
@@ -228,7 +228,7 @@ struct ErrorResponse {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use mobile_robot_core::{Point, RobotDevice, RobotError, UiElement};
+    use robot_core::{Point, RobotDevice, RobotError, UiElement};
 
     struct ScreenshotRobot;
 

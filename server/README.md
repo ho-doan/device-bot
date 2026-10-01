@@ -45,8 +45,8 @@ per stdout line. Diagnostic output is reserved for stderr.
 
 ## YAML flows
 
-`mobile-robot-flow` runs QC- or AI-authored YAML one step at a time. Flow
-orchestration stays outside `mobile-robot-core`: `select_device`, waits,
+`robot-flow` runs QC- or AI-authored YAML one step at a time. Flow
+orchestration stays outside `robot-core`: `select_device`, waits,
 element queries/assertions, recording, screenshots, and other scenario steps
 belong to `robot-flow`; platform crates only implement the `Robot` boundary.
 
@@ -54,7 +54,7 @@ Validate and execute the two macOS browser smoke flows without touching a
 device:
 
 ```bash
-cargo run -p mobile-robot-flow -- --dry-run \
+cargo run -p robot-flow -- --dry-run \
   examples/chrome_chatgpt.yaml \
   examples/safari_chatgpt.yaml
 ```
@@ -63,8 +63,8 @@ On a macOS host with Accessibility permission, the same command without
 `--dry-run` executes the steps through `robot-macos`:
 
 ```bash
-cargo run -p mobile-robot-flow -- examples/chrome_chatgpt.yaml
-cargo run -p mobile-robot-flow -- examples/safari_chatgpt.yaml
+cargo run -p robot-flow -- examples/chrome_chatgpt.yaml
+cargo run -p robot-flow -- examples/safari_chatgpt.yaml
 ```
 
 The YAML schema currently supports device selection, app/URL navigation,

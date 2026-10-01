@@ -8,6 +8,12 @@ import 'dashboard.dart';
 import 'local_server_controller.dart';
 import 'models.dart';
 
+const _defaultBaseUrl = String.fromEnvironment(
+  'DEVICE_BOT_URL',
+  defaultValue: 'http://127.0.0.1:3337',
+);
+const _defaultAuthToken = String.fromEnvironment('DEVICE_BOT_AUTH');
+
 class CompanionHome extends StatefulWidget {
   const CompanionHome({super.key});
 
@@ -16,13 +22,9 @@ class CompanionHome extends StatefulWidget {
 }
 
 class _CompanionHomeState extends State<CompanionHome> {
-  final _baseUrlController = TextEditingController(
-    text: 'http://127.0.0.1:3337',
-  );
-  final _tokenController = TextEditingController();
-  final _serverExecutableController = TextEditingController(
-    text: 'device-bot',
-  );
+  final _baseUrlController = TextEditingController(text: _defaultBaseUrl);
+  final _tokenController = TextEditingController(text: _defaultAuthToken);
+  final _serverExecutableController = TextEditingController(text: 'device-bot');
   final _serverController = LocalServerController();
   late Future<DashboardSnapshot> _snapshot;
   late LocalServerStatus _serverStatus;

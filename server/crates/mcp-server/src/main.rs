@@ -1,4 +1,9 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    sync::Arc,
+};
 
 use device_bot::Server;
 use robot_android::AndroidRobot;
@@ -26,6 +31,123 @@ fn android_adb_path() -> String {
         }
     }
     executable.into()
+}
+
+fn resolve_bearer_token() -> String {
+    if let Some(token) = std::env::var("DEVICE_BOT_AUTH")
+        .ok()
+        .map(|token| token.trim().to_owned())
+        .filter(|token| !token.is_empty())
+    {
+        return token;
+    }
+
+    let token = uuid::Uuid::new_v4().simple().to_string();
+    eprintln!("DEVICE_BOT_AUTH={token}");
+    token
+}
+
+fn flutter_app_directory() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("DEVICE_BOT_FLUTTER_APP") {
+        candidates.push(PathBuf::from(path));
+    }
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../flutter_app"));
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("flutter_app"));
+        candidates.push(current_dir.join("server/flutter_app"));
+    }
+
+    candidates
+        .into_iter()
+        .find(|path| path.join("pubspec.yaml").is_file())
+}
+
+fn flutter_device() -> Option<String> {
+    if let Some(device) = std::env::var("DEVICE_BOT_FLUTTER_DEVICE")
+        .ok()
+        .map(|device| device.trim().to_owned())
+        .filter(|device| !device.is_empty())
+    {
+        return Some(device);
+    }
+
+    if cfg!(target_os = "macos") {
+        return Some("macos".into());
+    }
+    if cfg!(target_os = "windows") {
+        return Some("windows".into());
+    }
+    if cfg!(target_os = "linux") {
+        return Some("linux".into());
+    }
+    None
+}
+
+fn companion_url(address: SocketAddr) -> String {
+    let host = match address.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => "127.0.0.1".to_owned(),
+        IpAddr::V6(ip) if ip.is_unspecified() => "[::1]".to_owned(),
+        IpAddr::V4(ip) => ip.to_string(),
+        IpAddr::V6(ip) => format!("[{ip}]"),
+    };
+    format!("http://{host}:{}", address.port())
+}
+
+fn launch_flutter_companion(address: SocketAddr, bearer_token: &str) -> Option<Child> {
+    if std::env::var("DEVICE_BOT_FLUTTER_AUTOSTART")
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no"
+            )
+        })
+    {
+        eprintln!("Flutter companion auto-start disabled by DEVICE_BOT_FLUTTER_AUTOSTART.");
+        return None;
+    }
+
+    let Some(app_directory) = flutter_app_directory() else {
+        eprintln!("Flutter companion source was not found; continuing without auto-start.");
+        return None;
+    };
+    let Some(device) = flutter_device() else {
+        eprintln!(
+            "Flutter companion has no supported default device; continuing without auto-start."
+        );
+        return None;
+    };
+    let flutter_command =
+        std::env::var_os("DEVICE_BOT_FLUTTER_COMMAND").unwrap_or_else(|| "flutter".into());
+    let server_url = companion_url(address);
+    let mut command = Command::new(flutter_command);
+    command
+        .current_dir(&app_directory)
+        .args(["run", "--device-id", &device])
+        .arg("--dart-define")
+        .arg(format!("DEVICE_BOT_URL={server_url}"))
+        .arg("--dart-define")
+        .arg(format!("DEVICE_BOT_AUTH={bearer_token}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    match command.spawn() {
+        Ok(child) => {
+            eprintln!(
+                "Started Flutter companion from {} for {server_url}.",
+                app_directory.display()
+            );
+            Some(child)
+        }
+        Err(error) => {
+            eprintln!(
+                "Could not start Flutter companion with `flutter run`: {error}; continuing without it."
+            );
+            None
+        }
+    }
 }
 
 fn real_ios_agent_hosts(bind_address: SocketAddr) -> std::io::Result<Option<String>> {
@@ -361,10 +483,21 @@ async fn main() -> std::io::Result<()> {
                     format!("invalid listen address: {error}"),
                 )
             })?;
-            let bearer_token = std::env::var("DEVICE_BOT_AUTH")
-                .ok()
-                .filter(|token| !token.is_empty());
-            device_bot::http::serve(address, robot, bearer_token).await
+            let listener = tokio::net::TcpListener::bind(address).await?;
+            let listen_address = listener.local_addr()?;
+            let bearer_token = resolve_bearer_token();
+            eprintln!("Device Bot listening on http://{listen_address}");
+            let mut flutter_companion = launch_flutter_companion(listen_address, &bearer_token);
+            let result = axum::serve(
+                listener,
+                device_bot::http::router(robot, Some(bearer_token)),
+            )
+            .await;
+            if let Some(mut child) = flutter_companion.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            result
         }
         Some(argument) => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,

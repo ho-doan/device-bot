@@ -13,9 +13,9 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use mobile_admin_api::{ActivityLog, AdminState};
-use mobile_mcp_protocol::{JsonRpcRequest, RpcError};
-use mobile_robot_core::Robot;
+use device_admin_api::{ActivityLog, AdminState};
+use device_mcp_protocol::{JsonRpcRequest, RpcError};
+use robot_core::Robot;
 use serde_json::Value;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -47,7 +47,7 @@ pub fn router(robot: Arc<dyn Robot>, bearer_token: Option<String>) -> Router {
     Router::new()
         .route("/mcp", post(handle_post).delete(handle_delete))
         .with_state(state)
-        .merge(mobile_admin_api::router(AdminState::new(
+        .merge(device_admin_api::router(AdminState::new(
             robot,
             activity_log,
             bearer_token,
@@ -225,7 +225,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use mobile_robot_core::{Point, Robot, RobotDevice, RobotError, UiElement};
+    use robot_core::{Point, Robot, RobotDevice, RobotError, UiElement};
     use tower::ServiceExt;
 
     use super::*;

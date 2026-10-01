@@ -1,4 +1,4 @@
-use mobile_mcp_protocol::{JsonRpcError, JsonRpcRequest, JsonRpcSuccess, RpcError};
+use device_mcp_protocol::{JsonRpcError, JsonRpcRequest, JsonRpcSuccess, RpcError};
 use serde::Serialize;
 use serde_json::Value;
 

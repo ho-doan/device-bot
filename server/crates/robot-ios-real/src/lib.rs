@@ -163,10 +163,8 @@ fn parse_xcode_project_team(contents: &str) -> Option<String> {
 use std::{collections::HashMap, process::Stdio};
 
 use async_trait::async_trait;
-use mobile_robot_core::{
-    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
-};
 use quick_xml::{Reader, events::Event};
+use robot_core::{Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
 use serde_json::Value;
 use tokio::process::Command;
 use url::Url;

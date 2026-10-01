@@ -14,8 +14,8 @@ mod ui;
 
 use std::sync::Arc;
 
-use mobile_mcp_protocol::{CallToolParams, ToolDefinition, ToolResult};
-use mobile_robot_core::Robot;
+use device_mcp_protocol::{CallToolParams, ToolDefinition, ToolResult};
+use robot_core::Robot;
 
 pub(crate) struct ToolRegistry {
     robot: Arc<dyn Robot>,
@@ -46,7 +46,7 @@ impl ToolRegistry {
     pub(crate) async fn call(
         &self,
         params: CallToolParams,
-    ) -> Result<ToolResult, mobile_mcp_protocol::RpcError> {
+    ) -> Result<ToolResult, device_mcp_protocol::RpcError> {
         let result = match params.name.as_str() {
             device::NAME => device::call(&self.robot).await,
             device::BOOT_NAME => device::boot(&self.robot, &params.arguments).await,
@@ -65,7 +65,7 @@ impl ToolRegistry {
             batch::NAME => batch::execute(&self.robot, &params.arguments).await,
             runner_status::NAME => runner_status::get(&self.robot, &params.arguments).await,
             name => {
-                return Err(mobile_mcp_protocol::RpcError::invalid_params(format!(
+                return Err(device_mcp_protocol::RpcError::invalid_params(format!(
                     "Unknown tool: {name}"
                 )));
             }

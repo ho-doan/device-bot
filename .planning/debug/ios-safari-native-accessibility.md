@@ -51,13 +51,13 @@ updated: 2026-09-28
 - timestamp: 2026-09-28; this direct runner error occurs before `testDispatch` can activate Safari or evaluate its `NSPredicate`, so the prior Safari-attachment hypothesis is eliminated.
 - timestamp: 2026-09-28; `xcodebuild build-for-testing` completed successfully against the exact shared DerivedData path in 16.8 seconds, producing the simulator host and UI-test runner products required by `test-without-building`.
 - timestamp: 2026-09-28; after that build, the unchanged `Address and search bar` request succeeded in 29.94 seconds, wrote `{\"ok\":true,\"elements\":[]}`, and Xcode measured only 0.45 seconds for its native predicate. The original timeout did not recur.
-- timestamp: 2026-09-28; `cargo fmt --all --check` passed and `cargo test -p mobile-robot-ios-sim` passed all six tests, including `xctest_runner_cache_requires_both_app_products`.
+- timestamp: 2026-09-28; `cargo fmt --all --check` passed and `cargo test -p robot-ios-sim` passed all six tests, including `xctest_runner_cache_requires_both_app_products`.
 - timestamp: 2026-09-28; with a fresh temporary `TMPDIR`, the patched public MCP flow initialized, launched `com.apple.mobilesafari`, and the original `filter: \"New Tab\", maxResults: 10` lookup returned one enabled, clickable native accessibility element. No 45-second timeout occurred.
 - timestamp: 2026-09-28; `cargo test -p device-bot` passed all eight unit/integration tests. `git diff --check` passed; the focused driver diff only adds cache validation/build behavior and replaces the prior false-ready status message.
 - timestamp: 2026-09-28; with only the `ensure_xctest_runner` call temporarily removed and a fresh temporary cache, MCP initialized and launched Safari but produced no response for the original filtered lookup before the driver's action deadline. This matches the original missing-runner timeout behavior.
 - timestamp: 2026-09-28; after restoring the same two-line guard, a fresh public MCP session again returned the original filtered `New Tab` native element successfully.
 - timestamp: 2026-09-28; SBFL skipped: no failing automated test plus per-test coverage spectrum exists for this host-simulator cache failure; diagnosis instead uses a controlled before/after host reproduction.
-- timestamp: 2026-09-28; final `cargo fmt --all --check`, `cargo test -p mobile-robot-ios-sim` (6 tests), and `cargo clippy -p mobile-robot-ios-sim -- -D warnings` passed. Root-level `git diff --check` passed.
+- timestamp: 2026-09-28; final `cargo fmt --all --check`, `cargo test -p robot-ios-sim` (6 tests), and `cargo clippy -p robot-ios-sim -- -D warnings` passed. Root-level `git diff --check` passed.
 
 ## Eliminated
 
@@ -71,7 +71,7 @@ updated: 2026-09-28
 - fix: `run_xctest` now verifies both XCTest app products while holding the shared-cache lock and invokes bounded `build-for-testing` when either is absent; `ui_runner_status` uses the same completeness rule. A regression test covers marker-only, partial, and complete cache states.
 - oracle_type: specified — an XCTest cache is ready only when the runner products required by `test-without-building` are present.
 - verification:
-  target_test: { result: pass, suite: "cargo test -p mobile-robot-ios-sim", test: "xctest_runner_cache_requires_both_app_products" }
+  target_test: { result: pass, suite: "cargo test -p robot-ios-sim", test: "xctest_runner_cache_requires_both_app_products" }
   mutation_check: { result: skipped, reason_if_skipped: "No Stryker configuration exists for this Rust workspace." }
   no_op_deletion: { result: pass, deletion_justified_by_rca: true, evidence: "Focused diff adds availability checks/build behavior; replaced status logic removes only the documented false-ready predicate." }
   adjacent_tests: { result: pass, suites_run: ["cargo test -p device-bot"] }

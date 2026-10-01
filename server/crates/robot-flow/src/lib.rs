@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use mobile_robot_core::{DeviceState, Platform, Point, Robot, RobotDevice, UiElement};
+use robot_core::{DeviceState, Platform, Point, Robot, RobotDevice, UiElement};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -627,7 +627,7 @@ fn step_error(index: usize, id: &str, error: impl ToString) -> FlowError {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use mobile_robot_core::RobotError;
+    use robot_core::RobotError;
 
     #[derive(Default)]
     struct FakeRobot;

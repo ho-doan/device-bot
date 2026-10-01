@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use mobile_mcp_protocol::{
+use device_mcp_protocol::{
     CallToolParams, Implementation, InitializeParams, InitializeResult, JsonRpcRequest,
     ListToolsResult, PROTOCOL_VERSION, RpcError, ServerCapabilities, ToolsCapability,
 };
-use mobile_robot_core::Robot;
+use robot_core::Robot;
 use serde_json::{Value, json};
 
 use crate::{lifecycle::Lifecycle, response, tools::ToolRegistry};

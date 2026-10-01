@@ -20,7 +20,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use mobile_robot_core::{DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
+use robot_core::{DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
 use serde_json::{Value, json};
 use tokio::{
     process::{Child, Command},
@@ -518,7 +518,7 @@ fn native_collect_elements(
                     resource_id: None,
                     text,
                     content_description: description,
-                    bounds: mobile_robot_core::Bounds {
+                    bounds: robot_core::Bounds {
                         left: position.x.round() as i32,
                         top: position.y.round() as i32,
                         right: (position.x + size.width).round() as i32,
@@ -923,7 +923,7 @@ fn parse_accessibility_elements(output: &str) -> Vec<UiElement> {
                 resource_id: None,
                 text: title.or(value),
                 content_description: description,
-                bounds: mobile_robot_core::Bounds {
+                bounds: robot_core::Bounds {
                     left: x.round() as i32,
                     top: y.round() as i32,
                     right: (x + width).round() as i32,

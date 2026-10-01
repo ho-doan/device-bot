@@ -5,7 +5,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use mobile_robot_core::RobotError;
+use robot_core::RobotError;
 use tokio::{process::Command, time::sleep};
 
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(0);

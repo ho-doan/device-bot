@@ -1,9 +1,9 @@
 use std::{env, io, sync::Arc};
 
-use mobile_robot_chrome::ChromeRobot;
-use mobile_robot_core::RobotRegistry;
-use mobile_robot_flow::{FlowDocument, FlowRunner};
-use mobile_robot_macos::MacosRobot;
+use robot_chrome::ChromeRobot;
+use robot_core::RobotRegistry;
+use robot_flow::{FlowDocument, FlowRunner};
+use robot_macos::MacosRobot;
 
 fn usage() -> ! {
     eprintln!("Usage: robot-flow [--dry-run] <flow.yaml> [<flow.yaml> ...]");
@@ -31,7 +31,7 @@ async fn main() -> io::Result<()> {
         FlowRunner::dry_run()
     } else {
         let robot = RobotRegistry::new([
-            Arc::new(ChromeRobot::from_env()) as Arc<dyn mobile_robot_core::Robot>,
+            Arc::new(ChromeRobot::from_env()) as Arc<dyn robot_core::Robot>,
             Arc::new(MacosRobot::from_env()),
         ]);
         FlowRunner::with_robot(Arc::new(robot))

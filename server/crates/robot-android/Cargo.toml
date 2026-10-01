@@ -1,5 +1,5 @@
 [package]
-name = "mobile-robot-android"
+name = "robot-android"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-mobile-robot-core = { path = "../robot-core" }
+robot-core = { path = "../robot-core" }
 quick-xml = "0.39.1"
 serde_json.workspace = true
 tokio.workspace = true

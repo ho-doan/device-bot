@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
-use mobile_mcp_protocol::{ToolDefinition, ToolResult};
-use mobile_robot_core::Robot;
+use device_mcp_protocol::{ToolDefinition, ToolResult};
+use robot_core::Robot;
 use serde_json::{Value, json};
 
 use super::arguments::{optional_u64, required_string};

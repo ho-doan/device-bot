@@ -1,5 +1,5 @@
 name: mobile_mcp_companion
-description: Local desktop companion for the Device Bot admin API.
+description: Local desktop MCP companion for Device Bot.
 publish_to: none
 version: 0.1.0+1
 

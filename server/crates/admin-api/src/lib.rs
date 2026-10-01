@@ -14,7 +14,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{
         IntoResponse, Response,
@@ -23,7 +23,7 @@ use axum::{
     routing::get,
 };
 use robot_core::Robot;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, broadcast};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
@@ -104,6 +104,7 @@ pub fn router(state: AdminState) -> Router {
     Router::new()
         .route("/admin/devices", get(list_devices))
         .route("/admin/devices/{device_id}/screenshot", get(screenshot))
+        .route("/admin/devices/{device_id}/elements", get(elements))
         .route("/admin/config", get(config))
         .route("/admin/logs", get(logs))
         .route("/admin/logs/stream", get(stream_logs))
@@ -140,6 +141,42 @@ async fn screenshot(
         .await;
     match state.robot.take_screenshot(&device_id).await {
         Ok(png) => ([(header::CONTENT_TYPE, "image/png")], png).into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ElementsQuery {
+    filter: Option<String>,
+    max_results: Option<usize>,
+}
+
+async fn elements(
+    Path(device_id): Path<String>,
+    Query(query): Query<ElementsQuery>,
+    State(state): State<AdminState>,
+    headers: HeaderMap,
+) -> Response {
+    if !is_authorized(&headers, state.bearer_token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    state
+        .activity_log
+        .record("admin.elements", device_id.clone())
+        .await;
+    match state
+        .robot
+        .list_elements_filtered(&device_id, query.filter.as_deref(), query.max_results)
+        .await
+    {
+        Ok(elements) => Json(ElementsResponse { elements }).into_response(),
         Err(error) => (
             StatusCode::BAD_GATEWAY,
             Json(ErrorResponse {
@@ -208,6 +245,11 @@ struct DevicesResponse {
 }
 
 #[derive(Serialize)]
+struct ElementsResponse {
+    elements: Vec<robot_core::UiElement>,
+}
+
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ConfigResponse {
     auth_enabled: bool,
@@ -228,7 +270,7 @@ struct ErrorResponse {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use robot_core::{Point, RobotDevice, RobotError, UiElement};
+    use robot_core::{Bounds, Point, RobotDevice, RobotError, UiElement};
 
     struct ScreenshotRobot;
 
@@ -285,8 +327,24 @@ mod tests {
             Err(RobotError::Unsupported("not used in this test".to_owned()))
         }
 
-        async fn list_elements(&self, _device_id: &str) -> Result<Vec<UiElement>, RobotError> {
-            Err(RobotError::Unsupported("not used in this test".to_owned()))
+        async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+            if device_id != "test-device" {
+                return Err(RobotError::DeviceNotFound(device_id.to_owned()));
+            }
+            Ok(vec![UiElement {
+                class_name: "Button".to_owned(),
+                resource_id: Some("save-button".to_owned()),
+                text: Some("Save".to_owned()),
+                content_description: None,
+                bounds: Bounds {
+                    left: 10,
+                    top: 20,
+                    right: 110,
+                    bottom: 60,
+                },
+                clickable: true,
+                enabled: true,
+            }])
         }
     }
 
@@ -316,5 +374,29 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
+    }
+
+    #[tokio::test]
+    async fn elements_endpoint_returns_accessibility_nodes_from_the_robot_boundary() {
+        let state = AdminState::new(
+            Arc::new(ScreenshotRobot),
+            ActivityLog::new(2),
+            Some("test-token".to_owned()),
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer test-token".parse().unwrap());
+
+        let response = elements(
+            Path("test-device".to_owned()),
+            Query(ElementsQuery {
+                filter: None,
+                max_results: None,
+            }),
+            State(state),
+            headers,
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

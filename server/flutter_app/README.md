@@ -1,8 +1,17 @@
 # Device Bot Companion
 
-The optional Flutter desktop companion reads the local Device Bot server's `/admin/*`
-API. It displays devices, public server configuration, live MCP activity, and
-on-demand device screenshots. It never sends device-control requests itself.
+The optional Flutter desktop companion connects to the local Device Bot server's
+MCP endpoint at `/mcp`, using the same initialize/session/tools contract as any
+other MCP client. It displays devices, local MCP activity, and on-demand device
+screenshots. The screenshot inspector also finds all accessibility
+elements, overlays their bounds and names, and provides a small `robot-flow` YAML
+editor for drafting a scenario around the selected element. It never sends
+device-control requests through a separate admin protocol.
+
+For iOS Simulator, the target app must first be launched through Device Bot
+(for example with `mobile_launch_app`) before the inspector can query XCTest
+accessibility elements. The inspector keeps the screenshot visible and shows
+this recovery hint when no active app is known.
 
 Normally, starting the Rust server in this repository automatically launches
 this Flutter project after the HTTP listener is ready. To run the companion
@@ -23,7 +32,5 @@ flutter run -d macos \
   --dart-define=DEVICE_BOT_AUTH=replace-with-the-printed-token
 ```
 
-The companion can alternatively launch the local `device-bot` binary:
-enter its executable path, the desired local URL, and token, then select
-**Start server**. It only stops a process that it launched itself; attaching to
-an existing server remains read-only and safe.
+The companion is intentionally an MCP client only. It does not start or stop
+the Rust server and never controls devices outside the `/mcp` session.

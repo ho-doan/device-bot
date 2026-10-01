@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobile_mcp_companion/local_server_controller.dart';
+import 'package:mobile_mcp_companion/companion_home.dart';
 import 'package:mobile_mcp_companion/models.dart';
 
 void main() {
@@ -26,25 +26,43 @@ void main() {
     expect(event.sequence, 4);
   });
 
-  test('derives a safe Rust listen address from the configured admin URL', () {
-    const options = ServerLaunchOptions(
-      executable: 'device-bot',
-      adminApiUrl: 'http://127.0.0.1:3337',
-      bearerToken: 'local-secret',
-    );
+  test('parses normalized element bounds and exposes a stable selector', () {
+    final element = AdminElement.fromJson({
+      'className': 'Button',
+      'resourceId': 'save-button',
+      'text': 'Save',
+      'contentDescription': null,
+      'bounds': {'left': 10, 'top': 20, 'right': 110, 'bottom': 60},
+      'clickable': true,
+      'enabled': true,
+    });
 
-    expect(options.arguments, ['--listen', '127.0.0.1:3337']);
-    expect(options.environment, {'DEVICE_BOT_AUTH': 'local-secret'});
+    expect(element.name, 'Save');
+    expect(element.selector, 'Save');
+    expect(element.bounds.width, 100);
+    expect(element.bounds.height, 40);
+    expect(element.clickable, isTrue);
   });
 
-  test('supports IPv6 local server addresses without an auth token', () {
-    const options = ServerLaunchOptions(
-      executable: 'device-bot',
-      adminApiUrl: 'http://[::1]:3337',
-      bearerToken: '',
+  test('normalizes installed app names and identifiers across platforms', () {
+    final app = InstalledApp.fromJson({
+      'name': 'Example App',
+      'packageName': 'com.example.app',
+      'version': '1.2.3',
+    });
+
+    expect(app.name, 'Example App');
+    expect(app.identifier, 'com.example.app');
+    expect(app.version, '1.2.3');
+  });
+
+  test('explains how to recover when the simulator has no active app', () {
+    final message = elementInspectionErrorMessage(
+      'HttpException: no active app is known for simulator TEST; '
+      'launch an app before using UI tools',
     );
 
-    expect(options.listenAddress, '[::1]:3337');
-    expect(options.environment, isNull);
+    expect(message, contains('Launch the target app through Device Bot'));
+    expect(message, contains('reopen the inspector'));
   });
 }

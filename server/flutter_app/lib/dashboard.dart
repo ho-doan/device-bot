@@ -75,20 +75,16 @@ class _DevicesPanel extends StatelessWidget {
                   ),
                   title: Text(device.name),
                   subtitle: SelectableText(device.id),
-                  trailing: SizedBox(
-                    width: 128,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        _StatusChip(status: device.state),
-                        TextButton.icon(
-                          onPressed: () => onViewScreenshot(device),
-                          icon: const Icon(Icons.screenshot_monitor),
-                          label: const Text('Screenshot'),
-                        ),
-                      ],
-                    ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _StatusChip(status: device.state),
+                      IconButton(
+                        tooltip: 'Screenshot',
+                        onPressed: () => onViewScreenshot(device),
+                        icon: const Icon(Icons.screenshot_monitor),
+                      ),
+                    ],
                   ),
                 ),
               ),

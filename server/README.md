@@ -2,7 +2,7 @@
 
 The Rust server is intentionally independent of the Flutter plugin at the
 repository root. It implements the MCP transport and device abstractions; the
-Flutter companion can be added later through a local admin API without being
+optional Flutter companion connects through a local admin API without being
 part of the MCP request path.
 
 ## Current milestone
@@ -12,7 +12,7 @@ Phases 0–3 and the Phase 5 Flutter companion MVP are implemented:
 - a Cargo workspace with protocol, server, core robot, Android/iOS drivers, native macOS/Windows drivers, and a Chrome DevTools driver;
 - newline-delimited JSON-RPC 2.0 over stdio;
 - Streamable HTTP on an explicit `--listen HOST:PORT` endpoint, with JSON or
-  single-message SSE responses and optional bearer authentication;
+  single-message SSE responses and an auto-generated bearer token by default;
 - MCP `initialize` / `notifications/initialized` lifecycle enforcement;
 - an ADB driver with a mockable command runner and deterministic `adb devices -l` parser;
 - Android device/app/input/screen/accessibility tools, plus iOS Simulator boot,
@@ -129,12 +129,17 @@ Run an HTTP listener explicitly; prefer a loopback address unless a reverse
 proxy supplies the network boundary:
 
 ```bash
-DEVICE_BOT_AUTH=replace-with-a-secret \
-  cargo run -p device-bot -- --listen 127.0.0.1:3337
+cargo run -p device-bot -- --listen 127.0.0.1:3337
 ```
 
+The server prints an auto-generated `DEVICE_BOT_AUTH` token to stderr and
+passes it to the Flutter companion automatically. Set `DEVICE_BOT_AUTH` to
+reuse a known token. After the HTTP socket is ready, a local `flutter_app/`
+source tree is started with `flutter run` in the background when Flutter is
+available. Set `DEVICE_BOT_FLUTTER_AUTOSTART=0` for headless or CI runs.
+
 `POST /mcp` implements the `2025-11-25` session lifecycle. Send the token as
-`Authorization: Bearer <token>` when `DEVICE_BOT_AUTH` is non-empty. An
+`Authorization: Bearer <token>`. An
 `initialize` response returns `Mcp-Session-Id`; repeat it for subsequent calls,
 send `notifications/initialized`, then call tools. Responses are JSON by
 default, or one SSE `message` event when the client sends

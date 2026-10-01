@@ -33,65 +33,30 @@ are selected dynamically by bundle/package/executable identifier.
                          │
                     PlatformDriver
                          │
-       ┌────────┬────────┼────────┬────────┬────────┐
-       │        │        │        │        │        │
-    Android   iOS      macOS    Windows  Linux     Web
-       │        │        │        │        │        │
-Accessibility XCTest    AX       UIA    AT-SPI   BiDi
-                   runner
+       ┌──────────────────┬──────────────────┐
+       │                  │                  │
+   Root Flutter draft  Root Flutter draft  Rust server
+      Windows UIA          Web/CDP       Android/iOS/macOS
+                                             /Windows
 ```
 
-```mermaid
-flowchart TD
-    codex["Codex / External Tool"] -->|JSON-RPC 2.0| kit["lib/src/web/automation_kit<br/>Local JSON-RPC server"]
-    kit --> service["AutomationService<br/>Dart"]
-    service --> selectors["Selectors + wait/retry<br/>By.id / By.value / By.all"]
-    selectors --> driver["AndroidDriver<br/>Dart"]
-    driver -->|Pigeon generated API| host["DeviceKitHostApiImpl<br/>Kotlin"]
-    host --> accessibility["AccessibilityService<br/>Android OS APIs"]
-    accessibility --> app["Dynamic target app<br/>any package"]
-    app --> tree["AccessibilityNodeInfo tree"]
-    tree -->|normalized UiSnapshot| service
+The root Flutter draft now retains only its Windows UIA and Web/CDP surfaces.
+Pigeon generates the Dart and C++ bindings used by that retained Windows
+adapter. Android, iOS, macOS, and their native automation services are owned
+by the Rust server under `server/crates/`.
 
-    service -->|ui.tap / element.tap| action["Semantic ACTION_CLICK"]
-    action -->|unsupported or failed| fallback["Coordinate GestureDescription<br/>bounds.center"]
-    fallback --> accessibility
+Selectors and retry/wait logic remain in Dart; production mobile and desktop
+drivers are implemented by the server's platform crates.
 
-    service -->|screen.screenshot| version{"Android version"}
-    version -->|Android 11+| accessibilityShot["AccessibilityService screenshot"]
-    version -->|Android <=10| mediaProjection["MediaProjection consent + capture"]
-    accessibilityShot --> png["PNG bytes"]
-    mediaProjection --> png
-    png --> codex
+## Native server implementations
 
-    codex -->|session.start / app.launch| kit
-    codex -->|ui.dump / ui.find / ui.tap / ui.setValue| kit
-    codex -->|screen.screenshot / session.stop| kit
-```
+The production server owns the native backends independently of the draft
+Flutter package:
 
-The Android plugin uses Pigeon from `pigeons/messages.dart`. Generated Dart,
-Kotlin, Swift, and C++ bindings are kept in their platform output folders.
-Selectors and retry/wait logic remain in Dart; Android only exposes
-AccessibilityService and OS capabilities.
-
-The root plugin adapts the Pigeon-backed Android/iOS/macOS `DeviceDriver`
-through `DeviceKitAutomationBackend`. The three Automation Kit layers now live
-under `lib/src/web/`, so the shared `AutomationService` can drive native
-devices and the CDP browser with the same selector contract.
-
-## Shared iOS/macOS implementation
-
-The iOS and macOS plugin sources share `darwin/device_kit_lib/` through
-`sharedDarwinSource: true`. Pigeon generates one Swift contract at
-`darwin/device_kit_lib/Sources/device_kit_lib/Messages.g.swift`; conditional
-Swift files select UIKit/XCTest behavior on iOS and the macOS Accessibility
-API (`AXUIElement`) on macOS. macOS automation requires the host application
-to be trusted under **System Settings > Privacy & Security > Accessibility**.
-
-Before calling cross-application AX actions, add the host application that
-embeds this plugin to the macOS Accessibility allowlist.
-The host process must also be allowed to use macOS Accessibility APIs; the
-example controller therefore disables App Sandbox in its macOS entitlements.
+- Android: `server/crates/robot-android/`
+- iOS: `server/crates/robot-ios-real/` and `server/crates/robot-ios-sim/`
+- macOS: `server/crates/robot-macos/`
+- Windows: `server/crates/robot-windows/`
 
 ## Windows UI Automation implementation
 
@@ -158,18 +123,12 @@ use the same tool with an installed browser bundle id such as
 `com.google.chrome.ios`; it is routed through the signed XCTest agent in
 `server/crates/robot-ios-real` and requires that agent to be running.
 
-All native drivers also expose `openUrl(url, appId: ...)`; the shared
-`DeviceKitAutomationBackend` selects it automatically when `launch` receives
-an HTTP(S) target. Use `com.android.chrome` on Android,
-`com.google.chrome.ios` on iOS, `com.google.Chrome` on macOS, and `chrome.exe`
-(or the full executable path) on Windows. iOS selects Chrome with its public
-`googlechrome(s)` URL scheme; omitting `appId` opens the system default browser.
-The macOS AX and Windows UIA drivers then dump, select, set the address value,
-and press browser controls through the same `AutomationService` contract.
-Grant Accessibility to the macOS controller; on Windows keep Chrome and the
-controller at the same elevation. If Chrome's Windows UIA tree is absent or
-partial, enable the screenshot vision fallback above; detected regions remain
-coordinate-only and still click through `SendInput`.
+Production server drivers expose `openUrl(url, appId: ...)` for native targets;
+the root Flutter draft retains the Windows UIA and Web/CDP paths only. On
+Windows keep Chrome and the controller at the same elevation. If Chrome's
+Windows UIA tree is absent or partial, enable the screenshot vision fallback
+above; detected regions remain coordinate-only and still click through
+`SendInput`.
 
 ## iOS XCTest integration
 
@@ -185,19 +144,11 @@ target. `RunnerTests/MobileMcpRealRunnerUITests.swift` imports that product
 and uses the driver's raw snapshot and primitive-action API. XCTest is not
 linked into the production MCP binary.
 
-## Android permissions
+## Android server permissions
 
-The controller must have its `DeviceKitAccessibilityService` enabled by the
-device owner or test environment. This is a special Settings permission, not a
-normal runtime permission, so Patrol's `grantPermissionWhenInUse()` cannot grant
-it. Patrol can be used in a test harness to tap through the device's Settings
-UI, but that flow is Android/OEM/localization-specific and is intentionally not
-a runtime dependency of this plugin.
-
-On Android 11 and newer, screenshots use AccessibilityService directly. On
-older Android versions, screenshots require the user to approve the
-MediaProjection consent dialog through the controller's **Request screenshot
-permission** button before calling **Take screenshot**.
+Android accessibility and screenshot permissions are managed by the production
+server's `robot-android` driver. The root Flutter draft no longer ships an
+Android plugin or Patrol-based permission harness.
 
 ## Run the tests
 
@@ -224,9 +175,8 @@ default. Start it with `dart run bin/device_kit_lib.dart --http --port 8787`
 for a loopback HTTP server.
 
 To drive a connected phone from the host — the same split Mobile MCP uses —
-pass a device id or name. iOS uses the plugin's XCTest runner
-(`DeviceKitXCTestDriver`) as an on-device agent; Android uses `adb` and
-`uiautomator dump`. This path does not call `@mobilenext/mobilecli`.
+use the Rust server's iOS XCTest agent or Android `adb`/accessibility driver.
+This path does not call `@mobilenext/mobilecli`.
 
 ```bash
 DEVICE_KIT_IOS_PROJECT=/path/to/ios/Runner.xcodeproj \

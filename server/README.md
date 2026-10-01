@@ -2,8 +2,8 @@
 
 The Rust server is intentionally independent of the Flutter plugin at the
 repository root. It implements the MCP transport and device abstractions; the
-optional Flutter companion connects through a local admin API without being
-part of the MCP request path.
+optional Flutter companion is an MCP client that uses the same `/mcp` request
+path as Codex or any other MCP client.
 
 ## Current milestone
 
@@ -17,8 +17,8 @@ Phases 0–3 and the Phase 5 Flutter companion MVP are implemented:
 - an ADB driver with a mockable command runner and deterministic `adb devices -l` parser;
 - Android device/app/input/screen/accessibility tools, plus iOS Simulator boot,
   screenshot, MP4 screen-recording, and bundled-XCTest input/accessibility support.
-- a separate local admin API and Flutter companion source tree for inspecting
-  connected devices, auth/configuration state, and recent MCP activity.
+- a separate local admin API for diagnostics, plus an optional Flutter MCP
+  companion source tree for manual device control and YAML flow authoring.
 
 The server also registers the real-iOS XCTest, macOS, Windows, and Chrome
 drivers. Registration does **not** mean that every driver has feature parity;
@@ -146,7 +146,7 @@ default, or one SSE `message` event when the client sends
 `Accept: text/event-stream`. `DELETE /mcp` with the same session header closes
 the in-memory session.
 
-## Local admin API and Flutter companion
+## Optional local admin API
 
 The same explicit HTTP listener also exposes local operator endpoints:
 
@@ -154,15 +154,18 @@ The same explicit HTTP listener also exposes local operator endpoints:
 | --- | --- |
 | `GET /admin/devices` | Current devices from the robot registry |
 | `GET /admin/devices/{device_id}/screenshot` | Current device PNG for the companion viewer |
+| `GET /admin/devices/{device_id}/elements` | Normalized accessibility tree used to draw labeled bounds over the screenshot; supports optional `filter` and `maxResults` query parameters |
 | `GET /admin/config` | Safe-to-display auth and log-buffer status |
 | `GET /admin/logs` | Bounded, recent MCP request activity |
 | `GET /admin/logs/stream` | Future activity as server-sent events |
 
 They share the HTTP listener's bearer-token policy. The Flutter companion
-source lives in [`flutter_app/`](flutter_app/); it talks only to these admin
-endpoints, never to a platform driver or directly to ADB. It can also launch
-and stop a local `device-bot` child process for convenience, but never
-stops an existing server it did not create.
+source lives in [`flutter_app/`](flutter_app/), but uses the MCP session above
+for device discovery, boot, app launch, screenshot, accessibility inspection,
+and manual actions. These admin endpoints remain available for diagnostics and
+are not part of the companion's device-control path. The companion is a client
+only; the Rust CLI owns the server lifecycle and launches the companion after
+the MCP listener is ready.
 
 For example:
 

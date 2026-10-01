@@ -6,11 +6,15 @@ class Dashboard extends StatelessWidget {
   const Dashboard({
     required this.snapshot,
     required this.onViewScreenshot,
+    required this.onBootDevice,
+    required this.onLaunchApp,
     super.key,
   });
 
   final DashboardSnapshot snapshot;
   final ValueChanged<AdminDevice> onViewScreenshot;
+  final Future<void> Function(AdminDevice) onBootDevice;
+  final Future<void> Function(AdminDevice) onLaunchApp;
 
   @override
   Widget build(BuildContext context) {
@@ -19,6 +23,8 @@ class Dashboard extends StatelessWidget {
         final devices = _DevicesPanel(
           devices: snapshot.devices,
           onViewScreenshot: onViewScreenshot,
+          onBootDevice: onBootDevice,
+          onLaunchApp: onLaunchApp,
         );
         final activity = _ActivityPanel(
           events: snapshot.events,
@@ -43,10 +49,17 @@ class Dashboard extends StatelessWidget {
 }
 
 class _DevicesPanel extends StatelessWidget {
-  const _DevicesPanel({required this.devices, required this.onViewScreenshot});
+  const _DevicesPanel({
+    required this.devices,
+    required this.onViewScreenshot,
+    required this.onBootDevice,
+    required this.onLaunchApp,
+  });
 
   final List<AdminDevice> devices;
   final ValueChanged<AdminDevice> onViewScreenshot;
+  final Future<void> Function(AdminDevice) onBootDevice;
+  final Future<void> Function(AdminDevice) onLaunchApp;
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +75,7 @@ class _DevicesPanel extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             if (devices.isEmpty)
-              const Text('No active devices were reported by the local server.')
+              const Text('No active devices were reported by the MCP server.')
             else
               ...devices.map(
                 (device) => ListTile(
@@ -79,6 +92,16 @@ class _DevicesPanel extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       _StatusChip(status: device.state),
+                      IconButton(
+                        tooltip: 'Boot device',
+                        onPressed: () => onBootDevice(device),
+                        icon: const Icon(Icons.power_settings_new),
+                      ),
+                      IconButton(
+                        tooltip: 'Launch app',
+                        onPressed: () => onLaunchApp(device),
+                        icon: const Icon(Icons.rocket_launch_outlined),
+                      ),
                       IconButton(
                         tooltip: 'Screenshot',
                         onPressed: () => onViewScreenshot(device),
@@ -109,24 +132,19 @@ class _ActivityPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Server activity',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+            Text('MCP activity', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 4),
             Semantics(
               liveRegion: true,
               label:
-                  '${events.length} activity events. Authentication ${config.authEnabled ? 'enabled' : 'disabled'}.',
+                  '${events.length} MCP events. Authentication ${config.authEnabled ? 'enabled' : 'disabled'}.',
               child: Text(
-                'Auth ${config.authEnabled ? 'enabled' : 'disabled'} · ${events.length}/${config.logCapacity} buffered events',
+                'Auth ${config.authEnabled ? 'enabled' : 'disabled'} · ${events.length}/${config.logCapacity} local MCP events',
               ),
             ),
             const SizedBox(height: 12),
             if (events.isEmpty)
-              const Text(
-                'No MCP activity has been observed since this server started.',
-              )
+              const Text('No MCP calls have been made from this companion yet.')
             else
               ...events.reversed.map(
                 (event) => ListTile(

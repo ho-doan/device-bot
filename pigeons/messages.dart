@@ -4,11 +4,6 @@ import 'package:pigeon/pigeon.dart';
   PigeonOptions(
     dartPackageName: 'device_kit_lib',
     dartOut: 'lib/src/messages.g.dart',
-    swiftOut: 'darwin/device_kit_lib/Sources/device_kit_lib/Messages.g.swift',
-    swiftOptions: SwiftOptions(),
-    kotlinOut:
-        'android/src/main/kotlin/com/hodoan/device_kit_lib/Messages.g.kt',
-    kotlinOptions: KotlinOptions(package: 'com.hodoan.device_kit_lib'),
     cppHeaderOut: 'windows/messages.g.h',
     cppOptions: CppOptions(namespace: 'device_kit_lib'),
     cppSourceOut: 'windows/messages.g.cpp',

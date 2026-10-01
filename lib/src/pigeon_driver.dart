@@ -4,14 +4,9 @@ import 'messages.g.dart' as api;
 import 'device_driver.dart';
 import 'ui_element.dart';
 
-/// iOS implementation backed by the generated Pigeon host API.
-///
-/// Cross-app semantic actions on iOS are provided by the XCTest/XCUITest
-/// driver in the host application's UI-test target. The plugin runtime can
-/// still expose device information, its own UI snapshot, screenshots, and
-/// clipboard capabilities through this same Pigeon contract.
-class IosDriver implements DeviceDriver {
-  IosDriver({api.DeviceKitHostApi? hostApi})
+/// Shared Dart implementation backed by the generated Pigeon host API.
+class PigeonDriver implements DeviceDriver {
+  PigeonDriver({api.DeviceKitHostApi? hostApi})
     : _hostApi = hostApi ?? api.DeviceKitHostApi();
 
   final api.DeviceKitHostApi _hostApi;

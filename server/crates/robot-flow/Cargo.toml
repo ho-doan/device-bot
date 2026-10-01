@@ -1,0 +1,23 @@
+[package]
+name = "mobile-robot-flow"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "robot-flow"
+path = "src/main.rs"
+
+[dependencies]
+mobile-robot-chrome = { path = "../robot-chrome" }
+mobile-robot-core = { path = "../robot-core" }
+mobile-robot-macos = { path = "../robot-macos" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true

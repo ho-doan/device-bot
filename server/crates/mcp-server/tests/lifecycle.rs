@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use device_bot::Server;
 use mobile_mcp_protocol::{JsonRpcRequest, PROTOCOL_VERSION};
-use mobile_mcp_server::Server;
 use mobile_robot_core::{Point, Robot, RobotDevice, RobotError};
 use serde_json::{Value, json};
 

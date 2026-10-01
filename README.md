@@ -187,7 +187,7 @@ authenticated agent bridge on an address reachable by the iPhone:
 ```bash
 export MOBILE_MCP_IOS_AGENT_BIND=0.0.0.0:18787
 export MOBILE_MCP_IOS_AGENT_TOKEN=<long-random-token>
-cargo run -p mobile-mcp-server --manifest-path server/Cargo.toml
+cargo run -p device-bot --manifest-path server/Cargo.toml
 ```
 
 In another terminal, build the server-owned runner once and then start it for

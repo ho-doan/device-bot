@@ -32,7 +32,7 @@ a central "god file" are documented in [architecture.md](docs/architecture.md).
 ## Run
 
 ```bash
-cargo run -p mobile-mcp-server
+cargo run -p device-bot
 ```
 
 The binary executes `adb` and `xcrun` from `PATH`. Set `ANDROID_ADB_PATH` or
@@ -43,9 +43,38 @@ The binary executes `adb` and `xcrun` from `PATH`. Set `ANDROID_ADB_PATH` or
 The process accepts one JSON-RPC message per stdin line and writes one response
 per stdout line. Diagnostic output is reserved for stderr.
 
+## YAML flows
+
+`mobile-robot-flow` runs QC- or AI-authored YAML one step at a time. Flow
+orchestration stays outside `mobile-robot-core`: `select_device`, waits,
+element queries/assertions, recording, screenshots, and other scenario steps
+belong to `robot-flow`; platform crates only implement the `Robot` boundary.
+
+Validate and execute the two macOS browser smoke flows without touching a
+device:
+
+```bash
+cargo run -p mobile-robot-flow -- --dry-run \
+  examples/chrome_chatgpt.yaml \
+  examples/safari_chatgpt.yaml
+```
+
+On a macOS host with Accessibility permission, the same command without
+`--dry-run` executes the steps through `robot-macos`:
+
+```bash
+cargo run -p mobile-robot-flow -- examples/chrome_chatgpt.yaml
+cargo run -p mobile-robot-flow -- examples/safari_chatgpt.yaml
+```
+
+The YAML schema currently supports device selection, app/URL navigation,
+waits, coordinate or accessibility-element input, assertions, screenshots,
+and screen recording. New scenario-only steps should be added to
+`robot-flow`, not to `robot-core`.
+
 ## Install a released MCP server
 
-The release installers target the native MCP binary `mobile-mcp-server` and
+The release installers target the native MCP binary `device-bot` and
 verify the downloaded archive against the release `checksums.txt` manifest.
 
 macOS:
@@ -69,8 +98,8 @@ Remove-Item $script
 
 Set `DEVICE_BOT_VERSION` to pin a release and `DEVICE_BOT_INSTALL_DIR` to
 override the default install directory. The release archives must be named
-`mobile-mcp-server-v<VERSION>-<TARGET>.tar.gz` on macOS and `.zip` on Windows.
-After installation, configure the MCP client to launch `mobile-mcp-server`
+`device-bot-v<VERSION>-<TARGET>.tar.gz` on macOS and `.zip` on Windows.
+After installation, configure the MCP client to launch `device-bot`
 over stdio, or pass `--listen HOST:PORT` for the HTTP transport.
 
 ## Upgrade a released MCP server
@@ -82,9 +111,9 @@ present in `checksums.txt`; `--upgrade` then reruns the verified installer for
 the current installation directory.
 
 ```bash
-mobile-mcp-server --version
-mobile-mcp-server --check-update
-mobile-mcp-server --upgrade
+device-bot --version
+device-bot --check-update
+device-bot --upgrade
 ```
 
 On Windows, `--upgrade` schedules the PowerShell installer, exits the running
@@ -101,7 +130,7 @@ proxy supplies the network boundary:
 
 ```bash
 DEVICE_BOT_AUTH=replace-with-a-secret \
-  cargo run -p mobile-mcp-server -- --listen 127.0.0.1:3337
+  cargo run -p device-bot -- --listen 127.0.0.1:3337
 ```
 
 `POST /mcp` implements the `2025-11-25` session lifecycle. Send the token as
@@ -127,7 +156,7 @@ The same explicit HTTP listener also exposes local operator endpoints:
 They share the HTTP listener's bearer-token policy. The Flutter companion
 source lives in [`flutter_app/`](flutter_app/); it talks only to these admin
 endpoints, never to a platform driver or directly to ADB. It can also launch
-and stop a local `mobile-mcp-server` child process for convenience, but never
+and stop a local `device-bot` child process for convenience, but never
 stops an existing server it did not create.
 
 For example:
@@ -274,7 +303,7 @@ IPv6 CoreDevice-tunnel retry also produced no agent request. Do not treat a
 successful device discovery or recording as a successful UI-automation run.
 
 The Safari example is not equivalent to an arbitrary Codex MCP configuration:
-it starts this repository's `mobile-mcp-server`, binds the agent bridge to a
+it starts this repository's `device-bot`, binds the agent bridge to a
 LAN-reachable address, supplies a shared token, and polls the agent before
 automation. A Codex configuration that starts another package (for example,
 `@mobilenext/mobile-mcp`) does not exercise this server or its real-iOS agent.
@@ -293,7 +322,7 @@ the bridge would accept every caller on that interface.
 
 Remediation and verification:
 
-1. Configure Codex to start this repository's `mobile-mcp-server` with
+1. Configure Codex to start this repository's `device-bot` with
    `DEVICE_BOT_IOS_AGENT_BIND` on a LAN interface or `0.0.0.0`, and the same
    `DEVICE_BOT_IOS_AGENT_TOKEN` used by the XCTest agent. Never commit that
    token. A package other than this server does not exercise this agent.
@@ -341,13 +370,13 @@ different display.
 Install the recording dependency through the server itself on macOS:
 
 ```sh
-cargo run -p mobile-mcp-server -- --install-chrome-recording-tools
+cargo run -p device-bot -- --install-chrome-recording-tools
 ```
 
 You can request the macOS permission before starting the server:
 
 ```sh
-cargo run -p mobile-mcp-server -- --request-screen-recording-permission
+cargo run -p device-bot -- --request-screen-recording-permission
 ```
 
 ## Validate

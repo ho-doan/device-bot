@@ -13,7 +13,7 @@ $InstallDir = if ($env:DEVICE_BOT_INSTALL_DIR) {
 } else {
     Join-Path $env:USERPROFILE ".device-bot\bin"
 }
-$BinaryName = "mobile-mcp-server.exe"
+$BinaryName = "device-bot.exe"
 $RetryAttempts = 4
 $WaitPid = $env:DEVICE_BOT_WAIT_PID
 $InstallerScriptPath = $MyInvocation.MyCommand.Path
@@ -109,7 +109,7 @@ function Get-ExpectedChecksum([string] $Manifest, [string] $Archive) {
 $Version = Get-ReleaseVersion
 if ($Version -notmatch '^[A-Za-z0-9._-]+$') { throw "Invalid release version: $Version" }
 $Target = Get-WindowsTarget
-$Archive = "mobile-mcp-server-v$Version-$Target.zip"
+$Archive = "device-bot-v$Version-$Target.zip"
 $BaseUrl = "https://github.com/$Repository/releases/download/v$Version"
 $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("device-bot-install-" + [System.IO.Path]::GetRandomFileName())
 $ArchivePath = Join-Path $TempDir $Archive
@@ -134,9 +134,9 @@ try {
     $pathEntries = if ($userPath) { $userPath -split ";" } else { @() }
     if ($pathEntries -notcontains $InstallDir) {
         [Environment]::SetEnvironmentVariable("Path", (($pathEntries + $InstallDir) | Where-Object { $_ }) -join ";", "User")
-        Write-Host "Added $InstallDir to the user PATH. Open a new terminal to use mobile-mcp-server."
+        Write-Host "Added $InstallDir to the user PATH. Open a new terminal to use device-bot."
     }
-    Write-Host "Installed mobile-mcp-server $Version to $(Join-Path $InstallDir $BinaryName)"
+    Write-Host "Installed device-bot $Version to $(Join-Path $InstallDir $BinaryName)"
 } finally {
     if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
     if ($InstallerScriptPath -and (Test-Path $InstallerScriptPath)) {

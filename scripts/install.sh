@@ -5,7 +5,7 @@ set -eu
 VERSION="${DEVICE_BOT_VERSION:-}"
 INSTALL_DIR="${DEVICE_BOT_INSTALL_DIR:-$HOME/.local/bin}"
 REPOSITORY="${DEVICE_BOT_REPOSITORY:-ho-doan/device-bot}"
-BINARY_NAME="mobile-mcp-server"
+BINARY_NAME="device-bot"
 
 for command in curl shasum tar install mkdir mktemp awk sleep; do
   if ! command -v "$command" >/dev/null 2>&1; then

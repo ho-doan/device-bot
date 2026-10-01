@@ -53,7 +53,7 @@ updated: 2026-09-28
 - timestamp: 2026-09-28; after that build, the unchanged `Address and search bar` request succeeded in 29.94 seconds, wrote `{\"ok\":true,\"elements\":[]}`, and Xcode measured only 0.45 seconds for its native predicate. The original timeout did not recur.
 - timestamp: 2026-09-28; `cargo fmt --all --check` passed and `cargo test -p mobile-robot-ios-sim` passed all six tests, including `xctest_runner_cache_requires_both_app_products`.
 - timestamp: 2026-09-28; with a fresh temporary `TMPDIR`, the patched public MCP flow initialized, launched `com.apple.mobilesafari`, and the original `filter: \"New Tab\", maxResults: 10` lookup returned one enabled, clickable native accessibility element. No 45-second timeout occurred.
-- timestamp: 2026-09-28; `cargo test -p mobile-mcp-server` passed all eight unit/integration tests. `git diff --check` passed; the focused driver diff only adds cache validation/build behavior and replaces the prior false-ready status message.
+- timestamp: 2026-09-28; `cargo test -p device-bot` passed all eight unit/integration tests. `git diff --check` passed; the focused driver diff only adds cache validation/build behavior and replaces the prior false-ready status message.
 - timestamp: 2026-09-28; with only the `ensure_xctest_runner` call temporarily removed and a fresh temporary cache, MCP initialized and launched Safari but produced no response for the original filtered lookup before the driver's action deadline. This matches the original missing-runner timeout behavior.
 - timestamp: 2026-09-28; after restoring the same two-line guard, a fresh public MCP session again returned the original filtered `New Tab` native element successfully.
 - timestamp: 2026-09-28; SBFL skipped: no failing automated test plus per-test coverage spectrum exists for this host-simulator cache failure; diagnosis instead uses a controlled before/after host reproduction.
@@ -74,7 +74,7 @@ updated: 2026-09-28
   target_test: { result: pass, suite: "cargo test -p mobile-robot-ios-sim", test: "xctest_runner_cache_requires_both_app_products" }
   mutation_check: { result: skipped, reason_if_skipped: "No Stryker configuration exists for this Rust workspace." }
   no_op_deletion: { result: pass, deletion_justified_by_rca: true, evidence: "Focused diff adds availability checks/build behavior; replaced status logic removes only the documented false-ready predicate." }
-  adjacent_tests: { result: pass, suites_run: ["cargo test -p mobile-mcp-server"] }
+  adjacent_tests: { result: pass, suites_run: ["cargo test -p device-bot"] }
   revert_and_reconfirm: { result: pass, bug_returned_on_revert: true, fixed_on_reapply: true, evidence: "A fresh MCP lookup stalled with only the guard removed and returned the native New Tab element again after the exact guard was restored." }
   guardrail_verdict: accepted
 - files_changed:

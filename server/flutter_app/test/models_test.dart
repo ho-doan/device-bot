@@ -28,7 +28,7 @@ void main() {
 
   test('derives a safe Rust listen address from the configured admin URL', () {
     const options = ServerLaunchOptions(
-      executable: 'mobile-mcp-server',
+      executable: 'device-bot',
       adminApiUrl: 'http://127.0.0.1:3337',
       bearerToken: 'local-secret',
     );
@@ -39,7 +39,7 @@ void main() {
 
   test('supports IPv6 local server addresses without an auth token', () {
     const options = ServerLaunchOptions(
-      executable: 'mobile-mcp-server',
+      executable: 'device-bot',
       adminApiUrl: 'http://[::1]:3337',
       bearerToken: '',
     );

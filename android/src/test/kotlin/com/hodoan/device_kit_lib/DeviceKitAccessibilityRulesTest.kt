@@ -11,7 +11,7 @@ internal class DeviceKitAccessibilityRulesTest {
         assertEquals(
             "increment_button",
             DeviceKitAccessibilityRules.normalizeAutomationId(
-                "com.example.example_app:id/increment_button",
+                "com.example.target:id/increment_button",
             ),
         )
         assertEquals("plain_id", DeviceKitAccessibilityRules.normalizeAutomationId("plain_id"))

@@ -148,7 +148,7 @@
 			);
 			mainGroup = B20000000000000000000021;
 			packageReferences = (
-				B20000000000000000000091 /* XCLocalSwiftPackageReference "../../../../darwin/device_kit_lib" */,
+				B20000000000000000000091 /* XCLocalSwiftPackageReference "DeviceKitXCTest" */,
 			);
 			productRefGroup = B20000000000000000000024 /* Products */;
 			projectDirPath = "";
@@ -311,16 +311,16 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		B20000000000000000000091 /* XCLocalSwiftPackageReference "../../../../darwin/device_kit_lib" */ = {
+		B20000000000000000000091 /* XCLocalSwiftPackageReference "DeviceKitXCTest" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../../../darwin/device_kit_lib;
+			relativePath = DeviceKitXCTest;
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		B20000000000000000000090 /* device-kit-lib-xctest */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B20000000000000000000091 /* XCLocalSwiftPackageReference "../../../../darwin/device_kit_lib" */;
+			package = B20000000000000000000091 /* XCLocalSwiftPackageReference "DeviceKitXCTest" */;
 			productName = "device-kit-lib-xctest";
 		};
 /* End XCSwiftPackageProductDependency section */

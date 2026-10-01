@@ -8,19 +8,11 @@ lib/src/web/automation_core/  Shared contracts, selectors, and service
 lib/src/web/automation_web/   Chrome DevTools Protocol backend
 lib/src/web/automation_kit/   Local JSON-RPC CLI/server
 bin/device_kit_lib.dart       Root-plugin JSON-RPC entrypoint
-example_app/                  Flutter Web counter app with semantics identifiers
 ```
 
-The Android implementation is a separate controller app and target app:
-
-```text
-example/           Device Kit controller app; depends on device_kit_lib
-example_app/       Independent target counter app; does not depend on the kit
-```
-
-`example` accepts a target Android package name at runtime. The default value
-`com.example.example_app` is only a demo target; the native `launchApp` API is
-dynamic and does not contain a target package allow-list.
+The root Flutter controller remains a draft package. Production device
+automation is implemented by the Rust server under `server/`; applications
+are selected dynamically by bundle/package/executable identifier.
 
 ## Device-control flow
 
@@ -57,7 +49,7 @@ flowchart TD
     selectors --> driver["AndroidDriver<br/>Dart"]
     driver -->|Pigeon generated API| host["DeviceKitHostApiImpl<br/>Kotlin"]
     host --> accessibility["AccessibilityService<br/>Android OS APIs"]
-    accessibility --> app["Dynamic target app<br/>example_app or any package"]
+    accessibility --> app["Dynamic target app<br/>any package"]
     app --> tree["AccessibilityNodeInfo tree"]
     tree -->|normalized UiSnapshot| service
 
@@ -96,15 +88,8 @@ Swift files select UIKit/XCTest behavior on iOS and the macOS Accessibility
 API (`AXUIElement`) on macOS. macOS automation requires the host application
 to be trusted under **System Settings > Privacy & Security > Accessibility**.
 
-Build or run the macOS example with Flutter:
-
-```bash
-cd example
-flutter run -d macos
-```
-
-Before calling cross-application AX actions, add the example app (or the
-host application that embeds this plugin) to the macOS Accessibility allowlist.
+Before calling cross-application AX actions, add the host application that
+embeds this plugin to the macOS Accessibility allowlist.
 The host process must also be allowed to use macOS Accessibility APIs; the
 example controller therefore disables App Sandbox in its macOS entitlements.
 
@@ -186,42 +171,19 @@ controller at the same elevation. If Chrome's Windows UIA tree is absent or
 partial, enable the screenshot vision fallback above; detected regions remain
 coordinate-only and still click through `SendInput`.
 
-## One scenario for all platforms
-
-The shared counter flow is defined once in
-`packages/scenarios/ex_scenario_1.yaml`. The Android/iOS/macOS/Windows native
-integration test and the Web CDP E2E both consume that file. Override the
-Windows executable path on the real machine with
-`EXAMPLE_APP_WINDOWS_TARGET`.
-
-Native example run:
-
-```bash
-cd example
-flutter test integration_test/scenario_test.dart -d windows
-```
-
-Web E2E run:
-
-```bash
-RUN_WEB_E2E=1 flutter test e2e/example_app_e2e_test.dart
-```
-
 ## iOS XCTest integration
 
-iOS cross-app input is implemented by XCTest/XCUITest in a separate product
-exported by the plugin:
+iOS cross-app input is implemented by XCTest/XCUITest in a server-owned
+separate product:
 
 ```text
-darwin/device_kit_lib/Sources/device_kit_lib/          Flutter/Pigeon runtime
-darwin/device_kit_lib/Sources/device_kit_lib_xctest/  XCTest/XCUITest driver
+server/crates/robot-ios-real/xctest-runner/DeviceKitXCTest/  XCTest/XCUITest driver
 ```
 
 The `device-kit-lib-xctest` Swift product is linked only by native UI-test
-targets. `example_app/ios/RunnerUITests` imports that product and uses the
-driver's raw snapshot and primitive-action API; selector and wait/retry logic
-remain in Dart. XCTest is therefore reusable by native app test targets
-without being linked into the production Flutter plugin.
+target. `RunnerTests/MobileMcpRealRunnerUITests.swift` imports that product
+and uses the driver's raw snapshot and primitive-action API. XCTest is not
+linked into the production MCP binary.
 
 ## Android permissions
 
@@ -241,47 +203,21 @@ permission** button before calling **Take screenshot**.
 
 ```bash
 flutter test
-cd example_app && flutter test
 ```
-
-Build the example app for local browser automation:
-
-```bash
-cd example_app
-flutter build web --no-web-resources-cdn
-```
-
-Run the browser E2E (Chrome/Chromium is required):
-
-```bash
-RUN_WEB_E2E=1 flutter test e2e/example_app_e2e_test.dart
-```
-
-Run the Android self-test on a connected device (Patrol CLI is required):
-
-```bash
-cd example
-patrol test --target patrol_test/android_automation_test.dart
-```
-
-The Patrol test is test-only setup. It can navigate Android Settings to enable
-the Device Kit AccessibilityService and can approve the MediaProjection dialog;
-the target-app UI dump, selectors, wait, tap, and screenshot calls still use
-the shared `device_kit_lib` Dart API.
 
 Build and run the iOS XCTest target on a booted simulator:
 
 ```bash
-cd example_app/ios
+cd server/crates/robot-ios-real/xctest-runner
 xcodebuild -project Runner.xcodeproj \
-  -scheme Runner \
+  -scheme MobileMcpRealRunnerHost \
   -destination 'platform=iOS Simulator,name=<simulator-name>' \
   test
 ```
 
 Use `xcodebuild -showdestinations` to select an installed simulator. The
-XCTest target launches `com.example.exampleApp` itself; it is not a runtime
-accessibility service inside the production Flutter process.
+XCTest target launches the bundle id configured by the server runner; it is
+not a runtime accessibility service inside the production MCP process.
 
 The local JSON-RPC app reads line-delimited JSON-RPC 2.0 requests from stdin by
 default. Start it with `dart run bin/device_kit_lib.dart --http --port 8787`
@@ -298,17 +234,14 @@ DEVICE_KIT_IOS_PROJECT=/path/to/ios/Runner.xcodeproj \
 ```
 
 `DEVICE_KIT_IOS_PROJECT` is the Xcode project that owns the signed UI-test
-runner. The included `example_app/ios/Runner.xcodeproj` is a ready-to-build
-counter-demo runner; a product app can use its own project after adding the
-same `DeviceKitHttpAgentTests/testServe` UI test. `session.start` only
-connects to the running XCTest agent (same model as Mobile MCP expecting
-WebDriverAgent on port 8100); it does not invoke `xcodebuild` itself.
+runner. A product app can use its own project after adding the same
+`DeviceKitHttpAgentTests/testServe` UI test. `session.start` only connects to
+the running XCTest agent; it does not invoke `xcodebuild` itself.
 
 Build the agent **once**, then start the last products (no compile):
 
 ```bash
-cd example_app && flutter pub get && cd ..
-export DEVICE_KIT_IOS_PROJECT="$PWD/example_app/ios/Runner.xcodeproj"
+export DEVICE_KIT_IOS_PROJECT="$PWD/server/crates/robot-ios-real/xctest-runner/MobileMcpRealRunner.xcodeproj"
 export DEVICE_KIT_DEVICE=<paired-iPhone-UDID-or-name>
 tool/ios_xctest_agent.sh build    # first time, or after Swift/agent changes
 tool/ios_xctest_agent.sh start    # every later session
@@ -355,8 +288,7 @@ project so the user can choose or reauthenticate it. Set
 Keychain has multiple identities. `start` derives the Mac LAN address automatically when possible; set
 `MOBILE_MCP_IOS_AGENT_HOSTS=<mac-lan-ip>` if it cannot. Keep that process
 running while MCP calls are made. The local XCTest project is
-`server/crates/robot-ios-real/xctest-runner/MobileMcpRealRunner.xcodeproj`;
-`example_app` is not used by the server runtime.
+`server/crates/robot-ios-real/xctest-runner/MobileMcpRealRunner.xcodeproj`.
 
 For the first signed physical-device build, Xcode must have an iOS Development
 certificate and profile for both bundle identifiers. After signing into the

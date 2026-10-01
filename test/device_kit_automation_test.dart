@@ -45,7 +45,7 @@ void main() {
     );
 
     await service.start();
-    await service.launch('com.example.example_app');
+    await service.launch('com.example.target');
     await service.tap(core.By.id('increment_button'));
     await service.stop();
 

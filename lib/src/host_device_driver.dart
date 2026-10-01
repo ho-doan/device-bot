@@ -413,14 +413,14 @@ class _IosAgentBridge {
   }
 
   /// Builds the one-time command that starts the XCTest *agent* runner.
-  /// The runner project comes from `DEVICE_KIT_IOS_PROJECT` — never
-  /// `example_app`. The app under test is chosen later by
+  /// The runner project comes from `DEVICE_KIT_IOS_PROJECT`. The app under
+  /// test is chosen later by
   /// [HostDeviceDriver.launchApp].
   Future<String> _agentStartCommand() async {
     final project = Platform.environment['DEVICE_KIT_IOS_PROJECT']?.trim();
     if (project == null || project.isEmpty) {
       return 'Set DEVICE_KIT_IOS_PROJECT to the UI-test .xcodeproj of the '
-          'installed runner (not example_app), then start that agent once.';
+          'installed runner, then start that agent once.';
     }
     final scheme = Platform.environment['DEVICE_KIT_IOS_SCHEME'] ?? 'Runner';
     final test =

@@ -40,10 +40,33 @@ void main() {
     });
 
     expect(element.name, 'Save');
-    expect(element.selector, 'Save');
+    expect(element.selector, 'save-button');
     expect(element.bounds.width, 100);
     expect(element.bounds.height, 40);
     expect(element.clickable, isTrue);
+  });
+
+  test('builds an input flow from the element selector', () {
+    final element = AdminElement.fromJson({
+      'className': 'TextField',
+      'resourceId': 'email-input',
+      'text': 'Email',
+      'contentDescription': null,
+      'bounds': {'left': 10, 'top': 20, 'right': 210, 'bottom': 60},
+      'clickable': true,
+      'enabled': true,
+    });
+
+    final yaml = buildInspectorFlowYaml(
+      element: element,
+      action: InspectorFlowAction.typeText,
+      sequence: 2,
+      inputText: 'qa@example.com',
+    );
+
+    expect(yaml, contains('filter: "email-input"'));
+    expect(yaml, contains('type_text:'));
+    expect(yaml, contains('text: "qa@example.com"'));
   });
 
   test('normalizes installed app names and identifiers across platforms', () {

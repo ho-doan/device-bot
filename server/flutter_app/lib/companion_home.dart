@@ -53,6 +53,43 @@ double inspectorCoordinateScale({
   );
 }
 
+enum InspectorFlowAction { tap, typeText, assertVisible }
+
+String buildInspectorFlowYaml({
+  required AdminElement element,
+  required InspectorFlowAction action,
+  required int sequence,
+  String inputText = '',
+}) {
+  final selector = _yamlQuoteValue(element.selector);
+  switch (action) {
+    case InspectorFlowAction.tap:
+      return '''
+  - id: tap_element_$sequence
+    tap_element:
+      filter: "$selector"
+      max_results: 1''';
+    case InspectorFlowAction.typeText:
+      return '''
+  - id: tap_element_$sequence
+    tap_element:
+      filter: "$selector"
+      max_results: 1
+  - id: type_text_$sequence
+    type_text:
+      text: "${_yamlQuoteValue(inputText)}"''';
+    case InspectorFlowAction.assertVisible:
+      return '''
+  - id: assert_element_$sequence
+    assert_element:
+      filter: "$selector"
+      max_results: 1''';
+  }
+}
+
+String _yamlQuoteValue(String value) =>
+    value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', ' ');
+
 class CompanionHome extends StatefulWidget {
   const CompanionHome({super.key});
 
@@ -542,6 +579,7 @@ class _ScreenshotDialog extends StatefulWidget {
 class _ScreenshotDialogState extends State<_ScreenshotDialog> {
   late final TextEditingController _yamlController;
   int? _selectedIndex;
+  int _flowSequence = 0;
 
   @override
   void initState() {
@@ -562,32 +600,33 @@ description: Scenario drafted from the Flutter element inspector.
 steps:
   - id: select_device
     select_device:
-      id: "${_yamlQuote(widget.device.id)}"
+      id: "${_yamlQuoteValue(widget.device.id)}"
   - id: inspect_elements
     list_elements:
       filter: "button"
       max_results: 20
 ''';
 
-  String _yamlQuote(String value) => value
-      .replaceAll('\\', '\\\\')
-      .replaceAll('"', '\\"')
-      .replaceAll('\n', ' ');
-
   void _selectElement(int index) {
     setState(() => _selectedIndex = index);
   }
 
-  void _insertTapStep(List<AdminElement> elements) {
+  Future<void> _addSelectedElementToFlow(List<AdminElement> elements) async {
     final index = _selectedIndex;
     if (index == null || index >= elements.length) return;
     final element = elements[index];
-    final snippet =
-        '''
-  - id: tap_element_${index + 1}
-    tap_element:
-      filter: "${_yamlQuote(element.selector)}"
-      max_results: 1''';
+    final draft = await showDialog<_ElementFlowDraft>(
+      context: context,
+      builder: (context) => _ElementFlowEditorDialog(element: element),
+    );
+    if (!mounted || draft == null) return;
+
+    final snippet = buildInspectorFlowYaml(
+      element: element,
+      action: draft.action,
+      sequence: ++_flowSequence,
+      inputText: draft.inputText,
+    );
     final current = _yamlController.text.trimRight();
     final next = '$current\n$snippet\n';
     setState(() {
@@ -664,7 +703,8 @@ steps:
                     elementsError: inspection.elementsError,
                     yamlController: _yamlController,
                     onSelectElement: _selectElement,
-                    onInsertTapStep: () => _insertTapStep(inspection.elements),
+                    onAddToFlow: () =>
+                        _addSelectedElementToFlow(inspection.elements),
                     onCopyYaml: _copyYaml,
                   ),
                 ),
@@ -691,7 +731,7 @@ class _InspectorSidebar extends StatelessWidget {
     required this.elementsError,
     required this.yamlController,
     required this.onSelectElement,
-    required this.onInsertTapStep,
+    required this.onAddToFlow,
     required this.onCopyYaml,
   });
 
@@ -701,7 +741,7 @@ class _InspectorSidebar extends StatelessWidget {
   final String? elementsError;
   final TextEditingController yamlController;
   final ValueChanged<int> onSelectElement;
-  final VoidCallback onInsertTapStep;
+  final VoidCallback onAddToFlow;
   final VoidCallback onCopyYaml;
 
   @override
@@ -731,9 +771,16 @@ class _InspectorSidebar extends StatelessWidget {
                     itemCount: elements.length,
                     itemBuilder: (context, index) {
                       final element = elements[index];
+                      final subtitle = [
+                        if (element.name != element.selector) element.name,
+                        element.className,
+                        element.clickable ? 'clickable' : 'static',
+                      ].join(' · ');
                       return Semantics(
                         button: true,
-                        label: 'Element ${index + 1}: ${element.name}',
+                        selected: selectedIndex == index,
+                        label:
+                            'Element ${index + 1}: ${element.selector}, ${element.className}',
                         child: ListTile(
                           dense: true,
                           selected: selectedIndex == index,
@@ -742,12 +789,12 @@ class _InspectorSidebar extends StatelessWidget {
                             child: Text('${index + 1}'),
                           ),
                           title: Text(
-                            element.name,
+                            element.selector,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                           subtitle: Text(
-                            '${element.className} · ${element.clickable ? 'clickable' : 'static'}',
+                            subtitle,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -766,13 +813,15 @@ class _InspectorSidebar extends StatelessWidget {
           )
         else
           SizedBox(
-            height: 74,
+            height: 154,
             child: Card(
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
               child: Padding(
                 padding: const EdgeInsets.all(10),
                 child: SelectableText(
-                  'Name: ${selectedElement!.name}\n'
+                  'Selector / ID: ${selectedElement!.selector}\n'
+                  'Visible text: ${selectedElement!.text ?? '—'}\n'
+                  'Accessibility: ${selectedElement!.contentDescription ?? '—'}\n'
                   'Class: ${selectedElement!.className}\n'
                   'Bounds: ${selectedElement!.bounds.left}, ${selectedElement!.bounds.top} → '
                   '${selectedElement!.bounds.right}, ${selectedElement!.bounds.bottom}\n'
@@ -797,10 +846,10 @@ class _InspectorSidebar extends StatelessWidget {
               onPressed: onCopyYaml,
               icon: const Icon(Icons.copy_outlined),
             ),
-            IconButton(
-              tooltip: 'Insert tap step for selected element',
-              onPressed: selectedElement == null ? null : onInsertTapStep,
-              icon: const Icon(Icons.add_task),
+            FilledButton.icon(
+              onPressed: selectedElement == null ? null : onAddToFlow,
+              icon: const Icon(Icons.add),
+              label: const Text('Add to flow'),
             ),
           ],
         ),
@@ -819,6 +868,193 @@ class _InspectorSidebar extends StatelessWidget {
               contentPadding: EdgeInsets.all(12),
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+enum _InspectorElementKind { input, action, toggle, other }
+
+_InspectorElementKind _inspectorElementKind(AdminElement element) {
+  final className = element.className.toLowerCase();
+  if (RegExp(
+    r'textfield|edittext|textinput|textarea|search|secure|input',
+  ).hasMatch(className)) {
+    return _InspectorElementKind.input;
+  }
+  if (RegExp(r'checkbox|switch|radio').hasMatch(className)) {
+    return _InspectorElementKind.toggle;
+  }
+  if (RegExp(r'button|link|menuitem').hasMatch(className)) {
+    return _InspectorElementKind.action;
+  }
+  return _InspectorElementKind.other;
+}
+
+List<InspectorFlowAction> _inspectorFlowActions(AdminElement element) {
+  switch (_inspectorElementKind(element)) {
+    case _InspectorElementKind.input:
+      return [InspectorFlowAction.typeText];
+    case _InspectorElementKind.action:
+    case _InspectorElementKind.toggle:
+      return [InspectorFlowAction.tap, InspectorFlowAction.assertVisible];
+    case _InspectorElementKind.other:
+      return element.clickable
+          ? [InspectorFlowAction.tap, InspectorFlowAction.assertVisible]
+          : [InspectorFlowAction.assertVisible];
+  }
+}
+
+String _inspectorFlowActionLabel(InspectorFlowAction action) {
+  switch (action) {
+    case InspectorFlowAction.tap:
+      return 'Tap element';
+    case InspectorFlowAction.typeText:
+      return 'Type text';
+    case InspectorFlowAction.assertVisible:
+      return 'Assert element is visible';
+  }
+}
+
+class _ElementFlowDraft {
+  const _ElementFlowDraft({required this.action, this.inputText = ''});
+
+  final InspectorFlowAction action;
+  final String inputText;
+}
+
+class _ElementFlowEditorDialog extends StatefulWidget {
+  const _ElementFlowEditorDialog({required this.element});
+
+  final AdminElement element;
+
+  @override
+  State<_ElementFlowEditorDialog> createState() =>
+      _ElementFlowEditorDialogState();
+}
+
+class _ElementFlowEditorDialogState extends State<_ElementFlowEditorDialog> {
+  late final TextEditingController _inputController;
+  late final List<InspectorFlowAction> _actions;
+  late InspectorFlowAction _action;
+  bool _inputError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _inputController = TextEditingController();
+    _actions = _inspectorFlowActions(widget.element);
+    _action = _actions.first;
+  }
+
+  @override
+  void dispose() {
+    _inputController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final inputText = _inputController.text;
+    if (_action == InspectorFlowAction.typeText && inputText.trim().isEmpty) {
+      setState(() => _inputError = true);
+      return;
+    }
+    Navigator.of(
+      context,
+    ).pop(_ElementFlowDraft(action: _action, inputText: inputText));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final kind = _inspectorElementKind(widget.element);
+    return AlertDialog(
+      title: const Text('Add element to flow'),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Card(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                child: ListTile(
+                  leading: Icon(
+                    kind == _InspectorElementKind.input
+                        ? Icons.input
+                        : kind == _InspectorElementKind.toggle
+                        ? Icons.toggle_on_outlined
+                        : Icons.touch_app_outlined,
+                  ),
+                  title: Text(
+                    widget.element.selector,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    '${widget.element.className} · ${widget.element.text ?? 'no visible text'}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<InspectorFlowAction>(
+                initialValue: _action,
+                decoration: const InputDecoration(
+                  labelText: 'Flow action',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final action in _actions)
+                    DropdownMenuItem(
+                      value: action,
+                      child: Text(_inspectorFlowActionLabel(action)),
+                    ),
+                ],
+                onChanged: (action) {
+                  if (action != null) setState(() => _action = action);
+                },
+              ),
+              if (_action == InspectorFlowAction.typeText) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _inputController,
+                  autofocus: true,
+                  minLines: 1,
+                  maxLines: 4,
+                  onChanged: (_) {
+                    if (_inputError) setState(() => _inputError = false);
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Text to enter',
+                    hintText: 'Example: qa@example.com',
+                    helperText: 'The flow taps this input before typing.',
+                    errorText: _inputError ? 'Enter a value to type.' : null,
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              if (kind == _InspectorElementKind.toggle) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Toggle controls are represented by tap/assert steps in robot-flow.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: _submit,
+          icon: const Icon(Icons.add),
+          label: const Text('Add step'),
         ),
       ],
     );
@@ -1010,10 +1246,10 @@ class _ElementOverlayPainter extends CustomPainter {
       canvas.drawRect(rect, border);
 
       final element = elements[index];
-      final selector = element.resourceId ?? element.name;
+      final selector = element.selector;
       final labelText = selected
           ? '${element.className} ($selector)'
-          : '${index + 1} ${element.name}';
+          : '${index + 1} $selector';
       final label = TextPainter(
         text: TextSpan(
           text: labelText,

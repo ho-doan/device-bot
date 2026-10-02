@@ -151,7 +151,14 @@ class AdminElement {
     return 'Unnamed element';
   }
 
-  String get selector => name;
+  /// Stable value used by robot-flow element queries.
+  ///
+  /// A resource id is more reliable than visible text when the driver exposes
+  /// one. Text remains the fallback for platforms that do not provide ids.
+  String get selector {
+    final id = resourceId?.trim();
+    return id != null && id.isNotEmpty ? id : name;
+  }
 }
 
 class AdminConfig {

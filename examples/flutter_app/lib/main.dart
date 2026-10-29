@@ -1,122 +1,121 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
-void main() {
-  runApp(const MyApp());
-}
+import 'screens/auth_screen.dart';
+import 'screens/workspace_screen.dart';
+import 'session.dart';
+import 'theme.dart';
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+void main() => runApp(const OrbitApp());
 
-  // This widget is the root of your application.
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
-    );
-  }
-}
+class OrbitApp extends StatefulWidget {
+  const OrbitApp({super.key, this.initialLocation});
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+  final String? initialLocation;
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<OrbitApp> createState() => _OrbitAppState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
-  }
+class _OrbitAppState extends State<OrbitApp> {
+  late final DemoSession _session;
+  late final GoRouter _router;
 
   @override
-  Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+  void initState() {
+    super.initState();
+    _session = DemoSession();
+    _router = GoRouter(
+      initialLocation: widget.initialLocation,
+      refreshListenable: _session,
+      redirect: (context, state) {
+        final isAuth =
+            state.uri.path == '/login' || state.uri.path == '/forgot-password';
+        final isProtected =
+            state.uri.path == '/home' || state.uri.path == '/account';
+        if (!_session.signedIn && isProtected) {
+          return Uri(
+            path: '/login',
+            queryParameters: {'from': state.uri.toString()},
+          ).toString();
+        }
+        if (_session.signedIn && isAuth) {
+          final from = state.uri.queryParameters['from'];
+          return from == '/account' ? '/account' : '/home';
+        }
+        return null;
+      },
+      routes: [
+        GoRoute(path: '/', redirect: (_, _) => '/home'),
+        GoRoute(
+          path: '/login',
+          name: 'login',
+          builder: (_, state) => AuthScreen(
+            session: _session,
+            returnTo: state.uri.queryParameters['from'],
+          ),
+        ),
+        GoRoute(
+          path: '/forgot-password',
+          name: 'forgot-password',
+          builder: (_, state) => AuthScreen(
+            session: _session,
+            resetPassword: true,
+            returnTo: state.uri.queryParameters['from'],
+          ),
+        ),
+        ShellRoute(
+          builder: (_, state, child) => WorkspaceShell(
+            session: _session,
+            account: state.uri.path == '/account',
+            child: child,
+          ),
+          routes: [
+            GoRoute(
+              path: '/home',
+              name: 'home',
+              builder: (_, _) => const WorkspaceContent(child: HomeScreen()),
+            ),
+            GoRoute(
+              path: '/account',
+              name: 'account',
+              builder: (_, _) =>
+                  WorkspaceContent(child: AccountScreen(session: _session)),
             ),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+      ],
+      errorBuilder: (context, state) => Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('This page is outside your orbit.'),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () => context.goNamed('home'),
+                child: const Text('Back to home'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
+
+  @override
+  void dispose() {
+    _router.dispose();
+    _session.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => MaterialApp.router(
+    title: 'Orbit · Your space to focus',
+    debugShowCheckedModeBanner: false,
+    theme: orbitTheme(Brightness.light),
+    darkTheme: orbitTheme(Brightness.dark),
+    routerConfig: _router,
+  );
 }

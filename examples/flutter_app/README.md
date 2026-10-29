@@ -21,6 +21,9 @@ Other credentials show an authentication error.
 
 ## Flow
 
+See [Behavior flows (Mermaid, tiếng Việt)](BEHAVIOR_FLOWS.md) for the implemented
+navigation, authentication, reset, checklist, and responsive behavior.
+
 - `/login`: email/password validation, visibility toggle, loading/error states.
 - `/forgot-password`: validates email and simulates a reset request. No email is sent.
 - `/home`: protected overview with interactive daily tasks.

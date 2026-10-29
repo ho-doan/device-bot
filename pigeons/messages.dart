@@ -1,5 +1,8 @@
 import 'package:pigeon/pigeon.dart';
 
+// TODO: Remove this schema and its generated Dart/C++ files only after the
+// Windows driver migrates away from Pigeon or Windows support is dropped.
+
 @ConfigurePigeon(
   PigeonOptions(
     dartPackageName: 'device_kit_lib',

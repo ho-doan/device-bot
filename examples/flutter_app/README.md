@@ -53,6 +53,10 @@ Tests cover validation, incorrect credentials, password visibility, successful
 login, protected deep links, logout, reset navigation, unknown routes, and layout
 at phone/tablet/desktop sizes including large text and reduced motion.
 
+For native Android/iOS execution, see the [integration test scenarios and commands](integration_test/README.md).
+The suite in `integration_test/app_flows_test.dart` exercises the app UI, routing,
+demo authentication, reset, checklist, and session lifecycle on a selected device.
+
 Design direction: flat surfaces, teal focus, 8-point spacing, restrained Material
 icons; system typography keeps the example independent of network font loading.
 Router reference: [go_router redirection](https://pub.dev/documentation/go_router/latest/topics/Redirection-topic.html).

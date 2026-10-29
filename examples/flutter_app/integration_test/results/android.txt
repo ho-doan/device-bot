@@ -1,0 +1,20 @@
+00:00 +0: loading /Users/tps-user/Documents/source/ai_automation_testing_project/packages/device-bot/examples/flutter_app/integration_test/app_flows_test.dart
+Running Gradle task 'assembleDebug'...                            124.1s
+✓ Built build/app/outputs/flutter-apk/app-debug.apk
+Installing build/app/outputs/flutter-apk/app-debug.apk...           3.7s
+00:00 +0: IT-01 | cold launch and demo login open the workspace
+00:22 +0: IT-01 | cold launch and demo login open the workspace - did not complete [E]
+00:22 +0: IT-02 | invalid input shows errors and corrected input signs in - did not complete [E]
+00:22 +0: IT-03 | password visibility preserves text and keyboard actions submit - did not complete [E]
+00:22 +0: IT-04 | loading blocks repeat submits and failed login can be retried - did not complete [E]
+00:22 +0: IT-05 | email normalization is allowed but password matching is exact - did not complete [E]
+00:22 +0: IT-06 | reset validates email, locks while busy and leaves credentials unchanged - did not complete [E]
+00:22 +0: IT-07 | protected account destination survives reset cancellation and completion - did not complete [E]
+00:22 +0: IT-08 | checklist progress, navigation tabs and profile follow the documented flow - did not complete [E]
+00:22 +0: IT-09 | sign out revokes protected routes and login restores the requested account - did not complete [E]
+00:22 +0: IT-10 | authenticated auth routes and unsupported return destinations redirect safely - did not complete [E]
+00:22 +0: IT-11 | missing page recovery respects signed out and signed in sessions - did not complete [E]
+00:22 +0: IT-12 | recreating the app root clears session and checklist changes - did not complete [E]
+00:22 +0: (tearDownAll) - did not complete [E]
+00:22 +0: Some tests failed.
+No tests were found.

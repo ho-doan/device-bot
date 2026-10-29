@@ -258,11 +258,23 @@ Dữ liệu nhập form và trạng thái reset cũng nằm trong bộ nhớ c�
 | Điều hướng, profile, logout, checklist | [workspace_screen.dart](lib/screens/workspace_screen.dart) | Tick task thứ hai thành `2/3`, mở profile và logout |
 | Responsive, theme, chữ lớn | [theme.dart](lib/theme.dart), các màn hình | Login → Home → Account → Logout ở 375×812, 812×375, 768×1024, 1440×900; text scale 1/light và 2/dark; disableAnimations bật |
 
-Bộ test nằm tại [widget_test.dart](test/widget_test.dart). Các mô tả chi tiết như
-chuẩn hóa email, `from` có query, reset checklist sau khi rời Home và breakpoint
-được đối chiếu từ source; chưa có test riêng cho từng nhánh đó.
+Bộ widget test nằm tại [widget_test.dart](test/widget_test.dart). Các nhánh
+chuẩn hóa email, `from` có query và reset checklist sau khi rời Home được kiểm tra
+bổ sung bằng integration test ở mục 11. Các ngưỡng breakpoint được đối chiếu từ
+source; chưa có test riêng cho mọi giá trị ngay trước/sau từng ngưỡng.
 
 ```sh
 cd examples/flutter_app
 flutter test
 ```
+
+## 11. Integration test trên Android/iOS
+
+[Bộ integration test](integration_test/app_flows_test.dart) triển khai các scenario
+`IT-01` đến `IT-12` dựa trên những flow ở trên. Xem
+[ma trận behavior, kết quả mong đợi và lệnh chạy](integration_test/README.md).
+
+Suite thao tác UI của app trên thiết bị với session/router thật của app demo.
+Các yêu cầu route được đưa vào qua API router; kiểm tra khởi tạo lại session dùng
+app root mới. Phạm vi này chưa bao gồm OS App Links/Universal Links, OS kill/relaunch,
+backend xác thực hoặc email thật.

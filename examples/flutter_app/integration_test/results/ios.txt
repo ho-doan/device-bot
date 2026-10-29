@@ -1,0 +1,17 @@
+00:00 +0: loading /Users/tps-user/Documents/source/ai_automation_testing_project/packages/device-bot/examples/flutter_app/integration_test/app_flows_test.dart
+Running Xcode build...                                          
+Xcode build done.                                           24.8s
+00:00 +0: IT-01 | cold launch and demo login open the workspace
+00:02 +1: IT-02 | invalid input shows errors and corrected input signs in
+00:09 +2: IT-03 | password visibility preserves text and keyboard actions submit
+00:15 +3: IT-04 | loading blocks repeat submits and failed login can be retried
+00:18 +4: IT-05 | email normalization is allowed but password matching is exact
+00:26 +5: IT-06 | reset validates email, locks while busy and leaves credentials unchanged
+00:31 +6: IT-07 | protected account destination survives reset cancellation and completion
+00:36 +7: IT-08 | checklist progress, navigation tabs and profile follow the documented flow
+00:43 +8: IT-09 | sign out revokes protected routes and login restores the requested account
+00:48 +9: IT-10 | authenticated auth routes and unsupported return destinations redirect safely
+00:56 +10: IT-11 | missing page recovery respects signed out and signed in sessions
+01:00 +11: IT-12 | recreating the app root clears session and checklist changes
+01:04 +12: (tearDownAll)
+01:10 +12: All tests passed!

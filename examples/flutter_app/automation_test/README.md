@@ -45,12 +45,12 @@ bar account avatar is exposed as the native `AL` button on Android.
 | --- | --- | --- |
 | IT-01 | Cold launch, demo login, workspace and `1/3` | Router URI and Flutter exceptions |
 | IT-02 | Empty/invalid validation, corrected email, successful login | Router URI |
-| IT-03 | Show/hide password, value preservation and login | Submits by button; IME Next/Done, focus and internal obscureText assertions remain in Flutter |
+| IT-03 | Show/hide password, preserved value, IME Next focuses password, IME Done submits | None. Show/Hide is the native stand-in for obscureText |
 | IT-04 | Failed login, preserved input and successful retry | Does not claim to check the 700 ms loading state, disabled controls or duplicate request count |
 | IT-05 | Reject password case/space variants; accept normalized email | Router URI |
-| IT-06 | Reset validation/completion and original demo credentials still work | Uses reset button; busy/disabled controls and IME Done remain in Flutter |
+| IT-06 | One text field, empty-email validation, IME Done submits the valid reset, demo login still works | The 700 ms busy state and disabled controls are not sampled |
 | IT-07 | Account return destination survives reset cancellation and completion | Establishes return destination by signing out from Account; cannot cold-launch GoRouter `/account` or inspect `from` |
-| IT-08 | Checklist counters, tabs, account data and profile navigation | Checkbox values, numeric progress and line-through style remain in Flutter |
+| IT-08 | Checkbox checked state, checklist counters, tabs, account data and profile navigation | LinearProgressIndicator.value and line-through style remain in Flutter |
 | IT-09 | Sign out removes account UI; demo login returns to Account | Direct protected-route requests and `from` query checks remain in Flutter |
 
 Scripts print `FAIL` and exit nonzero on an execution/assertion error. `PASS`

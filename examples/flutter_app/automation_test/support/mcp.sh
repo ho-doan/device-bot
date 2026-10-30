@@ -102,12 +102,57 @@ scroll_screen() {
 scroll_down() { scroll_screen down; }
 
 query_elements() {
-  local label="$1"
-  call_tool mobile_list_elements_on_screen "$(jq -cn --arg d "$DEVICE_ID" --arg f "$label" \
-    '{deviceId:$d,maxResults:100,timeoutMs:60000} + (if $f=="" then {} else {filter:$f} end)')"
+  local label="${1:-}" element_type="${2:-}" max_results="${3:-100}"
+  call_tool mobile_list_elements_on_screen "$(jq -cn \
+    --arg d "$DEVICE_ID" --arg f "$label" --arg t "$element_type" --argjson n "$max_results" \
+    '{deviceId:$d,maxResults:$n,timeoutMs:60000}
+      + (if $f=="" then {} else {filter:$f} end)
+      + (if $t=="" then {} else {elementType:$t} end)')"
   query_count=$((query_count + 1))
   jq '.result.structuredContent.elements' <<<"$last_response" >"$ARTIFACT_DIR/last-query.json"
   cp "$ARTIFACT_DIR/last-query.json" "$ARTIFACT_DIR/query-${query_count}.json"
+}
+
+# maxResults is one above the expected count so an extra field is not truncated away.
+assert_text_field_count() {
+  local expected="$1" count
+  query_elements '' textField $((expected + 1))
+  count="$(jq 'length' "$ARTIFACT_DIR/last-query.json")"
+  if [[ "$count" != "$expected" ]]; then
+    printf 'FAIL: expected %s text field(s), found %s\n' "$expected" "$count" >&2
+    return 1
+  fi
+  printf 'PASS: %s text field\n' "$expected"
+}
+
+press_ime_action() {
+  local action="$1"
+  call_tool mobile_press_ime_action "$(jq -cn --arg d "$DEVICE_ID" --arg a "$action" \
+    '{deviceId:$d,action:$a}')"
+  printf 'PASS: IME %s\n' "$action"
+}
+
+assert_focused_field() {
+  local label="$1"
+  find_element "$label" false true field
+  if ! jq -e '.focused == true' <<<"$FOUND_ELEMENT" >/dev/null; then
+    printf 'FAIL: %s is not focused\n' "$label" >&2
+    return 1
+  fi
+  printf 'PASS: %s focused\n' "$label"
+}
+
+assert_checked() {
+  local label="$1" expected="$2"
+  query_elements "$label" checkBox
+  if ! jq -e --arg label "$label" --argjson expected "$expected" '
+    [.[] | select(((.text // "") + "\n" + (.contentDescription // "")) | contains($label))]
+    | length == 1 and .[0].checked == $expected
+  ' "$ARTIFACT_DIR/last-query.json" >/dev/null; then
+    printf 'FAIL: %s checked=%s was not observed\n' "$label" "$expected" >&2
+    return 1
+  fi
+  printf 'PASS: %s checked=%s\n' "$label" "$expected"
 }
 
 # kind=field restricts matching to native text fields, avoiding hints/demo text.

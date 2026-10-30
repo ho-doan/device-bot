@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# IT-03 | password visibility preserves text; keyboard action coverage is limited.
+# IT-03 | password visibility preserves text; IME Next focuses password and Done submits.
 set -euo pipefail
 readonly CASE_ID=IT-03
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/support/mcp.sh"
 assert_text 'Show password'
-enter_credentials 'alex@orbit.demo' 'Orbit123!'
+fill_field 'Email address' 'alex@orbit.demo'
+press_ime_action next
+assert_focused_field 'Password'
+type_text 'Orbit123!'
+password_value='Orbit123!'
 tap_control 'Show password'
 assert_text 'Hide password'
 assert_field_value 'Password' 'Orbit123!'
@@ -15,7 +19,7 @@ assert_text 'Show password'
 tap_control 'Show password'
 assert_field_value 'Password' 'Orbit123!'
 tap_control 'Hide password'
-note_limitation 'IME Next/Done and focus assertions require keyboard-action support; this flow submits with the Sign in button.'
-tap_control 'Sign in'
+find_element 'Password' true true field
+press_ime_action done
 assert_text 'A fresh start, Alex.'
 finish_flow

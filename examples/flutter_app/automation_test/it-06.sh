@@ -6,15 +6,13 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/support/mcp.sh"
 tap_control 'Forgot password?'
 assert_text 'Forgot your password?'
 assert_absent 'Show password'
-# Only native text fields are checked; do not confuse explanatory text with a field.
-query_elements ''
-jq -e '[.[] | select(.className|test("EditText|textField";"i"))] | length==1' \
-  "$ARTIFACT_DIR/last-query.json" >/dev/null
+# Type and text are applied before maxResults, so one extra slot exposes a second field.
+assert_text_field_count 1
 tap_control 'Try password reset'
 assert_text 'Enter a valid email address.'
 fill_field 'Email address' 'someone@example.org'
-note_limitation 'Reset busy/disabled controls and keyboard Done submission require additional MCP capabilities; this flow uses the reset button.'
-tap_control 'Try password reset'
+press_ime_action done
+note_limitation 'The 700 ms reset busy state and disabled controls cannot be reliably observed through sequential native MCP queries.'
 assert_text 'You’re all set.'
 assert_text 'Reset request simulated. This demo does not send email or change your password.'
 screenshot reset-complete

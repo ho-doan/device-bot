@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use device_bot::Server;
 use device_mcp_protocol::{JsonRpcRequest, PROTOCOL_VERSION};
-use robot_core::{Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
+use robot_core::{
+    Bounds, DeviceState, ElementType, ImeAction, Platform, Point, Robot, RobotDevice, RobotError,
+    UiElement,
+};
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -90,6 +93,14 @@ impl Robot for RecordingRobot {
         Ok(())
     }
 
+    async fn press_ime_action(&self, device_id: &str, action: ImeAction) -> Result<(), RobotError> {
+        self.actions
+            .lock()
+            .unwrap()
+            .push(format!("ime:{device_id}:{}", action.as_str()));
+        Ok(())
+    }
+
     async fn swipe(
         &self,
         device_id: &str,
@@ -125,20 +136,65 @@ impl Robot for RecordingRobot {
     }
 
     async fn list_elements(&self, _device_id: &str) -> Result<Vec<UiElement>, RobotError> {
-        Ok(vec![UiElement {
-            class_name: "android.widget.Button".into(),
-            resource_id: Some("com.example:id/submit".into()),
-            text: Some("Submit".into()),
-            content_description: None,
-            bounds: Bounds {
-                left: 10,
-                top: 20,
-                right: 100,
-                bottom: 70,
+        Ok(vec![
+            UiElement {
+                class_name: "android.widget.Button".into(),
+                resource_id: Some("com.example:id/submit".into()),
+                text: Some("Submit".into()),
+                content_description: None,
+                bounds: Bounds {
+                    left: 10,
+                    top: 20,
+                    right: 100,
+                    bottom: 70,
+                },
+                clickable: true,
+                enabled: true,
+                focused: None,
+                checked: None,
+                selected: None,
+                value: None,
+                element_type: None,
             },
-            clickable: true,
-            enabled: true,
-        }])
+            UiElement {
+                class_name: "android.widget.Button".into(),
+                resource_id: None,
+                text: Some("Cancel".into()),
+                content_description: None,
+                bounds: Bounds {
+                    left: 110,
+                    top: 20,
+                    right: 200,
+                    bottom: 70,
+                },
+                clickable: true,
+                enabled: true,
+                focused: None,
+                checked: None,
+                selected: None,
+                value: None,
+                element_type: None,
+            },
+            UiElement {
+                class_name: "android.widget.EditText".into(),
+                resource_id: Some("com.example:id/password".into()),
+                text: Some("secret".into()),
+                content_description: None,
+                bounds: Bounds {
+                    left: 10,
+                    top: 80,
+                    right: 200,
+                    bottom: 120,
+                },
+                clickable: true,
+                enabled: true,
+                focused: Some(true),
+                checked: None,
+                selected: None,
+                value: Some("secret".into()),
+                element_type: Some(ElementType::TextField),
+            },
+        ])
     }
 }
 
@@ -196,6 +252,7 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
             "mobile_boot_device",
             "mobile_open_url",
             "mobile_type_keys",
+            "mobile_press_ime_action",
             "mobile_list_elements_on_screen",
             "mobile_execute_ui_actions",
             "mobile_get_ui_runner_status",
@@ -363,6 +420,94 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
         "Submit"
     );
 
+    let typed_elements = server
+        .handle(request(
+            16,
+            "tools/call",
+            json!({
+                "name": "mobile_list_elements_on_screen",
+                "arguments": {
+                    "deviceId": "emulator-5554",
+                    "elementType": "textField",
+                    "maxResults": 1
+                }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        typed_elements["result"]["structuredContent"]["elements"][0]["resourceId"],
+        "com.example:id/password"
+    );
+    assert_eq!(
+        typed_elements["result"]["structuredContent"]["elements"][0]["elementType"],
+        "textField"
+    );
+    assert_eq!(
+        typed_elements["result"]["structuredContent"]["elements"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let invalid_type = server
+        .handle(request(
+            17,
+            "tools/call",
+            json!({
+                "name": "mobile_list_elements_on_screen",
+                "arguments": {
+                    "deviceId": "emulator-5554",
+                    "elementType": "EditText"
+                }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(invalid_type["result"]["isError"], true);
+    assert!(
+        invalid_type["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported elementType")
+    );
+
+    let ime = server
+        .handle(request(
+            18,
+            "tools/call",
+            json!({
+                "name": "mobile_press_ime_action",
+                "arguments": { "deviceId": "emulator-5554", "action": "next" }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        ime["result"]["content"][0]["text"],
+        "Pressed IME action next"
+    );
+
+    let invalid_ime = server
+        .handle(request(
+            19,
+            "tools/call",
+            json!({
+                "name": "mobile_press_ime_action",
+                "arguments": { "deviceId": "emulator-5554", "action": "enter" }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(invalid_ime["result"]["isError"], true);
+    assert!(
+        invalid_ime["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported IME action")
+    );
+
     let swipe = server
         .handle(request(
             10,
@@ -417,6 +562,7 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
     assert_eq!(
         &robot.actions.lock().unwrap()[2..],
         [
+            "ime:emulator-5554:next",
             "swipe:emulator-5554:10,20,30,40:500",
             "install:emulator-5554:/tmp/example.apk",
             "uninstall:emulator-5554:com.example.app"
@@ -455,7 +601,7 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
         "Screen recording saved: artifacts/emulator-5554.mp4"
     );
     assert_eq!(
-        &robot.actions.lock().unwrap()[5..],
+        &robot.actions.lock().unwrap()[6..],
         ["record-start:emulator-5554", "record-stop:emulator-5554"]
     );
 }

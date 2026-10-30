@@ -61,7 +61,136 @@ pub struct Bounds {
     pub bottom: i32,
 }
 
+/// Normalized control kinds shared by MCP queries and driver adapters.
+///
+/// `textField` includes password, search, and multiline editors. Drivers that
+/// cannot classify a node leave `UiElement::element_type` unset instead of
+/// guessing.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ElementType {
+    TextField,
+    Button,
+    Link,
+    StaticText,
+    CheckBox,
+    Switch,
+    Image,
+    Radio,
+    Slider,
+}
+
+impl ElementType {
+    pub const CONTRACT_NAMES: &'static str =
+        "textField, button, link, staticText, checkBox, switch, image, radio, slider";
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TextField => "textField",
+            Self::Button => "button",
+            Self::Link => "link",
+            Self::StaticText => "staticText",
+            Self::CheckBox => "checkBox",
+            Self::Switch => "switch",
+            Self::Image => "image",
+            Self::Radio => "radio",
+            Self::Slider => "slider",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, RobotError> {
+        match value {
+            "textField" => Ok(Self::TextField),
+            "button" => Ok(Self::Button),
+            "link" => Ok(Self::Link),
+            "staticText" => Ok(Self::StaticText),
+            "checkBox" => Ok(Self::CheckBox),
+            "switch" => Ok(Self::Switch),
+            "image" => Ok(Self::Image),
+            "radio" => Ok(Self::Radio),
+            "slider" => Ok(Self::Slider),
+            other => Err(RobotError::InvalidInput(format!(
+                "unsupported elementType {other:?}; expected one of: {}",
+                Self::CONTRACT_NAMES
+            ))),
+        }
+    }
+}
+
+/// IME action on the focused editor. These are distinct actions; Enter is not
+/// a substitute for a named action the field is not configured to perform.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ImeAction {
+    Next,
+    Done,
+    Go,
+    Search,
+    Send,
+}
+
+impl ImeAction {
+    pub const CONTRACT_NAMES: &'static str = "next, done, go, search, send";
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Next => "next",
+            Self::Done => "done",
+            Self::Go => "go",
+            Self::Search => "search",
+            Self::Send => "send",
+        }
+    }
+
+    /// Keyboard label XCTest should tap. This is an exact key, not a fallback list.
+    pub fn keyboard_label(self) -> &'static str {
+        match self {
+            Self::Next => "Next",
+            Self::Done => "Done",
+            Self::Go => "Go",
+            Self::Search => "Search",
+            Self::Send => "Send",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, RobotError> {
+        match value {
+            "next" => Ok(Self::Next),
+            "done" => Ok(Self::Done),
+            "go" => Ok(Self::Go),
+            "search" => Ok(Self::Search),
+            "send" => Ok(Self::Send),
+            other => Err(RobotError::InvalidInput(format!(
+                "unsupported IME action {other:?}; expected one of: {}",
+                Self::CONTRACT_NAMES
+            ))),
+        }
+    }
+
+    pub fn from_android_action_id(action_id: u32) -> Option<Self> {
+        match action_id {
+            2 => Some(Self::Go),
+            3 => Some(Self::Search),
+            4 => Some(Self::Send),
+            5 => Some(Self::Next),
+            6 => Some(Self::Done),
+            _ => None,
+        }
+    }
+}
+
+/// Owned query so drivers can apply type and text before `max_results`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ElementQuery {
+    pub filter: Option<String>,
+    pub element_type: Option<ElementType>,
+    pub max_results: Option<usize>,
+}
+
 /// A normalized accessibility node from the platform UI tree.
+///
+/// `focused`, `checked`, and `selected` are omitted from JSON when the driver
+/// could not observe them. Absence means unknown, not false.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct UiElement {
@@ -72,6 +201,17 @@ pub struct UiElement {
     pub bounds: Bounds,
     pub clickable: bool,
     pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focused: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<bool>,
+    /// Native editor value when the platform exposes one separately from the label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_type: Option<ElementType>,
 }
 
 /// A UI input operation that can be executed in one driver session.
@@ -202,26 +342,132 @@ pub trait Robot: Send + Sync {
         filter: Option<&str>,
         max_results: Option<usize>,
     ) -> Result<Vec<UiElement>, RobotError> {
-        let mut elements = self.list_elements(device_id).await?;
-        if let Some(filter) = filter {
-            let filter = filter.to_lowercase();
-            elements.retain(|element| {
-                [
-                    Some(&element.class_name),
-                    element.resource_id.as_ref(),
-                    element.text.as_ref(),
-                    element.content_description.as_ref(),
-                ]
-                .into_iter()
-                .flatten()
-                .any(|value| value.to_lowercase().contains(&filter))
-            });
-        }
-        if let Some(max_results) = max_results {
-            elements.truncate(max_results);
-        }
-        Ok(elements)
+        let elements = self.list_elements(device_id).await?;
+        Ok(apply_element_query(
+            elements,
+            &ElementQuery {
+                filter: filter.map(str::to_owned),
+                element_type: None,
+                max_results,
+            },
+        ))
     }
+    /// Applies `element_type` and `filter` before `max_results`.
+    ///
+    /// Queries without a type keep the driver's `list_elements_filtered` path.
+    /// A typed query loads the tree and filters before truncating. Drivers that
+    /// cap `list_elements` must override this so the cap is not applied first.
+    async fn list_elements_query(
+        &self,
+        device_id: &str,
+        query: ElementQuery,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        if query.element_type.is_none() {
+            return self
+                .list_elements_filtered(device_id, query.filter.as_deref(), query.max_results)
+                .await;
+        }
+        let elements = self.list_elements(device_id).await?;
+        Ok(apply_element_query(elements, &query))
+    }
+    /// Presses one named IME action on the focused editor.
+    ///
+    /// The default is an explicit capability error. Sending Enter or moving focus
+    /// is not a fallback for drivers that cannot perform the requested action.
+    async fn press_ime_action(&self, device_id: &str, action: ImeAction) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "IME action {} is not supported for device {device_id}",
+            action.as_str()
+        )))
+    }
+}
+
+/// Fills `element_type` from the native class or role when the adapter did not.
+pub fn prepare_elements(elements: &mut [UiElement]) {
+    for element in elements {
+        if element.element_type.is_none() {
+            element.element_type = classify_class_name(&element.class_name);
+        }
+    }
+}
+
+pub fn classify_class_name(class_name: &str) -> Option<ElementType> {
+    let simple = class_name.rsplit(['.', '/']).next().unwrap_or(class_name);
+    let normalized = simple.to_ascii_lowercase().replace('_', "");
+    if normalized.contains("edittext")
+        || normalized.contains("autocomplete")
+        || matches!(
+            normalized.as_str(),
+            "textfield"
+                | "securetextfield"
+                | "textarea"
+                | "searchfield"
+                | "axtextfield"
+                | "axtextarea"
+                | "axsearchfield"
+        )
+    {
+        return Some(ElementType::TextField);
+    }
+    if normalized.contains("checkbox") || normalized.contains("checkedtext") {
+        return Some(ElementType::CheckBox);
+    }
+    if normalized.contains("radiobutton")
+        || matches!(normalized.as_str(), "radio" | "axradiobutton")
+    {
+        return Some(ElementType::Radio);
+    }
+    if normalized.contains("switch") || normalized.contains("toggle") {
+        return Some(ElementType::Switch);
+    }
+    if normalized.contains("seekbar") || matches!(normalized.as_str(), "slider" | "axslider") {
+        return Some(ElementType::Slider);
+    }
+    if normalized.contains("button") {
+        return Some(ElementType::Button);
+    }
+    if normalized.contains("image") || normalized == "img" {
+        return Some(ElementType::Image);
+    }
+    if matches!(normalized.as_str(), "link" | "a" | "axlink") {
+        return Some(ElementType::Link);
+    }
+    if matches!(
+        normalized.as_str(),
+        "text" | "statictext" | "textview" | "axstatictext"
+    ) {
+        return Some(ElementType::StaticText);
+    }
+    None
+}
+
+pub fn element_matches_filter(element: &UiElement, filter: &str) -> bool {
+    let filter = filter.to_lowercase();
+    [
+        Some(element.class_name.as_str()),
+        element.resource_id.as_deref(),
+        element.text.as_deref(),
+        element.content_description.as_deref(),
+        element.value.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value.to_lowercase().contains(&filter))
+}
+
+/// Filters by type and text, then applies `max_results`.
+pub fn apply_element_query(mut elements: Vec<UiElement>, query: &ElementQuery) -> Vec<UiElement> {
+    prepare_elements(&mut elements);
+    if let Some(filter) = query.filter.as_deref() {
+        elements.retain(|element| element_matches_filter(element, filter));
+    }
+    if let Some(element_type) = query.element_type {
+        elements.retain(|element| element.element_type == Some(element_type));
+    }
+    if let Some(max_results) = query.max_results {
+        elements.truncate(max_results);
+    }
+    elements
 }
 
 /// Routes a device operation to the driver which currently owns that ID.
@@ -335,6 +581,24 @@ impl Robot for RobotRegistry {
             .list_elements_filtered(id, filter, max_results)
             .await
     }
+
+    async fn list_elements_query(
+        &self,
+        id: &str,
+        query: ElementQuery,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        self.driver_for(id)
+            .await?
+            .list_elements_query(id, query)
+            .await
+    }
+
+    async fn press_ime_action(&self, id: &str, action: ImeAction) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .press_ime_action(id, action)
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -396,6 +660,165 @@ mod tests {
         async fn list_elements(&self, _: &str) -> Result<Vec<UiElement>, RobotError> {
             Ok(vec![])
         }
+    }
+
+    fn element(class_name: &str, text: &str) -> UiElement {
+        UiElement {
+            class_name: class_name.into(),
+            resource_id: None,
+            text: Some(text.into()),
+            content_description: None,
+            bounds: Bounds {
+                left: 0,
+                top: 0,
+                right: 10,
+                bottom: 10,
+            },
+            clickable: true,
+            enabled: true,
+            focused: None,
+            checked: None,
+            selected: None,
+            value: None,
+            element_type: None,
+        }
+    }
+
+    struct TreeRobot {
+        elements: Vec<UiElement>,
+    }
+
+    #[async_trait]
+    impl Robot for TreeRobot {
+        async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
+            Ok(vec![])
+        }
+        async fn take_screenshot(&self, _: &str) -> Result<Vec<u8>, RobotError> {
+            Ok(vec![])
+        }
+        async fn tap(&self, _: &str, _: Point) -> Result<(), RobotError> {
+            Ok(())
+        }
+        async fn launch_app(&self, _: &str, _: &str) -> Result<(), RobotError> {
+            Ok(())
+        }
+        async fn open_url(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), RobotError> {
+            Ok(())
+        }
+        async fn type_text(&self, _: &str, _: &str) -> Result<(), RobotError> {
+            Ok(())
+        }
+        async fn swipe(
+            &self,
+            _: &str,
+            _: Point,
+            _: Point,
+            _: Option<u64>,
+        ) -> Result<(), RobotError> {
+            Ok(())
+        }
+        async fn install_app(&self, _: &str, _: &str) -> Result<(), RobotError> {
+            Ok(())
+        }
+        async fn uninstall_app(&self, _: &str, _: &str) -> Result<(), RobotError> {
+            Ok(())
+        }
+        async fn list_elements(&self, _: &str) -> Result<Vec<UiElement>, RobotError> {
+            Ok(self.elements.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn element_type_and_text_filter_run_before_max_results() {
+        let robot = TreeRobot {
+            elements: vec![
+                element("android.widget.Button", "Save"),
+                element("android.widget.Button", "Cancel"),
+                element("android.widget.EditText", "secret"),
+                element("android.widget.EditText", "user@example.com"),
+            ],
+        };
+
+        let first_text_field = robot
+            .list_elements_query(
+                "device",
+                ElementQuery {
+                    filter: None,
+                    element_type: Some(ElementType::TextField),
+                    max_results: Some(1),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(first_text_field.len(), 1);
+        assert_eq!(first_text_field[0].text.as_deref(), Some("secret"));
+        assert_eq!(
+            first_text_field[0].element_type,
+            Some(ElementType::TextField)
+        );
+
+        let email = robot
+            .list_elements_query(
+                "device",
+                ElementQuery {
+                    filter: Some("user@example.com".into()),
+                    element_type: Some(ElementType::TextField),
+                    max_results: Some(2),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(email.len(), 1);
+        assert_eq!(email[0].text.as_deref(), Some("user@example.com"));
+
+        let untyped = robot
+            .list_elements_filtered("device", None, Some(1))
+            .await
+            .unwrap();
+        assert_eq!(untyped[0].text.as_deref(), Some("Save"));
+    }
+
+    #[test]
+    fn classifies_password_editors_as_text_fields_and_rejects_unknown_types() {
+        assert_eq!(
+            classify_class_name("android.widget.EditText"),
+            Some(ElementType::TextField)
+        );
+        assert_eq!(
+            classify_class_name("androidx.appcompat.widget.AppCompatEditText"),
+            Some(ElementType::TextField)
+        );
+        assert_eq!(
+            classify_class_name("android.widget.ImageButton"),
+            Some(ElementType::Button)
+        );
+        assert!(ElementType::parse("EditText").is_err());
+        assert!(
+            ElementType::parse("not-a-type")
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported elementType")
+        );
+        assert_eq!(ImeAction::from_android_action_id(5), Some(ImeAction::Next));
+        assert_eq!(
+            ImeAction::from_android_action_id(0x06),
+            Some(ImeAction::Done)
+        );
+        assert_eq!(ImeAction::from_android_action_id(1), None);
+    }
+
+    #[test]
+    fn omitted_observation_fields_deserialize_as_unknown() {
+        let element: UiElement = serde_json::from_str(
+            r#"{"className":"android.widget.Button","text":null,"resourceId":null,"contentDescription":null,"bounds":{"left":0,"top":0,"right":1,"bottom":1},"clickable":true,"enabled":true}"#,
+        )
+        .unwrap();
+        assert_eq!(element.focused, None);
+        assert_eq!(element.checked, None);
+        assert_eq!(element.selected, None);
+        let json = serde_json::to_value(&element).unwrap();
+        assert!(json.get("focused").is_none());
+        assert!(json.get("checked").is_none());
     }
 
     #[tokio::test]

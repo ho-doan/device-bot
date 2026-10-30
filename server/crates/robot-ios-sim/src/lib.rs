@@ -13,8 +13,8 @@ use std::{
 
 use async_trait::async_trait;
 use robot_core::{
-    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiAction, UiElement,
-    UiRunnerStatus,
+    Bounds, DeviceState, ElementQuery, ImeAction, Platform, Point, Robot, RobotDevice, RobotError,
+    UiAction, UiElement, UiRunnerStatus, apply_element_query,
 };
 use robot_ios_real::XCTestAgentBridge;
 use serde::Deserialize;
@@ -595,6 +595,8 @@ impl IosSimulatorRobot {
                 )),
                 "DEVICE_BOT_TEXT" => Some(("text", json!(value))),
                 "DEVICE_BOT_ELEMENT_FILTER" => Some(("filter", json!(value))),
+                "DEVICE_BOT_ELEMENT_TYPE" => Some(("elementType", json!(value))),
+                "DEVICE_BOT_IME_ACTION" => Some(("action", json!(value))),
                 "DEVICE_BOT_MAX_RESULTS" => {
                     Some(("maxResults", json!(value.parse::<usize>().ok()?)))
                 }
@@ -611,6 +613,11 @@ impl IosSimulatorRobot {
                     .await
             }
             "type" => agent.dispatch("text", Value::Object(params), timeout).await,
+            "ime-action" => {
+                agent
+                    .dispatch("ime-action", Value::Object(params), timeout)
+                    .await
+            }
             "swipe" => {
                 let mut params = params;
                 if let Some(value) = params.remove("x") {
@@ -1072,40 +1079,86 @@ impl Robot for IosSimulatorRobot {
         let result = self
             .run_xctest(device_id, &app_id, "list-elements", &values, None)
             .await?;
-        let elements: Vec<AgentElement> = serde_json::from_value(
-            result
-                .get("elements")
-                .cloned()
-                .unwrap_or_else(|| Value::Array(Vec::new())),
-        )
-        .map_err(|error| {
-            RobotError::CommandFailed(format!(
-                "invalid persistent XCTest element payload: {error}"
-            ))
-        })?;
+        let mut elements = decode_agent_elements(&result)?;
         let filter = filter.map(str::to_ascii_lowercase);
-        let mut elements = elements
-            .into_iter()
-            .map(AgentElement::into_ui_element)
-            .filter(|element| {
-                filter.as_deref().is_none_or(|filter| {
-                    [
-                        element.resource_id.as_deref(),
-                        element.text.as_deref(),
-                        element.content_description.as_deref(),
-                        Some(element.class_name.as_str()),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .any(|value| value.to_ascii_lowercase().contains(filter))
-                })
-            })
-            .collect::<Vec<_>>();
+        if let Some(filter) = filter.as_deref() {
+            elements.retain(|element| robot_core::element_matches_filter(element, filter));
+        }
         if let Some(max_results) = max_results {
             elements.truncate(max_results);
         }
         Ok(elements)
     }
+
+    async fn list_elements_query(
+        &self,
+        device_id: &str,
+        query: ElementQuery,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        let Some(element_type) = query.element_type else {
+            return self
+                .list_elements_filtered(device_id, query.filter.as_deref(), query.max_results)
+                .await;
+        };
+        let app_id = self.active_app(device_id).await?;
+        let mut values = vec![("DEVICE_BOT_ELEMENT_TYPE", element_type.as_str().to_owned())];
+        if let Some(filter) = query.filter.as_deref() {
+            values.push(("DEVICE_BOT_ELEMENT_FILTER", filter.to_owned()));
+        }
+        if let Some(max_results) = query.max_results {
+            values.push(("DEVICE_BOT_MAX_RESULTS", max_results.to_string()));
+        }
+        let result = self
+            .run_xctest(device_id, &app_id, "list-elements", &values, None)
+            .await?;
+        if result.get("appliedElementType").and_then(Value::as_str) != Some(element_type.as_str()) {
+            return Err(RobotError::Unsupported(
+                "iOS Simulator XCTest agent did not apply elementType; rebuild and reinstall the runner before querying by type".into(),
+            ));
+        }
+        let elements = decode_agent_elements(&result)?;
+        Ok(apply_element_query(elements, &query))
+    }
+
+    async fn press_ime_action(&self, device_id: &str, action: ImeAction) -> Result<(), RobotError> {
+        let app_id = self.active_app(device_id).await?;
+        match self
+            .run_xctest(
+                device_id,
+                &app_id,
+                "ime-action",
+                &[("DEVICE_BOT_IME_ACTION", action.as_str().to_owned())],
+                None,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(RobotError::CommandFailed(message)) if message.contains("unknown_method") => {
+                Err(RobotError::Unsupported(
+                    "iOS Simulator XCTest agent does not support IME actions; rebuild and reinstall the runner".into(),
+                ))
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+fn decode_agent_elements(result: &Value) -> Result<Vec<UiElement>, RobotError> {
+    let elements: Vec<AgentElement> = serde_json::from_value(
+        result
+            .get("elements")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+    )
+    .map_err(|error| {
+        RobotError::CommandFailed(format!(
+            "invalid persistent XCTest element payload: {error}"
+        ))
+    })?;
+    Ok(elements
+        .into_iter()
+        .map(AgentElement::into_ui_element)
+        .collect())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1120,6 +1173,12 @@ struct AgentElement {
     bounds: AgentBounds,
     enabled: bool,
     clickable: bool,
+    #[serde(default)]
+    focused: Option<bool>,
+    #[serde(default)]
+    checked: Option<bool>,
+    #[serde(default)]
+    selected: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1132,10 +1191,11 @@ struct AgentBounds {
 
 impl AgentElement {
     fn into_ui_element(self) -> UiElement {
+        let value = self.value.filter(|value| !value.is_empty());
         UiElement {
             class_name: self.role,
             resource_id: self.automation_id.or(Some(self.node_id)),
-            text: self.text.or(self.value).filter(|value| !value.is_empty()),
+            text: self.text.or_else(|| value.clone()),
             content_description: self.label.filter(|value| !value.is_empty()),
             bounds: Bounds {
                 left: self.bounds.x.round() as i32,
@@ -1145,6 +1205,11 @@ impl AgentElement {
             },
             clickable: self.clickable,
             enabled: self.enabled,
+            focused: self.focused,
+            checked: self.checked,
+            selected: self.selected,
+            value,
+            element_type: None,
         }
     }
 }

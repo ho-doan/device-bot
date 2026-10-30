@@ -219,10 +219,11 @@ The intended end-to-end sequence is:
 | `mobile_uninstall_app` | `{ "deviceId": "emulator-5554", "appId": "com.example.app" }` | Uninstall confirmation |
 | `mobile_list_installed_apps` | `{ "deviceId": "device-id" }` | Installed-app inventory for Android, macOS, iOS, or Windows; the result is structured JSON |
 | `mobile_type_keys` | `{ "deviceId": "emulator-5554", "text": "babyshake" }` | Text-input confirmation |
+| `mobile_press_ime_action` | `{ "deviceId": "emulator-5554", "action": "next" }` | Presses `next`, `done`, `go`, `search`, or `send` on the focused editor. Android sends KEYCODE_ENTER only when `dumpsys input_method` reports that same action |
 | `mobile_take_screenshot` | `{ "deviceId": "emulator-5554" }` | MCP `image` content (`image/png`, Base64) |
 | `mobile_click_on_screen_at_coordinates` | `{ "deviceId": "emulator-5554", "x": 100, "y": 240 }` | Text confirmation |
 | `mobile_swipe_on_screen` | `{ "deviceId": "emulator-5554", "startX": 100, "startY": 800, "endX": 100, "endY": 200 }` | Swipe confirmation; optional `durationMs` |
-| `mobile_list_elements_on_screen` | `{ "deviceId": "emulator-5554", "filter": "Save", "maxResults": 20 }` | `structuredContent.elements` matching the optional case-insensitive filter, bounded by `maxResults` |
+| `mobile_list_elements_on_screen` | `{ "deviceId": "emulator-5554", "elementType": "textField", "filter": "Save", "maxResults": 20 }` | `structuredContent.elements`. `elementType` and `filter` are AND conditions applied before `maxResults`. `textField` includes password fields. Omitted `focused`, `checked`, or `selected` means unknown |
 
 ## iOS Simulator tools
 
@@ -231,8 +232,9 @@ The intended end-to-end sequence is:
 | `mobile_take_screenshot` | `{ "deviceId": "iOS-simulator-UDID" }` | MCP `image` content (`image/png`, Base64) |
 | `mobile_click_on_screen_at_coordinates` | `{ "deviceId": "iOS-simulator-UDID", "x": 100, "y": 240 }` | Bundled XCTest touch at the screen point |
 | `mobile_type_keys` | `{ "deviceId": "iOS-simulator-UDID", "text": "hello" }` | Bundled XCTest keyboard input |
+| `mobile_press_ime_action` | `{ "deviceId": "iOS-simulator-UDID", "action": "done" }` | Taps the keyboard key with that exact label. Rebuild the XCTest runner after upgrading the server |
 | `mobile_swipe_on_screen` | `{ "deviceId": "iOS-simulator-UDID", "startX": 100, "startY": 700, "endX": 100, "endY": 200 }` | Bundled XCTest touch swipe; optional `durationMs` |
-| `mobile_list_elements_on_screen` | `{ "deviceId": "iOS-simulator-UDID", "filter": "Baby Shark", "maxResults": 10 }` | XCTest query is filtered natively and bounded before element materialization for fast web-view queries |
+| `mobile_list_elements_on_screen` | `{ "deviceId": "iOS-simulator-UDID", "elementType": "textField", "filter": "Baby Shark", "maxResults": 10 }` | XCTest selects the element-type query, then applies the text filter and `maxResults`. Rebuild the simulator runner before using `elementType` |
 | `mobile_start_screen_recording` | `{ "deviceId": "iOS-simulator-UDID" }` | Starts a simulator MP4 artifact |
 | `mobile_stop_screen_recording` | `{ "deviceId": "iOS-simulator-UDID" }` | Stops recording and returns the saved MP4 path |
 

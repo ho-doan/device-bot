@@ -2,6 +2,17 @@ import CoreGraphics
 import Foundation
 import XCTest
 
+enum DumpError: Error, CustomStringConvertible {
+  case unsupportedElementType(String)
+
+  var description: String {
+    switch self {
+    case .unsupportedElementType(let elementType):
+      return "unsupported elementType \(elementType)"
+    }
+  }
+}
+
 final class DeviceKitXCTestDriver {
   struct UiElement {
     let nodeId: String
@@ -13,6 +24,9 @@ final class DeviceKitXCTestDriver {
     let bounds: CGRect
     let enabled: Bool
     let clickable: Bool
+    let focused: Bool?
+    let checked: Bool?
+    let selected: Bool?
   }
 
   private(set) var app: XCUIApplication?
@@ -27,22 +41,16 @@ final class DeviceKitXCTestDriver {
     app?.launch()
   }
 
-  func dumpUi(filter: String? = nil, maxResults: Int? = nil) -> [UiElement] {
+  func dumpUi(filter: String? = nil, elementType: String? = nil, maxResults: Int? = nil) throws -> [UiElement] {
     guard let app else { return [] }
     generation += 1
     let normalizedFilter = filter.flatMap { nonEmpty($0) }?.lowercased()
     let limit = maxResults.map { max($0, 0) } ?? 100
     guard limit > 0 else { return [] }
+    guard let baseQueries = queries(for: elementType, in: app) else {
+      throw DumpError.unsupportedElementType(elementType ?? "")
+    }
     var elements: [UiElement] = []
-    let baseQueries: [XCUIElementQuery] = [
-      app.textFields,
-      app.secureTextFields,
-      app.textViews,
-      app.searchFields,
-      app.buttons,
-      app.links,
-      app.staticTexts,
-    ]
     let predicate = normalizedFilter.map {
       NSPredicate(
         format: "identifier CONTAINS[c] %@ OR label CONTAINS[c] %@ OR value CONTAINS[c] %@",
@@ -71,13 +79,34 @@ final class DeviceKitXCTestDriver {
             role: role(for: element.elementType),
             bounds: frame,
             enabled: element.isEnabled,
-            clickable: element.isHittable
+            clickable: element.isHittable,
+            focused: optionalFocus(element),
+            checked: checkedState(element),
+            selected: selectedState(element)
           )
         )
       }
       if elements.count >= limit { break }
     }
     return elements
+  }
+
+  func pressImeAction(_ action: String) -> Bool {
+    guard let app else { return false }
+    let label: String
+    switch action {
+    case "next": label = "Next"
+    case "done": label = "Done"
+    case "go": label = "Go"
+    case "search": label = "Search"
+    case "send": label = "Send"
+    default: return false
+    }
+    let predicate = NSPredicate(format: "label ==[c] %@", label)
+    let key = app.keyboards.buttons.matching(predicate).firstMatch
+    guard key.exists, key.isHittable else { return false }
+    key.tap()
+    return true
   }
 
   func tap(x: CGFloat, y: CGFloat) -> Bool {
@@ -184,6 +213,10 @@ final class DeviceKitXCTestDriver {
     case .textField, .secureTextField, .textView, .searchField: return "textField"
     case .link: return "link"
     case .image: return "image"
+    case .checkBox: return "checkBox"
+    case .switch: return "switch"
+    case .radioButton: return "radio"
+    case .slider: return "slider"
     case .scrollView, .table, .collectionView: return "scrollView"
     default: return "unknown"
     }
@@ -196,6 +229,69 @@ final class DeviceKitXCTestDriver {
   private func stringValue(_ value: Any?) -> String? {
     guard let value, !(value is NSNull) else { return nil }
     return nonEmpty(String(describing: value))
+  }
+
+  private func queries(for elementType: String?, in app: XCUIApplication) -> [XCUIElementQuery]? {
+    switch elementType.flatMap({ nonEmpty($0) }) {
+    case nil:
+      return [
+        app.textFields,
+        app.secureTextFields,
+        app.textViews,
+        app.searchFields,
+        app.buttons,
+        app.links,
+        app.staticTexts,
+      ]
+    case "textField":
+      return [app.textFields, app.secureTextFields, app.textViews, app.searchFields]
+    case "button":
+      return [app.buttons]
+    case "link":
+      return [app.links]
+    case "staticText":
+      return [app.staticTexts]
+    case "image":
+      return [app.images]
+    case "switch":
+      return [app.switches]
+    case "slider":
+      return [app.sliders]
+    case "checkBox":
+      return [app.descendants(matching: .checkBox)]
+    case "radio":
+      return [app.descendants(matching: .radioButton)]
+    default:
+      return nil
+    }
+  }
+
+  private func optionalFocus(_ element: XCUIElement) -> Bool? {
+    let selector = NSSelectorFromString("hasFocus")
+    guard element.responds(to: selector) else { return nil }
+    return element.value(forKey: "hasFocus") as? Bool
+  }
+
+  private func checkedState(_ element: XCUIElement) -> Bool? {
+    switch element.elementType {
+    case .switch, .checkBox:
+      if let value = stringValue(element.value)?.lowercased() {
+        if value == "1" || value == "true" { return true }
+        if value == "0" || value == "false" { return false }
+      }
+      return nil
+    default:
+      return nil
+    }
+  }
+
+  private func selectedState(_ element: XCUIElement) -> Bool? {
+    switch element.elementType {
+    case .button, .switch, .checkBox, .radioButton:
+      return element.isSelected
+    default:
+      return element.isSelected ? true : nil
+    }
   }
 
   private func pressSubmitKey(in app: XCUIApplication) -> Bool {

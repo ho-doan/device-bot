@@ -505,7 +505,7 @@ fn native_collect_elements(
         .and_then(|value| non_empty(&value));
     let value =
         native_string_attribute(element, attributes.value).and_then(|value| non_empty(&value));
-    let text = title.clone().or(value);
+    let text = title.clone().or_else(|| value.clone());
 
     if native_matches_filter(filter, &role, text.as_deref(), description.as_deref()) {
         if let (Some(position), Some(size)) = (
@@ -529,6 +529,11 @@ fn native_collect_elements(
                         "AXButton" | "AXLink" | "AXMenuItem" | "AXPopUpButton"
                     ),
                     enabled: true,
+                    focused: None,
+                    checked: None,
+                    selected: None,
+                    value,
+                    element_type: None,
                 });
             }
         }
@@ -921,7 +926,7 @@ fn parse_accessibility_elements(output: &str) -> Vec<UiElement> {
                     role.into()
                 },
                 resource_id: None,
-                text: title.or(value),
+                text: title.or_else(|| value.clone()),
                 content_description: description,
                 bounds: robot_core::Bounds {
                     left: x.round() as i32,
@@ -931,6 +936,11 @@ fn parse_accessibility_elements(output: &str) -> Vec<UiElement> {
                 },
                 clickable: matches!(role, "AXButton" | "AXLink" | "AXMenuItem" | "AXPopUpButton"),
                 enabled: true,
+                focused: None,
+                checked: None,
+                selected: None,
+                value,
+                element_type: None,
             })
         })
         .collect()

@@ -270,6 +270,29 @@ function Add-Element([System.Windows.Automation.AutomationElement]$element, [int
     $bottom = [int][Math]::Round($rectangle.Bottom)
   } catch { }
   try { $enabled = [bool]$element.Current.IsEnabled } catch { }
+  $focused = $null
+  try { $focused = [bool]$element.Current.HasKeyboardFocus } catch { }
+  $checked = $null
+  try {
+    $toggle = $element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+    if ($null -ne $toggle) {
+      $checked = ([System.Windows.Automation.TogglePattern]$toggle).Current.ToggleState -eq [System.Windows.Automation.ToggleState]::On
+    }
+  } catch { }
+  $selected = $null
+  try {
+    $selection = $element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+    if ($null -ne $selection) {
+      $selected = [bool]([System.Windows.Automation.SelectionItemPattern]$selection).Current.IsSelected
+    }
+  } catch { }
+  $nativeValue = $null
+  try {
+    $valuePattern = $element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+    if ($null -ne $valuePattern) {
+      $nativeValue = Normalize-Text ([System.Windows.Automation.ValuePattern]$valuePattern).Current.Value
+    }
+  } catch { }
 
   $matches = [string]::IsNullOrEmpty($filter)
   if (-not $matches) {
@@ -295,6 +318,10 @@ function Add-Element([System.Windows.Automation.AutomationElement]$element, [int
       bottom = $bottom
       clickable = @('button', 'link', 'menuItem', 'radio', 'checkbox') -contains $role
       enabled = $enabled
+      focused = $focused
+      checked = $checked
+      selected = $selected
+      value = $nativeValue
     })
   }
 
@@ -398,6 +425,11 @@ fn parse_uia_elements(output: &[u8]) -> Result<Vec<UiElement>, RobotError> {
                     .get("enabled")
                     .and_then(Value::as_bool)
                     .unwrap_or(true),
+                focused: object.get("focused").and_then(Value::as_bool),
+                checked: object.get("checked").and_then(Value::as_bool),
+                selected: object.get("selected").and_then(Value::as_bool),
+                value: optional_string("value"),
+                element_type: None,
             })
         })
         .collect()

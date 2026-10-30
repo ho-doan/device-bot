@@ -41,13 +41,21 @@ final class DeviceKitXCTestHostAgent {
       return ["ok": true, "message": "app_launched"]
     case "dump":
       ensureApp()
-      return [
-        "ok": true,
-        "elements": driver.dumpUi(
+      let elementType = string(command.params["elementType"])
+      do {
+        let elements = try driver.dumpUi(
           filter: string(command.params["filter"]),
+          elementType: elementType,
           maxResults: integer(command.params["maxResults"])
-        ).map(elementJson),
-      ]
+        ).map(elementJson)
+        var body: [String: Any] = ["ok": true, "elements": elements]
+        if let elementType { body["appliedElementType"] = elementType }
+        return body
+      } catch let error as DumpError {
+        return ["ok": false, "message": error.description]
+      } catch {
+        return ["ok": false, "message": "\(error)"]
+      }
     case "tap":
       ensureApp()
       let ok = driver.tap(x: number(command.params["x"]) ?? 0, y: number(command.params["y"]) ?? 0)
@@ -72,6 +80,18 @@ final class DeviceKitXCTestHostAgent {
       else if let view = driver.app?.textViews.firstMatch, view.exists { view.tap() }
       let ok = driver.typeText(string(command.params["text"]) ?? "")
       return ["ok": ok, "message": ok ? "text" : "text_failed"]
+    case "ime-action":
+      ensureApp()
+      let action = string(command.params["action"]) ?? ""
+      let known = ["next", "done", "go", "search", "send"].contains(action)
+      guard known else {
+        return ["ok": false, "message": "unsupported IME action \(action)"]
+      }
+      let ok = driver.pressImeAction(action)
+      return [
+        "ok": ok,
+        "message": ok ? "ime_action" : "IME action \(action) is not available on the keyboard",
+      ]
     case "stop":
       driver.terminate()
       return ["ok": true, "message": "stopped"]
@@ -154,6 +174,9 @@ final class DeviceKitXCTestHostAgent {
       ],
       "enabled": element.enabled,
       "clickable": element.clickable,
+      "focused": element.focused.map { $0 as Any } ?? NSNull(),
+      "checked": element.checked.map { $0 as Any } ?? NSNull(),
+      "selected": element.selected.map { $0 as Any } ?? NSNull(),
     ]
   }
 

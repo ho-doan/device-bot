@@ -344,6 +344,11 @@ mod tests {
                 },
                 clickable: true,
                 enabled: true,
+                focused: None,
+                checked: None,
+                selected: None,
+                value: None,
+                element_type: None,
             }])
         }
     }

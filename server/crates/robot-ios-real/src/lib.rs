@@ -465,7 +465,23 @@ fn wda_element(attributes: &HashMap<String, String>) -> Option<UiElement> {
         enabled: attributes
             .get("enabled")
             .is_none_or(|value| value == "true"),
+        focused: optional_bool_attr(attributes, "focused"),
+        checked: optional_bool_attr(attributes, "checked"),
+        selected: optional_bool_attr(attributes, "selected"),
+        value: attributes
+            .get("value")
+            .filter(|value| !value.is_empty())
+            .cloned(),
+        element_type: None,
     })
+}
+
+fn optional_bool_attr(attributes: &HashMap<String, String>, key: &str) -> Option<bool> {
+    match attributes.get(key).map(String::as_str) {
+        Some("true") => Some(true),
+        Some("false") => Some(false),
+        _ => None,
+    }
 }
 
 fn validate_device_id(device_id: &str) -> Result<(), RobotError> {

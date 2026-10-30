@@ -135,7 +135,7 @@ async fn initialization_and_tools_list_follow_the_lifecycle() {
         .handle(request(2, "tools/list", json!({})))
         .await
         .unwrap();
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 16);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 17);
 }
 
 #[tokio::test]

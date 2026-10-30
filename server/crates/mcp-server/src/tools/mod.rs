@@ -32,6 +32,7 @@ impl ToolRegistry {
             device::definitions()[1].clone(),
             navigation::definition(),
             input::definition(),
+            input::press_ime_definition(),
             ui::definition(),
             batch::definition(),
             runner_status::definition(),
@@ -58,6 +59,9 @@ impl ToolRegistry {
             apps::LIST_INSTALLED_APPS_NAME => apps::list_apps(&self.robot, &params.arguments).await,
             navigation::OPEN_URL_NAME => navigation::open_url(&self.robot, &params.arguments).await,
             input::TYPE_KEYS_NAME => input::type_keys(&self.robot, &params.arguments).await,
+            input::PRESS_IME_ACTION_NAME => {
+                input::press_ime_action(&self.robot, &params.arguments).await
+            }
             screen::SCREENSHOT_NAME => screen::screenshot(&self.robot, &params.arguments).await,
             screen::TAP_NAME => screen::tap(&self.robot, &params.arguments).await,
             screen::SWIPE_NAME => screen::swipe(&self.robot, &params.arguments).await,

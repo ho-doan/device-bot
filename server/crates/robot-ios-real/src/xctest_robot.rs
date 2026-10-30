@@ -6,8 +6,8 @@ use std::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use robot_core::{
-    Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiAction, UiElement,
-    UiRunnerStatus,
+    Bounds, DeviceState, ElementQuery, ImeAction, Platform, Point, Robot, RobotDevice, RobotError,
+    UiAction, UiElement, UiRunnerStatus, apply_element_query,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -727,6 +727,69 @@ impl Robot for IosXCTestRobot {
             .collect())
     }
 
+    async fn list_elements_query(
+        &self,
+        device_id: &str,
+        query: ElementQuery,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        let Some(element_type) = query.element_type else {
+            return self
+                .list_elements_filtered(device_id, query.filter.as_deref(), query.max_results)
+                .await;
+        };
+        validate_device_id(device_id)?;
+        let mut params = serde_json::Map::new();
+        if let Some(filter) = query.filter.as_ref() {
+            params.insert("filter".into(), Value::String(filter.clone()));
+        }
+        params.insert(
+            "elementType".into(),
+            Value::String(element_type.as_str().into()),
+        );
+        if let Some(max_results) = query.max_results {
+            params.insert("maxResults".into(), Value::from(max_results));
+        }
+        let result = self
+            .dispatch(device_id, "dump", Value::Object(params))
+            .await?;
+        if result.get("appliedElementType").and_then(Value::as_str) != Some(element_type.as_str()) {
+            return Err(RobotError::Unsupported(
+                "iOS XCTest agent did not apply elementType; rebuild and reinstall the runner before querying by type".into(),
+            ));
+        }
+        let elements = result.get("elements").cloned().ok_or_else(|| {
+            RobotError::CommandFailed("iOS XCTest agent returned no element list".into())
+        })?;
+        let elements: Vec<XCTestElement> = serde_json::from_value(elements).map_err(|error| {
+            RobotError::CommandFailed(format!("invalid iOS XCTest element payload: {error}"))
+        })?;
+        let elements = elements
+            .into_iter()
+            .map(XCTestElement::into_ui_element)
+            .collect();
+        Ok(apply_element_query(elements, &query))
+    }
+
+    async fn press_ime_action(&self, device_id: &str, action: ImeAction) -> Result<(), RobotError> {
+        validate_device_id(device_id)?;
+        match self
+            .dispatch(
+                device_id,
+                "ime-action",
+                json!({ "action": action.as_str() }),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(RobotError::CommandFailed(message)) if message.contains("unknown_method") => {
+                Err(RobotError::Unsupported(
+                    "iOS XCTest agent does not support IME actions; rebuild and reinstall the runner".into(),
+                ))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     async fn ui_runner_status(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
         validate_device_id(device_id)?;
         Ok(self.agent_status(device_id).await)
@@ -745,6 +808,12 @@ struct XCTestElement {
     bounds: XCTestBounds,
     clickable: bool,
     enabled: bool,
+    #[serde(default)]
+    focused: Option<bool>,
+    #[serde(default)]
+    checked: Option<bool>,
+    #[serde(default)]
+    selected: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -757,11 +826,12 @@ struct XCTestBounds {
 
 impl XCTestElement {
     fn into_ui_element(self) -> UiElement {
+        let value = self.value.filter(|value| !value.is_empty());
         UiElement {
             class_name: self.role,
             resource_id: self.automation_id.or(Some(self.node_id)),
-            text: self.text.or(self.value),
-            content_description: self.label,
+            text: self.text.or_else(|| value.clone()),
+            content_description: self.label.filter(|value| !value.is_empty()),
             bounds: Bounds {
                 left: self.bounds.x.round() as i32,
                 top: self.bounds.y.round() as i32,
@@ -770,6 +840,11 @@ impl XCTestElement {
             },
             clickable: self.clickable,
             enabled: self.enabled,
+            focused: self.focused,
+            checked: self.checked,
+            selected: self.selected,
+            value,
+            element_type: None,
         }
     }
 }
@@ -831,15 +906,7 @@ fn select_tappable_element<'a>(
 }
 
 fn ui_element_matches(element: &UiElement, filter: &str) -> bool {
-    [
-        Some(element.class_name.as_str()),
-        element.resource_id.as_deref(),
-        element.text.as_deref(),
-        element.content_description.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|value| value.to_lowercase().contains(filter))
+    robot_core::element_matches_filter(element, filter)
 }
 
 fn ui_element_has_exact_match(element: &UiElement, filter: &str) -> bool {
@@ -954,6 +1021,11 @@ mod tests {
             },
             clickable,
             enabled,
+            focused: None,
+            checked: None,
+            selected: None,
+            value: None,
+            element_type: None,
         }
     }
 

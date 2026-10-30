@@ -4,6 +4,17 @@ import Network
 import UIKit
 import XCTest
 
+enum DumpError: Error, CustomStringConvertible {
+  case unsupportedElementType(String)
+
+  var description: String {
+    switch self {
+    case .unsupportedElementType(let elementType):
+      return "unsupported elementType \(elementType)"
+    }
+  }
+}
+
 final class MobileMcpRealRunnerUITests: XCTestCase {
   /// Kept alive so the Bonjour browse still triggers Local Network privacy
   /// after `requestLocalNetworkPermission` returns into the command loop.
@@ -255,13 +266,21 @@ private final class MobileMcpRealHostAgent {
       return ["ok": true, "message": "url_open_requested"]
     case "dump":
       ensureApp()
-      return [
-        "ok": true,
-        "elements": dumpUi(
+      let elementType = string(command.params["elementType"])
+      do {
+        let elements = try dumpUi(
           filter: string(command.params["filter"]),
+          elementType: elementType,
           maxResults: integer(command.params["maxResults"])
-        ),
-      ]
+        )
+        var body: [String: Any] = ["ok": true, "elements": elements]
+        if let elementType { body["appliedElementType"] = elementType }
+        return body
+      } catch let error as DumpError {
+        return ["ok": false, "message": error.description]
+      } catch {
+        return ["ok": false, "message": "\(error)"]
+      }
     case "tap-element":
       ensureApp()
       let ok = tapElement(filter: string(command.params["filter"]) ?? "")
@@ -288,6 +307,21 @@ private final class MobileMcpRealHostAgent {
       focusFirstTextInput()
       let ok = typeText(string(command.params["text"]) ?? "")
       return ["ok": ok, "message": ok ? "text" : "text_failed"]
+    case "ime-action":
+      ensureApp()
+      let action = string(command.params["action"]) ?? ""
+      let known = ["next", "done", "go", "search", "send"].contains(action)
+      guard known else {
+        return ["ok": false, "message": "unsupported IME action \(action)"]
+      }
+      guard let app = driver.app else {
+        return ["ok": false, "message": "IME action \(action) is not available on the keyboard"]
+      }
+      let ok = pressImeAction(action, in: app)
+      return [
+        "ok": ok,
+        "message": ok ? "ime_action" : "IME action \(action) is not available on the keyboard",
+      ]
     case "screenshot":
       guard let data = driver.screenshot() else {
         return ["ok": false, "message": "screenshot_empty"]
@@ -339,21 +373,31 @@ private final class MobileMcpRealHostAgent {
     return true
   }
 
-  private func dumpUi(filter: String?, maxResults: Int?) -> [[String: Any]] {
+  private func pressImeAction(_ action: String, in app: XCUIApplication) -> Bool {
+    let label: String
+    switch action {
+    case "next": label = "Next"
+    case "done": label = "Done"
+    case "go": label = "Go"
+    case "search": label = "Search"
+    case "send": label = "Send"
+    default: return false
+    }
+    let predicate = NSPredicate(format: "label ==[c] %@", label)
+    let key = app.keyboards.buttons.matching(predicate).firstMatch
+    guard key.exists, key.isHittable else { return false }
+    key.tap()
+    return true
+  }
+
+  private func dumpUi(filter: String?, elementType: String?, maxResults: Int?) throws -> [[String: Any]] {
     guard let app = driver.app else { return [] }
     let normalizedFilter = filter.flatMap { nonEmpty($0) }?.lowercased()
     let limit = max(maxResults ?? 100, 0)
     guard limit > 0 else { return [] }
-
-    let queries: [XCUIElementQuery] = [
-      app.textFields,
-      app.secureTextFields,
-      app.textViews,
-      app.searchFields,
-      app.buttons,
-      app.links,
-      app.staticTexts,
-    ]
+    guard let queries = queries(for: elementType, in: app) else {
+      throw DumpError.unsupportedElementType(elementType ?? "")
+    }
     let predicate = normalizedFilter.map {
       NSPredicate(
         format: "identifier CONTAINS[c] %@ OR label CONTAINS[c] %@ OR value CONTAINS[c] %@",
@@ -450,7 +494,73 @@ private final class MobileMcpRealHostAgent {
       ],
       "enabled": element.isEnabled,
       "clickable": element.isHittable,
+      "focused": optionalFocus(element).map { $0 as Any } ?? NSNull(),
+      "checked": checkedState(element).map { $0 as Any } ?? NSNull(),
+      "selected": selectedState(element).map { $0 as Any } ?? NSNull(),
     ]
+  }
+
+  private func queries(for elementType: String?, in app: XCUIApplication) -> [XCUIElementQuery]? {
+    switch elementType.flatMap({ nonEmpty($0) }) {
+    case nil:
+      return [
+        app.textFields,
+        app.secureTextFields,
+        app.textViews,
+        app.searchFields,
+        app.buttons,
+        app.links,
+        app.staticTexts,
+      ]
+    case "textField":
+      return [app.textFields, app.secureTextFields, app.textViews, app.searchFields]
+    case "button":
+      return [app.buttons]
+    case "link":
+      return [app.links]
+    case "staticText":
+      return [app.staticTexts]
+    case "image":
+      return [app.images]
+    case "switch":
+      return [app.switches]
+    case "slider":
+      return [app.sliders]
+    case "checkBox":
+      return [app.descendants(matching: .checkBox)]
+    case "radio":
+      return [app.descendants(matching: .radioButton)]
+    default:
+      return nil
+    }
+  }
+
+  private func optionalFocus(_ element: XCUIElement) -> Bool? {
+    let selector = NSSelectorFromString("hasFocus")
+    guard element.responds(to: selector) else { return nil }
+    return element.value(forKey: "hasFocus") as? Bool
+  }
+
+  private func checkedState(_ element: XCUIElement) -> Bool? {
+    switch element.elementType {
+    case .switch, .checkBox:
+      if let value = stringValue(element.value)?.lowercased() {
+        if value == "1" || value == "true" { return true }
+        if value == "0" || value == "false" { return false }
+      }
+      return nil
+    default:
+      return nil
+    }
+  }
+
+  private func selectedState(_ element: XCUIElement) -> Bool? {
+    switch element.elementType {
+    case .button, .switch, .checkBox, .radioButton:
+      return element.isSelected
+    default:
+      return element.isSelected ? true : nil
+    }
   }
 
   private func role(for type: XCUIElement.ElementType) -> String {
@@ -460,6 +570,10 @@ private final class MobileMcpRealHostAgent {
     case .textField, .secureTextField, .textView, .searchField: return "textField"
     case .link: return "link"
     case .image: return "image"
+    case .checkBox: return "checkBox"
+    case .switch: return "switch"
+    case .radioButton: return "radio"
+    case .slider: return "slider"
     case .scrollView, .table, .collectionView: return "scrollView"
     default: return "unknown"
     }

@@ -18,7 +18,10 @@ use quick_xml::{
     Reader,
     events::{BytesStart, Event},
 };
-use robot_core::{Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
+use robot_core::{
+    Bounds, DeviceState, ElementType, ImeAction, Platform, Point, Robot, RobotDevice, RobotError,
+    UiElement, prepare_elements,
+};
 use serde_json::{Value, json};
 use tokio::{process::Command, sync::Mutex};
 use url::Url;
@@ -358,6 +361,42 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
         Ok(())
     }
 
+    async fn press_ime_action(&self, device_id: &str, action: ImeAction) -> Result<(), RobotError> {
+        ensure_device_id(device_id)?;
+        let output = self
+            .run_adb(&[
+                "-s".into(),
+                device_id.into(),
+                "shell".into(),
+                "dumpsys".into(),
+                "input_method".into(),
+            ])
+            .await?;
+        let dumpsys = String::from_utf8(output.stdout).map_err(|error| {
+            RobotError::CommandFailed(format!(
+                "dumpsys input_method returned invalid UTF-8: {error}"
+            ))
+        })?;
+        let observed = parse_focused_ime_action(&dumpsys)?;
+        if observed != action {
+            return Err(RobotError::CommandFailed(format!(
+                "focused editor IME action is {}, not {}; KEYCODE_ENTER was not sent",
+                observed.as_str(),
+                action.as_str()
+            )));
+        }
+        self.run_adb(&[
+            "-s".into(),
+            device_id.into(),
+            "shell".into(),
+            "input".into(),
+            "keyevent".into(),
+            "66".into(),
+        ])
+        .await?;
+        Ok(())
+    }
+
     async fn swipe(
         &self,
         device_id: &str,
@@ -588,10 +627,11 @@ fn parse_node(
         .get("bounds")
         .ok_or_else(|| RobotError::CommandFailed("uiautomator node has no bounds".into()))
         .and_then(|value| parse_bounds(value))?;
-    Ok(UiElement {
+    let text = optional_attribute(&mut attributes, "text");
+    let mut element = UiElement {
         class_name: attributes.remove("class").unwrap_or_default(),
         resource_id: optional_attribute(&mut attributes, "resource-id"),
-        text: optional_attribute(&mut attributes, "text"),
+        text,
         content_description: optional_attribute(&mut attributes, "content-desc"),
         bounds,
         clickable: attributes
@@ -600,7 +640,93 @@ fn parse_node(
         enabled: attributes
             .get("enabled")
             .is_none_or(|value| value == "true"),
+        focused: optional_bool(&attributes, "focused"),
+        checked: optional_bool(&attributes, "checked"),
+        selected: optional_bool(&attributes, "selected"),
+        value: None,
+        element_type: None,
+    };
+    prepare_elements(std::slice::from_mut(&mut element));
+    if element.element_type == Some(ElementType::TextField) {
+        element.value = element.text.clone();
+    }
+    Ok(element)
+}
+
+fn optional_bool(attributes: &HashMap<String, String>, key: &str) -> Option<bool> {
+    match attributes.get(key).map(String::as_str) {
+        Some("true") => Some(true),
+        Some("false") => Some(false),
+        _ => None,
+    }
+}
+
+/// Reads the focused editor's `imeOptions` action. A null served view or an
+/// action other than next/done/go/search/send is an error so callers do not
+/// send KEYCODE_ENTER for a different IME action.
+pub fn parse_focused_ime_action(dumpsys: &str) -> Result<ImeAction, RobotError> {
+    if last_assignment(dumpsys, "mServedView")
+        .is_some_and(|value| value == "null" || value.is_empty())
+    {
+        return Err(RobotError::CommandFailed(
+            "no focused editor is available for an IME action".into(),
+        ));
+    }
+    let raw = last_ime_options(dumpsys).ok_or_else(|| {
+        RobotError::CommandFailed(
+            "focused editor did not report imeOptions; KEYCODE_ENTER was not sent".into(),
+        )
+    })?;
+    let action_id = raw & 0xff;
+    ImeAction::from_android_action_id(action_id).ok_or_else(|| {
+        RobotError::CommandFailed(format!(
+            "focused editor imeOptions action id {action_id} is not next, done, go, search, or send; KEYCODE_ENTER was not sent"
+        ))
     })
+}
+
+fn last_assignment<'a>(dumpsys: &'a str, key: &str) -> Option<&'a str> {
+    let pattern = format!("{key}=");
+    let mut found = None;
+    let mut rest = dumpsys;
+    while let Some(index) = rest.find(&pattern) {
+        let after = &rest[index + pattern.len()..];
+        let token = after.split_whitespace().next().unwrap_or("");
+        found = Some(token.trim_matches(|character| character == ',' || character == '}'));
+        rest = after.get(token.len()..).unwrap_or("");
+    }
+    found
+}
+
+fn last_ime_options(dumpsys: &str) -> Option<u32> {
+    let mut found = None;
+    let mut rest = dumpsys;
+    while let Some(index) = rest.find("imeOptions=") {
+        let after = &rest[index + "imeOptions=".len()..];
+        let token = after
+            .split(|character: char| {
+                character.is_whitespace() || matches!(character, ',' | '}' | '"' | ';')
+            })
+            .next()
+            .unwrap_or("");
+        if let Some(value) = parse_ime_token(token) {
+            found = Some(value);
+        }
+        rest = after.get(token.len()..).unwrap_or("");
+    }
+    found
+}
+
+fn parse_ime_token(token: &str) -> Option<u32> {
+    let token = token.trim();
+    if let Some(hex) = token
+        .strip_prefix("0x")
+        .or_else(|| token.strip_prefix("0X"))
+    {
+        u32::from_str_radix(hex, 16).ok()
+    } else {
+        token.parse().ok()
+    }
 }
 
 fn optional_attribute(attributes: &mut HashMap<String, String>, key: &str) -> Option<String> {
@@ -792,6 +918,105 @@ mod tests {
             }
         );
         assert!(elements[0].clickable);
+        assert_eq!(elements[0].focused, None);
+        assert_eq!(elements[0].checked, None);
+        assert_eq!(elements[0].element_type, Some(ElementType::TextField));
+        assert_eq!(elements[0].value.as_deref(), Some("Search"));
+    }
+
+    #[test]
+    fn type_filter_keeps_a_password_field_that_follows_other_controls() {
+        let elements = parse_uiautomator_xml(
+            r#"<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+            <hierarchy>
+              <node text="Save" class="android.widget.Button" clickable="true" enabled="true" bounds="[0,0][10,10]" />
+              <node text="" class="android.widget.EditText" password="true" resource-id="password" focused="true" bounds="[0,20][10,40]" />
+              <node text="user@example.com" class="android.widget.EditText" checked="false" selected="false" bounds="[0,50][10,70]" />
+            </hierarchy>"#,
+        )
+        .unwrap();
+        let found = robot_core::apply_element_query(
+            elements,
+            &robot_core::ElementQuery {
+                filter: None,
+                element_type: Some(ElementType::TextField),
+                max_results: Some(1),
+            },
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].resource_id.as_deref(), Some("password"));
+        assert_eq!(found[0].focused, Some(true));
+        assert_eq!(found[0].value, None);
+
+        let email = robot_core::apply_element_query(
+            parse_uiautomator_xml(
+                r#"<hierarchy>
+                  <node text="Save" class="android.widget.Button" bounds="[0,0][10,10]" />
+                  <node text="" class="android.widget.EditText" password="true" resource-id="password" bounds="[0,20][10,40]" />
+                  <node text="user@example.com" class="android.widget.EditText" selected="false" bounds="[0,50][10,70]" />
+                </hierarchy>"#,
+            )
+            .unwrap(),
+            &robot_core::ElementQuery {
+                filter: Some("user@example.com".into()),
+                element_type: Some(ElementType::TextField),
+                max_results: Some(2),
+            },
+        );
+        assert_eq!(email.len(), 1);
+        assert_eq!(email[0].text.as_deref(), Some("user@example.com"));
+        assert_eq!(email[0].selected, Some(false));
+        assert_eq!(email[0].checked, None);
+    }
+
+    #[test]
+    fn reads_the_focused_editor_action_and_rejects_a_mismatch() {
+        let next = "mServedView=android.view.View\n    imeOptions=0x5\n";
+        assert_eq!(parse_focused_ime_action(next).unwrap(), ImeAction::Next);
+        let done = "mCurrentTextBoxAttribute: EditorInfo{imeOptions=0x10000006}";
+        assert_eq!(parse_focused_ime_action(done).unwrap(), ImeAction::Done);
+        assert!(
+            parse_focused_ime_action("mServedView=null\nimeOptions=6\n")
+                .unwrap_err()
+                .to_string()
+                .contains("no focused editor")
+        );
+        assert!(
+            parse_focused_ime_action("mServedView=android.view.View\nimeOptions=1\n")
+                .unwrap_err()
+                .to_string()
+                .contains("KEYCODE_ENTER was not sent")
+        );
+    }
+
+    #[tokio::test]
+    async fn sends_enter_only_when_the_focused_ime_action_matches() {
+        let runner = FakeRunner::new([
+            successful("mServedView=android.widget.EditText\nimeOptions=0x10000005\n"),
+            successful(vec![]),
+        ]);
+        let robot = AndroidRobot::with_runner("adb-test", runner);
+        robot
+            .press_ime_action("emulator-5554", ImeAction::Next)
+            .await
+            .unwrap();
+        let calls = robot.runner.calls.lock().unwrap();
+        assert_eq!(calls[0].1[2..], ["shell", "dumpsys", "input_method"]);
+        assert_eq!(calls[1].1[2..], ["shell", "input", "keyevent", "66"]);
+        drop(calls);
+
+        let mismatch = FakeRunner::new([successful(
+            "mServedView=android.widget.EditText\nimeOptions=5\n",
+        )]);
+        let robot = AndroidRobot::with_runner("adb-test", mismatch);
+        let error = robot
+            .press_ime_action("emulator-5554", ImeAction::Done)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not done"));
+        assert!(error.contains("KEYCODE_ENTER was not sent"));
+        assert_eq!(robot.runner.calls.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

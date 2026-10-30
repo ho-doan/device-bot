@@ -17,7 +17,9 @@ use std::{
 use async_trait::async_trait;
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
-use robot_core::{Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
+use robot_core::{
+    Bounds, DeviceState, ElementType, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{
@@ -510,13 +512,31 @@ impl Robot for ChromeRobot {
         let target = self.page(device_id).await?;
         let expression = r#"Array.from(document.querySelectorAll('body *')).slice(0, 500).map((element) => {
             const bounds = element.getBoundingClientRect();
+            const tag = element.tagName.toLowerCase();
+            const type = (element.getAttribute('type') || '').toLowerCase();
+            const role = (element.getAttribute('role') || '').toLowerCase();
+            let elementType = '';
+            if (role === 'checkbox' || type === 'checkbox') elementType = 'checkBox';
+            else if (role === 'switch') elementType = 'switch';
+            else if (role === 'radio' || type === 'radio') elementType = 'radio';
+            else if (role === 'slider' || type === 'range') elementType = 'slider';
+            else if (tag === 'textarea' || tag === 'input' || role === 'textbox' || role === 'searchbox') elementType = 'textField';
+            else if (tag === 'button' || role === 'button') elementType = 'button';
+            else if (tag === 'a' || role === 'link') elementType = 'link';
+            else if (tag === 'img' || role === 'img') elementType = 'image';
+            const selectable = type === 'checkbox' || type === 'radio' || role === 'checkbox' || role === 'radio' || role === 'switch';
             return {
-              className: element.tagName.toLowerCase(), resourceId: element.id || '',
+              className: tag, resourceId: element.id || '',
               text: (element.innerText || element.textContent || '').trim(),
               contentDescription: element.getAttribute('aria-label') || element.getAttribute('title') || '',
+              value: typeof element.value === 'string' ? element.value : '',
+              elementType,
               left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom,
-              clickable: typeof element.onclick === 'function' || ['a', 'button', 'input', 'select', 'textarea'].includes(element.tagName.toLowerCase()),
-              enabled: !element.disabled
+              clickable: typeof element.onclick === 'function' || ['a', 'button', 'input', 'select', 'textarea'].includes(tag),
+              enabled: !element.disabled,
+              focused: document.activeElement === element,
+              checked: selectable ? !!element.checked : null,
+              selected: element.getAttribute('aria-selected') === 'true' ? true : (element.getAttribute('aria-selected') === 'false' ? false : null)
             };
         })"#;
         let result = self
@@ -556,6 +576,14 @@ impl Robot for ChromeRobot {
                     .get("enabled")
                     .and_then(Value::as_bool)
                     .unwrap_or(true),
+                focused: value.get("focused").and_then(Value::as_bool),
+                checked: value.get("checked").and_then(Value::as_bool),
+                selected: value.get("selected").and_then(Value::as_bool),
+                value: value_string(value, "value"),
+                element_type: value
+                    .get("elementType")
+                    .and_then(Value::as_str)
+                    .and_then(|element_type| ElementType::parse(element_type).ok()),
             })
             .collect())
     }

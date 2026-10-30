@@ -292,3 +292,59 @@ thiết bị đã tránh duyệt toàn tree.
   API mới; các binary/agent đang chạy có thể vẫn dùng schema hoặc code cũ.
 - Chạy lại IT-06 trên Android và iOS Simulator, lưu response và thời gian để
   đối chiếu. Chỉ bỏ `query_elements ''` khi truy vấn mới thực sự được hỗ trợ.
+
+## 8. Phân loại PARTIAL và khả năng mở rộng MCP
+
+`PARTIAL` không đồng nghĩa mọi phần thiếu đều do MCP chưa có API. Cần xác định
+đó là thiếu thao tác, dữ liệu native chưa được chuẩn hóa, khó quan sát do timing,
+hay assertion chỉ có ý nghĩa trong nội bộ app/framework.
+
+**Giới hạn scope:** chỉ tính `PARTIAL` cho hành vi/assertion thuộc phạm vi đã
+xác định của app và scenario. Deep link nằm ngoài scope của app hiện tại:
+không tính việc app thiếu deep link là `PARTIAL`, không yêu cầu bổ sung tính
+năng này để các scenario MCP được đánh giá đầy đủ. Những assertion gọi/đọc
+GoRouter trong integration test là kiểm tra router nội bộ, không phải yêu cầu
+OS deep link. Khi báo thiếu coverage, nêu đúng assertion nội bộ chưa quan sát
+được thay vì quy thành thiếu tính năng deep link.
+
+Đánh giá dưới đây dựa trên code đã đọc bằng Serena. Đây là cơ sở triển khai và
+probe sau này, chưa xác nhận các capability mới đã có trên thiết bị.
+
+| Phần còn thiếu | Hiện trạng | Hướng hỗ trợ và giới hạn |
+| --- | --- | --- |
+| IME Next/Done — IT-03/IT-06 | Android `mobile_type_keys` nhập text bằng ADB và từ chối control character. iOS Simulator đã nhận newline trong `typeText`, rồi tìm phím Go/Search/Return/Done để bấm; chưa có API action Next/Done riêng thống nhất. | Khả thi bổ sung thao tác IME tường minh theo capability từng backend. Gửi Enter hoặc chuyển focus chưa tự chứng minh tương đương action Next/Done. Cần kiểm tra phím/action thực tế và kết quả trên app. |
+| Focus, checked, selected và giá trị native — IT-03/IT-08 | `UiElement` chuẩn hóa hiện có `enabled`, `clickable`, bounds và nhãn; còn thiếu nhiều trạng thái mà backend có thể lấy được. | Mở rộng contract và adapter để giữ các trạng thái native được hỗ trợ. Dữ liệu không đọc được phải thể hiện là chưa biết/chưa hỗ trợ, thay vì tự gán false. Xác minh riêng với control Flutter trên mỗi platform. |
+| Loading/disabled trong 700 ms — IT-04/IT-06 | `enabled` đã có. Chuỗi query qua process/transport có thể bỏ lỡ trạng thái ngắn; đây không đơn thuần là thiếu thuộc tính enabled. | Đánh giá quan sát trạng thái tại agent với timestamp hoặc điều khiển thời điểm hoàn tất response trong bản app dùng cho test. Polling nhanh hơn ở shell chưa bảo đảm bắt được trạng thái. Thay đổi timing của bản test phải được ghi rõ; giữ kiểm tra gốc trong Flutter. |
+| Submit lặp có tạo thêm request/lần xử lý — IT-04 | Có thể gửi nhiều tap, nhưng UI không chứng minh được số lần xử lý nội bộ. App demo hiện còn dùng xác thực cục bộ. | Kiểm tra tap liên tục qua MCP; xác minh số lần xử lý cần counter, log hoặc instrumentation của app. Một thông báo lỗi duy nhất chưa chứng minh chỉ có một lần xử lý. |
+| GoRouter path và query `from` — IT-07/IT-09 | Native MCP chưa có cách đọc/yêu cầu trực tiếp trạng thái GoRouter của app. Đây là các assertion router nội bộ đã có trong integration test, không phải kiểm tra deep link. | Giữ các assertion này trong Flutter. Nếu cần quan sát chính xác qua MCP, đánh giá instrumentation/test bridge phục vụ kiểm thử; không biến thành yêu cầu thêm tính năng deep link ngoài scope. Phân biệt coverage UI qua native với coverage router nội bộ. |
+| Thuộc tính widget và style — IT-08 | Native accessibility chưa biểu diễn đầy đủ `CheckboxListTile.value`, giá trị `LinearProgressIndicator` và `TextDecoration.lineThrough`. | Khai thác trạng thái/giá trị accessibility khi app expose được; kiểm thử ảnh có thể kiểm tra kết quả hiển thị. Các thuộc tính Dart chính xác tiếp tục kiểm tra trong Flutter; ảnh hoặc text tiến độ không tự chứng minh giá trị/style nội bộ. |
+
+### Ưu tiên triển khai
+
+1. Truy vấn theo type ở mục 7, chuẩn hóa trạng thái element và thao tác IME rõ
+   ràng: đây là nền tảng để các shell scenario giảm phụ thuộc vào suy luận từ
+   nhãn/geometry hoặc nút submit thay thế.
+2. Quan sát loading/trạng thái ngắn tại agent, cùng cơ chế timing có kiểm soát
+   nếu app dùng cho test cần hỗ trợ. Đo độ trễ trước khi chọn chiến lược.
+3. Test bridge và instrumentation cho các assertion nội bộ đã nằm trong scope,
+   khi thực sự cần quan sát qua MCP. Ghi rõ phần nào là capability chung của
+   device-bot, phần nào cần app phối hợp phục vụ kiểm thử.
+4. Giữ các assertion đặc thù Flutter trong integration test khi chưa có cách
+   quan sát native tương đương và đã được kiểm chứng.
+
+### Điều kiện để bỏ một mục PARTIAL
+
+- Capability đã có trong schema, driver và binary/agent đang chạy, không chỉ
+  trong thiết kế hoặc code nguồn chưa build/cài.
+- Probe chạy trên platform cần hỗ trợ và kiểm tra đúng hành vi. Ví dụ Next phải
+  chuyển tới đúng field, giữ dữ liệu; Done phải thực hiện hành động được cấu
+  hình. Bấm nút Sign in không thay thế việc xác minh phím Done.
+- Assertion mới bắt được một trường hợp sai tương ứng; kết quả không dựa vào
+  mặc định khi thiếu dữ liệu hoặc việc tình cờ bắt được một frame loading.
+- Chạy lại scenario liên quan, lưu evidence và chỉ gỡ mục coverage đã được bù.
+  Các phần thiếu khác của cùng scenario vẫn giữ `PARTIAL`.
+
+Tham khảo API native khi triển khai IME Android:
+[AccessibilityAction.ACTION_IME_ENTER](https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo.AccessibilityAction#ACTION_IME_ENTER).
+API này gửi IME actionId đã được cấu hình cho editor; cần xác minh khả năng sử
+dụng qua backend điều khiển và field cụ thể của app.

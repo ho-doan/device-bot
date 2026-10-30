@@ -58,6 +58,10 @@ means the scoped UI checks succeeded. `PARTIAL` with exit zero means those UI
 checks succeeded but the scenario has explicitly listed untested behaviors;
 see `limitations.txt`. Neither marker replaces the Flutter integration suite.
 
+Deep links are outside this example app's scope and are not counted as missing
+coverage or a reason for `PARTIAL`. The IT-07/IT-09 limitations refer to the
+original Flutter suite's internal GoRouter assertions, not OS deep links.
+
 IT-10 through IT-12 are outside the requested `IT-0*` set. `it-01.yaml` remains a
 reference for a future YAML-to-MCP client; these shell entrypoints do not invoke
 `robot-flow`.

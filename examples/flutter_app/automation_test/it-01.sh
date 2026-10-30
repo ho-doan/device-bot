@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 # IT-01 via the installed device-bot MCP server (stdio), not robot-flow.
 # DEVICE_ID=<adb-serial> bash examples/flutter_app/automation_test/it-01.sh
-# Optional: APP_ID, DEVICE_BOT_BIN, APK_PATH (install before launch), RPC_TIMEOUT.
-# Requires an unlocked Android device and the Orbit example app.
+# PLATFORM=ios-sim DEVICE_ID=<udid> bash examples/flutter_app/automation_test/it-01.sh
+# Optional: APP_ID, DEVICE_BOT_BIN, APP_PATH (or APK_PATH), RPC_TIMEOUT.
+# Requires an unlocked Android device or booted iOS Simulator and the Orbit app.
 # YAML remains a reference scenario pending implementation of an MCP YAML client.
 # GoRouter URIs and takeException() remain assertions in the Flutter test.
 set -euo pipefail
-: "${DEVICE_ID:?Set DEVICE_ID to the Android adb serial}"
-readonly APP_ID="${APP_ID:-com.example.flutter_app}"
-readonly RPC_TIMEOUT="${RPC_TIMEOUT:-60}"
+: "${DEVICE_ID:?Set DEVICE_ID to the Android serial or iOS Simulator UDID}"
+readonly PLATFORM="${PLATFORM:-android}"
+case "$PLATFORM" in
+  android) APP_ID="${APP_ID:-com.example.flutter_app}"; PLATFORM_COMMAND="${ANDROID_ADB_PATH:-adb}" ;;
+  ios-sim) APP_ID="${APP_ID:-com.example.flutterApp}"; PLATFORM_COMMAND="${XCRUN_PATH:-xcrun}"; unset SDKROOT ;;
+  *) printf 'PLATFORM must be android or ios-sim\n' >&2; exit 2 ;;
+esac
+readonly APP_ID PLATFORM_COMMAND
+readonly RPC_TIMEOUT="${RPC_TIMEOUT:-180}"
 [[ "$RPC_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || { printf 'Invalid RPC_TIMEOUT\n' >&2; exit 2; }
-for dependency in jq "${DEVICE_BOT_BIN:-device-bot}" "${ANDROID_ADB_PATH:-adb}"; do
+for dependency in jq "${DEVICE_BOT_BIN:-device-bot}" "$PLATFORM_COMMAND"; do
   command -v "$dependency" >/dev/null || { printf 'Missing: %s\n' "$dependency" >&2; exit 2; }
 done
 readonly ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/device-bot-it01.XXXXXX")"
@@ -71,9 +78,19 @@ trap cleanup EXIT
 
 scroll_down() {
   local dimensions
+  if [[ "$PLATFORM" == ios-sim ]]; then
+    # XCTest bounds/input use points, whereas simulator screenshots use pixels.
+    # Derive a safe gesture region from hittable elements in the native tree.
+    call_tool mobile_list_elements_on_screen "$(jq -cn --arg d "$DEVICE_ID" \
+      '{deviceId:$d,maxResults:100,timeoutMs:60000}')"
+    dimensions="$(jq -ce '[.result.structuredContent.elements[] |
+      select(.clickable and .bounds.left >= 0 and .bounds.top >= 0) | .bounds] |
+      {w:(map(.right)|max),h:(map(.bottom)|max)} | select(.w>0 and .h>0)' <<<"$last_response")"
+  else
   screenshot scroll
   dimensions="$(od -An -v -t u1 -j 16 -N 8 "$ARTIFACT_DIR/scroll.png" | jq -s '
     {w:(.[0]*16777216+.[1]*65536+.[2]*256+.[3]),h:(.[4]*16777216+.[5]*65536+.[6]*256+.[7])}')"
+  fi
   call_tool mobile_swipe_on_screen "$(jq -cn --arg d "$DEVICE_ID" --argjson s "$dimensions" \
     '{deviceId:$d,startX:($s.w*0.5),startY:($s.h*0.75),endX:($s.w*0.5),endY:($s.h*0.4),durationMs:350}')"
 }
@@ -81,7 +98,7 @@ find_element() {
   local label="$1" tap="${2:-false}" scroll="${3:-false}" attempt matches count
   for ((attempt=0; attempt<8; attempt++)); do
     call_tool mobile_list_elements_on_screen "$(jq -cn --arg d "$DEVICE_ID" --arg f "$label" \
-      '{deviceId:$d,filter:$f,maxResults:100,timeoutMs:15000}')"
+      '{deviceId:$d,filter:$f,maxResults:100,timeoutMs:60000}')"
     jq '.result.structuredContent.elements' <<<"$last_response" >"$ARTIFACT_DIR/last-query.json"
     matches="$(jq -c --arg label "$label" --argjson tap "$tap" '
       [.[] | select(([.text // "",.contentDescription // ""] |
@@ -108,11 +125,19 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
 receive 1
 printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}' >&3
 initialized=true
-# The server has no terminate tool; only the cold-stop precondition uses adb.
-if [[ -n "${APK_PATH:-}" ]]; then
-  call_tool mobile_install_app "$(jq -cn --arg d "$DEVICE_ID" --arg p "$APK_PATH" '{deviceId:$d,apkPath:$p}')"
+# The server has no terminate tool; only cold-stop uses the platform CLI.
+if [[ -n "${APP_PATH:-${APK_PATH:-}}" ]]; then
+  call_tool mobile_install_app "$(jq -cn --arg d "$DEVICE_ID" --arg p "${APP_PATH:-$APK_PATH}" '{deviceId:$d,apkPath:$p}')"
 fi
-"${ANDROID_ADB_PATH:-adb}" -s "$DEVICE_ID" shell am force-stop "$APP_ID"
+if [[ "$PLATFORM" == android ]]; then
+  "$PLATFORM_COMMAND" -s "$DEVICE_ID" shell am force-stop "$APP_ID"
+else
+  if ! "$PLATFORM_COMMAND" simctl terminate "$DEVICE_ID" "$APP_ID" 2>"$ARTIFACT_DIR/terminate.log"; then
+    if ! grep -qi 'found nothing to terminate' "$ARTIFACT_DIR/terminate.log"; then
+      cat "$ARTIFACT_DIR/terminate.log" >&2; exit 1
+    fi
+  fi
+fi
 call_tool mobile_launch_app "$(jq -cn --arg d "$DEVICE_ID" --arg a "$APP_ID" '{deviceId:$d,appId:$a}')"
 find_element 'Welcome back.'
 screenshot login
@@ -120,4 +145,4 @@ find_element 'Try demo workspace' true true
 find_element 'A fresh start, Alex.'
 find_element '1/3' false true
 screenshot workspace
-printf 'PASS: IT-01 Android UI via MCP. Router URI/Flutter exceptions are not checked.\n'
+printf 'PASS: IT-01 %s UI via MCP. Router URI/Flutter exceptions are not checked.\n' "$PLATFORM"

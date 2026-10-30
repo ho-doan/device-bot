@@ -7,8 +7,8 @@ tap_control 'Forgot password?'
 assert_text 'Forgot your password?'
 assert_absent 'Show password'
 # Only native text fields are checked; do not confuse explanatory text with a field.
-query_elements 'Password'
-jq -e '[.[] | select(.className|test("EditText|textField";"i"))] | length==0' \
+query_elements ''
+jq -e '[.[] | select(.className|test("EditText|textField";"i"))] | length==1' \
   "$ARTIFACT_DIR/last-query.json" >/dev/null
 tap_control 'Try password reset'
 assert_text 'Enter a valid email address.'

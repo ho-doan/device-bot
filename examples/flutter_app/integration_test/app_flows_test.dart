@@ -181,6 +181,10 @@ void main() {
       await tester.tapControl(find.text('Forgot password?'));
       expect(tester.currentRoute.path, '/forgot-password');
       expect(find.byKey(const ValueKey('password-field')), findsNothing);
+      expect(tester.emailField, findsOneWidget);
+      // The reset form has exactly one editable control, not just no password.
+      // Native automation uses the same invariant when counting text fields.
+      expect(find.byType(EditableText), findsOneWidget);
       await tester.tapControl(tester.submitButton);
       expect(find.text('Enter a valid email address.'), findsOneWidget);
 
@@ -298,7 +302,20 @@ void main() {
       await tester.tapControl(find.text('View your profile'));
       expect(tester.currentRoute.path, '/account');
       await tester.tapControl(tester.navigationItem('Overview'));
-      await tester.tapControl(find.byTooltip('Your account'));
+      final accountAvatar = find.byTooltip('Your account');
+      final avatarInitials = find.descendant(
+        of: accountAvatar,
+        matching: find.text('AL'),
+      );
+      expect(accountAvatar, findsOneWidget);
+      // Native automation may expose the avatar as AL instead of its tooltip.
+      // Scope the fallback to this button: Account also displays AL separately.
+      expect(avatarInitials, findsOneWidget);
+      await tester.tapControl(accountAvatar);
+      expect(find.text('Alex Lane'), findsOneWidget);
+      await tester.tapControl(tester.navigationItem('Overview'));
+      await tester.tapControl(avatarInitials);
+      expect(tester.currentRoute.path, '/account');
       expect(find.text('Alex Lane'), findsOneWidget);
     },
   );

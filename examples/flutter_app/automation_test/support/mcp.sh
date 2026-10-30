@@ -80,18 +80,20 @@ trap cleanup EXIT
 scroll_screen() {
   local direction="${1:-down}"
   local dimensions
+  call_tool mobile_list_elements_on_screen "$(jq -cn --arg d "$DEVICE_ID" \
+    '{deviceId:$d,maxResults:100,timeoutMs:60000}')"
   if [[ "$PLATFORM" == ios-sim ]]; then
     # XCTest bounds/input use points, whereas simulator screenshots use pixels.
     # Derive a safe gesture region from hittable elements in the native tree.
-    call_tool mobile_list_elements_on_screen "$(jq -cn --arg d "$DEVICE_ID" \
-      '{deviceId:$d,maxResults:100,timeoutMs:60000}')"
     dimensions="$(jq -ce '[.result.structuredContent.elements[] |
       select(.clickable and .bounds.left >= 0 and .bounds.top >= 0) | .bounds] |
       {w:(map(.right)|max),h:(map(.bottom)|max)} | select(.w>0 and .h>0)' <<<"$last_response")"
   else
-  screenshot scroll
-  dimensions="$(od -An -v -t u1 -j 16 -N 8 "$ARTIFACT_DIR/scroll.png" | jq -s '
-    {w:(.[0]*16777216+.[1]*65536+.[2]*256+.[3]),h:(.[4]*16777216+.[5]*65536+.[6]*256+.[7])}')"
+    # The IME shrinks the app viewport. A screenshot-sized swipe would hit the
+    # keyboard instead of the form; use the native ScrollView bounds.
+    dimensions="$(jq -ce '[.result.structuredContent.elements[] |
+      select(.className|test("ScrollView")) | .bounds | select(.bottom>.top)] |
+      first | {w:.right,h:.bottom} | select(.w>0 and .h>0)' <<<"$last_response")"
   fi
   call_tool mobile_swipe_on_screen "$(jq -cn --arg d "$DEVICE_ID" --arg direction "$direction" --argjson s "$dimensions" \
     '{deviceId:$d,startX:($s.w*0.5),startY:($s.h*(if $direction=="down" then 0.72 else 0.4 end)),
@@ -102,7 +104,7 @@ scroll_down() { scroll_screen down; }
 query_elements() {
   local label="$1"
   call_tool mobile_list_elements_on_screen "$(jq -cn --arg d "$DEVICE_ID" --arg f "$label" \
-    '{deviceId:$d,filter:$f,maxResults:100,timeoutMs:60000}')"
+    '{deviceId:$d,maxResults:100,timeoutMs:60000} + (if $f=="" then {} else {filter:$f} end)')"
   query_count=$((query_count + 1))
   jq '.result.structuredContent.elements' <<<"$last_response" >"$ARTIFACT_DIR/last-query.json"
   cp "$ARTIFACT_DIR/last-query.json" "$ARTIFACT_DIR/query-${query_count}.json"
@@ -113,12 +115,22 @@ query_elements() {
 find_element() {
   local label="$1" tap="${2:-false}" scroll="${3:-false}" kind="${4:-label}" attempt matches count
   for ((attempt=0; attempt<12; attempt++)); do
-    query_elements "$label"
+    if [[ "$kind" == field ]]; then query_elements ''; else query_elements "$label"; fi
     matches="$(jq -c --arg label "$label" --arg kind "$kind" --argjson tap "$tap" '
-      [.[] | select(([.text // "",.contentDescription // ""] |
+      # Android hints are not normalized. Identify the password field by the
+      # Show/Hide password button in the same row; email is the other textbox.
+      . as $all |
+      [$all[] | select((.contentDescription // "") | test("^(Show|Hide) password$";"i")) |
+        ((.bounds.top+.bounds.bottom)/2)] as $passwordRows |
+      (if $kind=="field" then
+         [.[] | select(.className|test("EditText|textField";"i")) |
+          .bounds as $b |
+          select((any($passwordRows[]; . >= $b.top and . <= $b.bottom)) == ($label=="Password"))]
+       else . end) |
+      [.[] | select(($kind=="field" or ([.text // "",.contentDescription // ""] |
         any((ascii_downcase == ($label|ascii_downcase)) or
             (split("\n") | map(ascii_downcase) | index($label|ascii_downcase) != null)
-            or ($kind=="field" and contains($label))))
+            )))
         and ($kind!="field" or (.className|test("EditText|textField";"i")))
         and .bounds.left >= 0 and .bounds.top >= 0
         and .bounds.right > .bounds.left and .bounds.bottom > .bounds.top
@@ -145,6 +157,16 @@ find_element() {
 tap_control() { find_element "$1" true true; }
 assert_text() { find_element "$1" false true; }
 
+tap_account_avatar() {
+  query_elements 'Your account'
+  if jq -e 'any(.[]; .clickable and .enabled)' "$ARTIFACT_DIR/last-query.json" >/dev/null; then
+    tap_control 'Your account'
+  else
+    # Android Flutter merges the tooltip into the child avatar label instead.
+    tap_control 'AL'
+  fi
+}
+
 assert_absent() {
   local label="$1"
   query_elements "$label"
@@ -159,22 +181,46 @@ type_text() {
 }
 
 fill_field() {
-  local label="$1" value="$2" previous bounds
+  local label="$1" value="$2" previous bounds restore_hidden=false
   if [[ "$label" == 'Email address' ]]; then previous="$email_value"; else previous="$password_value"; fi
   find_element "$label" true true field
   if [[ -n "$previous" ]]; then
+    if [[ "$label" == Password ]]; then
+      # Masked Flutter fields can select the whole value without exposing a
+      # Select all menu. Reveal the demo password for deterministic native editing.
+      query_elements 'Show password'
+      if jq -e 'any(.[]; .clickable and .enabled)' "$ARTIFACT_DIR/last-query.json" >/dev/null; then
+        tap_control 'Show password'
+        restore_hidden=true
+        find_element "$label" true true field
+      fi
+    fi
     # Long-press the native field, then use its Select all editing action.
     # Android mobile_type_keys rejects control characters, so do not send \b.
     bounds="$(jq -c '.bounds' <<<"$FOUND_ELEMENT")"
     call_tool mobile_swipe_on_screen "$(jq -cn --arg d "$DEVICE_ID" --argjson b "$bounds" '
       {deviceId:$d,startX:($b.left+($b.right-$b.left)*0.25),startY:(($b.top+$b.bottom)/2),
        endX:($b.left+($b.right-$b.left)*0.25),endY:(($b.top+$b.bottom)/2),durationMs:1000}')"
-    # Fail explicitly if the OS does not expose text selection; never append
-    # a replacement to existing credentials and then report a misleading pass.
-    find_element 'Select all' true false
+    query_elements 'Select all'
+    if jq -e 'any(.[]; .clickable and .enabled)' "$ARTIFACT_DIR/last-query.json" >/dev/null; then
+      tap_control 'Select all'
+    else
+      # A single-word value can already be fully selected by the long press.
+      # Cut it and prove the native textbox is empty before typing a replacement.
+      # If only part was selected, fail rather than append to the remaining text.
+      tap_control 'Cut'
+      find_element "$label" false true field
+      if ! jq -e '.text==null or .text==""' <<<"$FOUND_ELEMENT" >/dev/null; then
+        printf 'FAIL: Native selection did not clear the entire %s field\n' "$label" >&2; return 1
+      fi
+    fi
   fi
   type_text "$value"
   if [[ "$label" == 'Email address' ]]; then email_value="$value"; else password_value="$value"; fi
+  if [[ "$restore_hidden" == true ]]; then
+    assert_field_value 'Password' "$value"
+    tap_control 'Hide password'
+  fi
 }
 
 enter_credentials() {
@@ -184,11 +230,11 @@ enter_credentials() {
 
 assert_field_value() {
   local label="$1" expected="$2"
-  query_elements "$label"
+  find_element "$label" false true field
   if ! jq -e --arg expected "$expected" '
-    any(.[]; (.className|test("EditText|textField";"i")) and
-      ([.text // "", .contentDescription // ""] | any(. == $expected or (split("\n")|index($expected)!=null))))
-    ' "$ARTIFACT_DIR/last-query.json" >/dev/null; then
+    [.text // "", .contentDescription // ""] |
+      any(. == $expected or (split("\n")|index($expected)!=null))
+    ' <<<"$FOUND_ELEMENT" >/dev/null; then
     printf 'FAIL: Field %s does not expose the expected value\n' "$label" >&2; return 1
   fi
   printf 'PASS: %s value preserved\n' "$label"

@@ -24,6 +24,8 @@ assert_text '1/3'
 tap_control 'View your profile'
 assert_text 'Alex Lane'
 tap_control 'Overview'
-tap_control 'Your account'
+# The IconButton tooltip is Your account, but the native tree exposes its
+# CircleAvatar child as the enabled AL button on the app bar.
+tap_account_avatar
 assert_text 'Alex Lane'
 finish_flow

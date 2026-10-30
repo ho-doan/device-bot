@@ -19,9 +19,9 @@ Giao diện công khai của app: nhập liệu, nhấn nút, thao tác checklis
 | IT-03 | §3 | Mật khẩu che mặc định; hiện/ẩn giữ nội dung; Next từ email và Done từ password đăng nhập được |
 | IT-04 | §2 | Sai mật khẩu → loading khóa các điều khiển; submit lặp không đổi kết quả; lỗi giữ nội dung và cho sửa để thử lại |
 | IT-05 | §2 | Email trim/không phân biệt hoa thường được chấp nhận; mật khẩu sai hoa thường hoặc thừa khoảng trắng bị từ chối |
-| IT-06 | §4 | Reset email không hợp lệ → lỗi; email hợp lệ bất kỳ → loading và xác nhận demo; mật khẩu gốc vẫn đăng nhập được |
+| IT-06 | §4 | Reset form chỉ có đúng một ô nhập là email, không có password; email không hợp lệ → lỗi; email hợp lệ bất kỳ → loading và xác nhận demo; mật khẩu gốc vẫn đăng nhập được |
 | IT-07 | §4, §5 | Mở `/account` khi chưa login; hủy và hoàn tất reset đều giữ `from`; đăng nhập quay lại Account |
-| IT-08 | §6, §7 | Chọn/bỏ task cập nhật checkbox, gạch ngang, số đếm, tiến độ; đổi tab/nhấn avatar; quay lại Home khởi tạo checklist `1/3` |
+| IT-08 | §6, §7 | Chọn/bỏ task cập nhật checkbox, gạch ngang, số đếm, tiến độ; đổi tab; avatar có chữ `AL` và mở Account bằng tooltip `Your account` hoặc chữ `AL` làm cơ sở fallback native automation; quay lại Home khởi tạo checklist `1/3` |
 | IT-09 | §1, §6 | Đăng xuất → Login; yêu cầu lại route bảo vệ vẫn bị chặn; đăng nhập lại về đúng Account |
 | IT-10 | §1 | Khi đã đăng nhập, yêu cầu trang auth được redirect; `from` không được nhận hoặc có query đều về Home |
 | IT-11 | §1 | Route không tồn tại → thông báo lỗi; Back to home áp dụng guard khi chưa login và giữ phiên khi đã login |

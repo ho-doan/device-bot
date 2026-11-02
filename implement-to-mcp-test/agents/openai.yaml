@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement to MCP Test"
+  short_description: "Turn mobile UI changes into MCP shell tests"
+  default_prompt: "Dùng $implement-to-mcp-test để chuẩn bị phần code vừa implement cho automation, sinh các file .sh qua device-bot MCP và kiểm chứng coverage trên platform yêu cầu."

@@ -1,22 +1,14 @@
 # Quy tắc chuyển integration test thành shell gọi MCP
 
-Tài liệu tổng hợp để xây dựng skill `integration_test → .sh → MCP device-bot`
-sau này. Đây là quy tắc cho việc triển khai tiếp theo; các helper hiện có chưa
-được xem là đã tuân thủ đầy đủ mọi điểm bên dưới.
+Tài liệu chỉ giữ các quy tắc và công việc còn thiếu khi xây dựng skill
+`integration_test → .sh → MCP device-bot`. Đã đối chiếu code và báo cáo kiểm
+chứng đến ngày 02/11/2026; các phần đã triển khai và kiểm chứng được lược bỏ.
+Giới hạn kiểm chứng riêng trên iOS thật được giữ ở mục 6.
 
 ## 1. Nguồn kịch bản và đường thực thi
 
 - Đọc integration test, helper của test và code màn hình liên quan trước khi
   chuyển đổi. Giữ ID của scenario để đối chiếu hành động và assertion.
-- Mỗi scenario có một file `.sh`; phần kết nối, truy vấn và thao tác dùng chung
-  đặt trong helper. Dùng Bash và `jq` theo mẫu hiện có trong dự án.
-- Shell gọi MCP device-bot đã cài: khởi tạo phiên theo hướng dẫn trong
-  `server/README.md`, sau đó gọi các tool được server hỗ trợ.
-- Quyền điều khiển thiết bị và lựa chọn platform driver nằm trong MCP server.
-  Nếu bổ sung YAML, YAML là cách khai báo kịch bản để gọi MCP; runner YAML cũng
-  thực thi qua MCP.
-- Với thao tác MCP chưa hỗ trợ, như cold-stop app, ghi rõ bước chuẩn bị và lệnh
-  hệ điều hành cần dùng. Phân biệt bước chuẩn bị với các bước kiểm thử qua MCP.
 
 ### 1.1. Giả định có căn cứ và kiểm chứng đúng phạm vi
 
@@ -148,40 +140,10 @@ view chưa kiểm chứng được nhánh retry sau cuộn.
 tồn tại”, phải xác định đúng phạm vi cần kiểm tra; control không có trong
 viewport hiện tại chưa đủ chứng minh nó đã bị loại khỏi màn hình/form.
 
-### Trường hợp IT-06: `query_elements ''`
-
-IT-06 hiện lấy tree không có filter, rồi lọc native text field và kiểm tra
-`length == 1` để xác minh reset form chỉ còn ô email. Đây cũng là điểm cần rà
-soát chi phí truy vấn khi viết skill/helper, nhưng phải giữ nguyên ý nghĩa của
-assertion khi tối ưu.
-
-Integration test IT-06 đã bổ sung kiểm tra có đúng một ô email và đúng một
-`EditableText`, bên cạnh kiểm tra không có password field. Đây là căn cứ cho
-assertion đếm textbox của shell; lấy phần tử đầu tiên không thay thế được việc
-xác minh chỉ có một field.
-
-- Ưu tiên truy vấn theo loại control/phạm vi form nếu MCP hỗ trợ. Khả năng này
-  phải được kiểm tra qua schema tool; filter chuỗi hiện tại chưa thay thế được
-  truy vấn theo class/role.
-- Chỉ tìm `Password` rồi kết luận không có password field là chưa đủ: native
-  textbox có thể không expose nhãn đó. `assert_absent 'Show password'` cũng chưa
-  chứng minh được reset form có đúng một textbox.
-- Nếu chưa có truy vấn hẹp tương đương, cho phép một lần lấy tree có giới hạn
-  kết quả để kiểm tra số lượng field, kèm lý do rõ ràng. Xác minh kết quả đủ để
-  đếm; nếu chạm giới hạn trả về, cần xử lý khả năng bị cắt trước khi kết luận.
-- Tái sử dụng snapshot vừa lấy cho các kiểm tra khác nếu UI chưa thay đổi.
-  Sau submit, cuộn, mở bàn phím hoặc điều hướng, phải xem lại tính hợp lệ của
-  snapshot trước khi dùng tiếp.
-- Việc helper đang có lệnh `query_elements ''` không phải căn cứ để sinh thao
-  tác lấy toàn bộ tree cho mọi scenario. Mỗi lần dùng phải gắn với một assertion
-  hoặc nhu cầu geometry cụ thể mà truy vấn hẹp chưa đáp ứng được.
-
 ## 3. Căn cứ cho selector fallback
 
 - Fallback phải có căn cứ từ code, integration test và quan sát native tree
   trên platform cần chạy. Không tự thêm alias chỉ để test chạy qua.
-- Trong IT-08, integration test đã kiểm tra chữ `AL` nằm trong avatar mang
-  tooltip `Your account`, đồng thời kiểm tra mở Account bằng cả hai cách bấm.
 - Assertion `AL` phải giới hạn trong đúng nút avatar. Màn Account cũng có chữ
   `AL` khác; `find.text('AL')` trên toàn màn hình dễ trở nên mơ hồ.
 - Integration test xác minh nội dung và hành vi của widget. Việc native tree
@@ -205,95 +167,11 @@ xác minh chỉ có một field.
 - `FAIL` là lỗi thực thi hoặc assertion. Dry-run chỉ xác minh cấu trúc kịch bản,
   không chứng minh test trên thiết bị đã qua.
 
-## 5. Những điểm đã rút ra khi chạy thật
-
-- Lấy bundle/package ID từ cấu hình app và platform; cho phép ghi đè bằng biến
-  môi trường. Tránh cố định serial thiết bị trong kịch bản.
-- Cuộn trong viewport của app. Trên Android, dùng chiều cao screenshot khi
-  bàn phím mở có thể khiến gesture đi vào bàn phím.
-- Giữ đúng hệ tọa độ của driver: XCTest dùng điểm, screenshot iOS có thể dùng
-  pixel. Dùng bounds native cho tap và geometry phù hợp cho swipe.
-- Sửa nội dung ô nhập bằng thao tác native có kiểm chứng. Nếu dùng Cut vì toàn
-  bộ từ đã được chọn, xác minh ô thực sự rỗng trước khi nhập lại.
-- Kiểm tra đúng giá trị đã nhập khi test khoảng trắng, hoa/thường hoặc bảo toàn
-  password; một kết quả đăng nhập thất bại chưa đủ chứng minh dữ liệu nhập đúng.
-- Sau khi chạy Flutter integration test trên thiết bị, chuẩn bị lại bản app
-  dùng `lib/main.dart` cho MCP nếu bản app đang cài dùng entrypoint của test.
-- Lưu log MCP, kết quả truy vấn, screenshot và giới hạn coverage theo từng case.
-  Phân biệt chưa chạy, chạy lỗi, UI qua một phần và đã kiểm tra đủ phạm vi.
-
-## 6. Tài liệu và code tham chiếu
-
-- [Hướng dẫn MCP](server/README.md).
-- [Integration test gốc](examples/flutter_app/integration_test/app_flows_test.dart).
-- [Helper Flutter test](examples/flutter_app/integration_test/support/orbit_tester.dart).
-- [Helper shell hiện tại](examples/flutter_app/automation_test/support/mcp.sh).
-- [IT-08 qua MCP](examples/flutter_app/automation_test/it-08.sh).
-- [Coverage và kết quả các shell scenario](examples/flutter_app/automation_test/README.md).
+## 5. Những phần MCP và coverage còn thiếu
 
 Điểm cần áp dụng khi triển khai skill/helper tiếp: `tap_account_avatar` hiện
 vẫn truy vấn lại nhãn chính qua `tap_control` sau lần tìm đầu tiên. Quy tắc ở
-mục 2 yêu cầu dùng ngay bounds hợp lệ đã nhận; lượt ghi tài liệu này chưa thay
-đổi hành vi runtime đó.
-
-## 7. Đề xuất mở rộng MCP: truy vấn theo loại control
-
-Đã đọc đường gọi bằng Serena. Đây là thiết kế để triển khai sau, chưa phải
-tham số MCP đã có.
-
-### API dự kiến
-
-Bổ sung tham số tùy chọn `elementType` cho
-`mobile_list_elements_on_screen`, giữ tương thích với các lời gọi hiện tại:
-
-```json
-{
-  "deviceId": "<device-id>",
-  "elementType": "textField",
-  "maxResults": 2
-}
-```
-
-- Chuẩn hóa tên type ở contract chung và ánh xạ sang control native trong
-  driver. Ví dụ `textField` cần bao gồm ô password bên cạnh ô nhập thông thường.
-- Cho phép kết hợp `elementType` và `filter` theo điều kiện AND.
-- Áp dụng điều kiện type và nội dung trước `maxResults`; nếu giới hạn kết quả
-  trước rồi mới lọc type có thể bỏ sót control cần tìm.
-- Type không hợp lệ hoặc driver chưa hỗ trợ phải có kết quả lỗi rõ ràng.
-  Tránh diễn giải lỗi hỗ trợ thành kết luận màn hình không có control.
-
-IT-06 chỉ cần yêu cầu tối đa **hai textbox**, rồi kiểm tra số kết quả bằng một:
-không có kết quả là thiếu email, một là đúng, hai là có thêm textbox. Không cần
-trả cả tree hoặc đếm chính xác toàn bộ textbox nếu đã tìm được từ hai trở lên.
-
-### Khả năng tối ưu theo backend
-
-| Backend | Hiện tại | Hướng cải thiện và giới hạn |
-| --- | --- | --- |
-| Android | `AndroidRobot.list_elements` chạy `uiautomator dump --compressed`, đọc XML rồi parse; bộ lọc mặc định ở `Robot.list_elements_filtered` áp dụng sau khi lấy danh sách | Lọc type trong driver trước khi trả response giúp giảm dữ liệu gửi về client. Với cơ chế ADB hiện tại, thiết bị vẫn tạo snapshot tree đầy đủ; thay đổi tham số MCP chưa loại bỏ chi phí này. Muốn query native theo type mà không dump toàn tree cần đánh giá cơ chế điều khiển Android khác. |
-| iOS Simulator | `DeviceKitXCTestDriver.dumpUi` duyệt các nhóm query text field, secure text field, text view, search field, button, link và static text | Chọn đúng nhóm XCTest theo type ngay từ đầu, rồi áp dụng filter và giới hạn trước khi materialize element. Có thể giảm cả lượng element truy vấn và response. |
-
-Khi báo kết quả tối ưu, phân biệt thời gian lấy tree trên thiết bị, thời gian
-lọc/chuẩn hóa và kích thước response MCP. Response nhỏ hơn chưa chứng minh được
-thiết bị đã tránh duyệt toàn tree.
-
-### Các điểm cần thay đổi và kiểm chứng
-
-- Schema/handler: `server/crates/mcp-server/src/tools/ui.rs`.
-- Contract và routing: `server/crates/robot-core/src/lib.rs`; giữ nguyên hành vi
-  của các caller không truyền type, gồm admin API và các flow cũ.
-- Android: `server/crates/robot-android/src/lib.rs`.
-- iOS Simulator: chuyển điều kiện type qua driver Rust, command của XCTest
-  agent và `SimulatorXCTestDriver.dumpUi`.
-- Kiểm tra type đơn lẻ, type kết hợp filter, password field, type không hợp lệ,
-  và giới hạn áp dụng sau khi lọc. Dùng fixture có nhiều control khác type đứng
-  trước textbox để bắt lỗi giới hạn quá sớm.
-- Build/cài MCP và chuẩn bị lại XCTest agent cần thiết trước khi đổi shell sang
-  API mới; các binary/agent đang chạy có thể vẫn dùng schema hoặc code cũ.
-- Chạy lại IT-06 trên Android và iOS Simulator, lưu response và thời gian để
-  đối chiếu. Chỉ bỏ `query_elements ''` khi truy vấn mới thực sự được hỗ trợ.
-
-## 8. Phân loại PARTIAL và khả năng mở rộng MCP
+mục 2 yêu cầu dùng ngay bounds hợp lệ đã nhận; helper vẫn chưa đáp ứng điểm này.
 
 `PARTIAL` không đồng nghĩa mọi phần thiếu đều do MCP chưa có API. Cần xác định
 đó là thiếu thao tác, dữ liệu native chưa được chuẩn hóa, khó quan sát do timing,
@@ -307,13 +185,8 @@ GoRouter trong integration test là kiểm tra router nội bộ, không phải 
 OS deep link. Khi báo thiếu coverage, nêu đúng assertion nội bộ chưa quan sát
 được thay vì quy thành thiếu tính năng deep link.
 
-Đánh giá dưới đây dựa trên code đã đọc bằng Serena. Đây là cơ sở triển khai và
-probe sau này, chưa xác nhận các capability mới đã có trên thiết bị.
-
 | Phần còn thiếu | Hiện trạng | Hướng hỗ trợ và giới hạn |
 | --- | --- | --- |
-| IME Next/Done — IT-03/IT-06 | Android `mobile_type_keys` nhập text bằng ADB và từ chối control character. iOS Simulator đã nhận newline trong `typeText`, rồi tìm phím Go/Search/Return/Done để bấm; chưa có API action Next/Done riêng thống nhất. | Khả thi bổ sung thao tác IME tường minh theo capability từng backend. Gửi Enter hoặc chuyển focus chưa tự chứng minh tương đương action Next/Done. Cần kiểm tra phím/action thực tế và kết quả trên app. |
-| Focus, checked, selected và giá trị native — IT-03/IT-08 | `UiElement` chuẩn hóa hiện có `enabled`, `clickable`, bounds và nhãn; còn thiếu nhiều trạng thái mà backend có thể lấy được. | Mở rộng contract và adapter để giữ các trạng thái native được hỗ trợ. Dữ liệu không đọc được phải thể hiện là chưa biết/chưa hỗ trợ, thay vì tự gán false. Xác minh riêng với control Flutter trên mỗi platform. |
 | Loading/disabled trong 700 ms — IT-04/IT-06 | `enabled` đã có. Chuỗi query qua process/transport có thể bỏ lỡ trạng thái ngắn; đây không đơn thuần là thiếu thuộc tính enabled. | Đánh giá quan sát trạng thái tại agent với timestamp hoặc điều khiển thời điểm hoàn tất response trong bản app dùng cho test. Polling nhanh hơn ở shell chưa bảo đảm bắt được trạng thái. Thay đổi timing của bản test phải được ghi rõ; giữ kiểm tra gốc trong Flutter. |
 | Submit lặp có tạo thêm request/lần xử lý — IT-04 | Có thể gửi nhiều tap, nhưng UI không chứng minh được số lần xử lý nội bộ. App demo hiện còn dùng xác thực cục bộ. | Kiểm tra tap liên tục qua MCP; xác minh số lần xử lý cần counter, log hoặc instrumentation của app. Một thông báo lỗi duy nhất chưa chứng minh chỉ có một lần xử lý. |
 | GoRouter path và query `from` — IT-07/IT-09 | Native MCP chưa có cách đọc/yêu cầu trực tiếp trạng thái GoRouter của app. Đây là các assertion router nội bộ đã có trong integration test, không phải kiểm tra deep link. | Giữ các assertion này trong Flutter. Nếu cần quan sát chính xác qua MCP, đánh giá instrumentation/test bridge phục vụ kiểm thử; không biến thành yêu cầu thêm tính năng deep link ngoài scope. Phân biệt coverage UI qua native với coverage router nội bộ. |
@@ -321,9 +194,8 @@ probe sau này, chưa xác nhận các capability mới đã có trên thiết b
 
 ### Ưu tiên triển khai
 
-1. Truy vấn theo type ở mục 7, chuẩn hóa trạng thái element và thao tác IME rõ
-   ràng: đây là nền tảng để các shell scenario giảm phụ thuộc vào suy luận từ
-   nhãn/geometry hoặc nút submit thay thế.
+1. Sửa luồng tìm avatar và hoàn thiện chọn control, fallback, cuộn/retry theo
+   mục 2; không suy ra các nhánh này đã đúng chỉ từ một lượt scenario qua.
 2. Quan sát loading/trạng thái ngắn tại agent, cùng cơ chế timing có kiểm soát
    nếu app dùng cho test cần hỗ trợ. Đo độ trễ trước khi chọn chiến lược.
 3. Test bridge và instrumentation cho các assertion nội bộ đã nằm trong scope,
@@ -344,7 +216,25 @@ probe sau này, chưa xác nhận các capability mới đã có trên thiết b
 - Chạy lại scenario liên quan, lưu evidence và chỉ gỡ mục coverage đã được bù.
   Các phần thiếu khác của cùng scenario vẫn giữ `PARTIAL`.
 
-Tham khảo API native khi triển khai IME Android:
-[AccessibilityAction.ACTION_IME_ENTER](https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo.AccessibilityAction#ACTION_IME_ENTER).
-API này gửi IME actionId đã được cấu hình cho editor; cần xác minh khả năng sử
-dụng qua backend điều khiển và field cụ thể của app.
+## 6. Kiểm chứng và tối ưu còn lại theo platform
+
+- **iOS thật:** xác minh lại kết nối bridge LAN từ iPhone tới Mac rồi chạy đủ
+  IT-01–09 qua shell và MCP. Regression focus/input/whitespace/Next/Done qua
+  command dispatcher đã có, nhưng chưa chứng minh toàn bộ đường stdio/HTTP
+  bridge. Checkbox, scroll và Select All qua shell trên iPhone vẫn chưa được
+  kiểm chứng; giữ các phần này ở trạng thái chờ xác minh.
+- **Android:** nếu cần giảm chi phí lấy tree trên thiết bị, đánh giá backend
+  query native theo type thay cho `uiautomator dump --compressed`. Bộ lọc type
+  hiện tại giảm response nhưng vẫn cần snapshot tree đầy đủ. Đo riêng thời
+  gian lấy tree, lọc/chuẩn hóa và kích thước response trước khi kết luận tối ưu.
+
+## 7. Tài liệu và code tham chiếu
+
+- [Hướng dẫn MCP](server/README.md).
+- [Integration test gốc](examples/flutter_app/integration_test/app_flows_test.dart).
+- [Helper Flutter test](examples/flutter_app/integration_test/support/orbit_tester.dart).
+- [Helper shell hiện tại](examples/flutter_app/automation_test/support/mcp.sh).
+- [IT-08 qua MCP](examples/flutter_app/automation_test/it-08.sh).
+- [Coverage và kết quả các shell scenario](examples/flutter_app/automation_test/README.md).
+- [Kiểm chứng iOS Simulator](examples/flutter_app/automation_test/FIX_IOS_2026-11-02.md).
+- [Kiểm chứng và giới hạn iOS thật](examples/flutter_app/automation_test/FIX_REAL_IOS_2026-11-02.md).

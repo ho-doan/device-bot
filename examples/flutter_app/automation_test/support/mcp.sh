@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Shared Orbit scenario helpers. Source from an it-0*.sh entrypoint.
-# All UI actions use the installed MCP server; only cold-stop uses adb/simctl.
+# All UI actions use the installed MCP server; Android/Simulator cold-stop uses CLI.
 set -euo pipefail
 : "${CASE_ID:?Set CASE_ID before sourcing support/mcp.sh}"
-: "${DEVICE_ID:?Set DEVICE_ID to the Android serial or iOS Simulator UDID}"
+: "${DEVICE_ID:?Set DEVICE_ID to the Android serial or iOS device/Simulator UDID}"
 readonly PLATFORM="${PLATFORM:-android}"
 case "$PLATFORM" in
   android) APP_ID="${APP_ID:-com.example.flutter_app}"; PLATFORM_COMMAND="${ANDROID_ADB_PATH:-adb}" ;;
-  ios-sim) APP_ID="${APP_ID:-com.example.flutter-myapp}"; PLATFORM_COMMAND="${XCRUN_PATH:-xcrun}"; unset SDKROOT ;;
-  *) printf 'PLATFORM must be android or ios-sim\n' >&2; exit 2 ;;
+  ios|ios-sim) APP_ID="${APP_ID:-com.example.flutter-myapp}"; PLATFORM_COMMAND="${XCRUN_PATH:-xcrun}"; unset SDKROOT ;;
+  *) printf 'PLATFORM must be android, ios or ios-sim\n' >&2; exit 2 ;;
 esac
 readonly APP_ID PLATFORM_COMMAND
 readonly RPC_TIMEOUT="${RPC_TIMEOUT:-180}"
@@ -82,7 +82,7 @@ scroll_screen() {
   local dimensions
   call_tool mobile_list_elements_on_screen "$(jq -cn --arg d "$DEVICE_ID" \
     '{deviceId:$d,maxResults:100,timeoutMs:60000}')"
-  if [[ "$PLATFORM" == ios-sim ]]; then
+  if [[ "$PLATFORM" == ios* ]]; then
     # Use the app's largest scroll viewport, not keyboard/accessory buttons.
     # XCTest reports these bounds in the same points used by input actions.
     dimensions="$(jq -ce '[.result.structuredContent.elements[] |
@@ -148,7 +148,7 @@ assert_focused_field() {
 assert_checked() {
   local label="$1" expected="$2" attempt found native_type=checkBox
   # Orbit's Flutter CheckboxListTile is exposed by XCTest as a native switch.
-  [[ "$PLATFORM" == ios-sim ]] && native_type=switch
+  [[ "$PLATFORM" == ios* ]] && native_type=switch
   for ((attempt=0; attempt<12; attempt++)); do
     query_elements "$label" "$native_type"
     found="$(jq -r --arg label "$label" '
@@ -181,7 +181,7 @@ find_element() {
   local label="$1" tap="${2:-false}" scroll="${3:-false}" kind="${4:-label}" attempt matches count
   local previous_target='' current_target
   for ((attempt=0; attempt<12; attempt++)); do
-    if [[ "$kind" == field && "$PLATFORM" == ios-sim ]]; then
+    if [[ "$kind" == field && "$PLATFORM" == ios* ]]; then
       query_elements "$label" textField
     elif [[ "$kind" == field ]]; then
       query_elements ''
@@ -194,7 +194,7 @@ find_element() {
       . as $all |
       [$all[] | select((.contentDescription // "") | test("^(Show|Hide) password$";"i")) |
         ((.bounds.top+.bounds.bottom)/2)] as $passwordRows |
-      (if $kind=="field" and $platform=="ios-sim" then
+      (if $kind=="field" and ($platform|startswith("ios")) then
          [.[] | select((.contentDescription // "" | ascii_downcase)==($label|ascii_downcase))]
        elif $kind=="field" then
          [.[] | select(.className|test("EditText|textField";"i")) |
@@ -209,7 +209,7 @@ find_element() {
         and .bounds.left >= 0 and .bounds.top >= 0
         and .bounds.right > .bounds.left and .bounds.bottom > .bounds.top
         and (($tap | not) or (.enabled and (.clickable or $kind=="any"))))] |
-      if $tap and $platform=="ios-sim" then
+      if $tap and ($platform|startswith("ios")) then
         . as $all | [.[] | select(.className|test("^(button|textField|switch|checkBox|menuItem|link|radio|slider)$"))] as $controls |
         if ($controls|length)>0 then $controls else $all end
       else . end' "$ARTIFACT_DIR/last-query.json")"
@@ -218,7 +218,7 @@ find_element() {
       FOUND_ELEMENT="$(jq -c '.[0]' <<<"$matches")"
       if [[ "$tap" == true ]]; then
         [[ "$count" == 1 ]] || { printf 'Ambiguous: %s\n' "$label" >&2; return 1; }
-        if [[ "$PLATFORM" == ios-sim ]]; then
+        if [[ "$PLATFORM" == ios* ]]; then
           # Flutter publishes intermediate frames during keyboard/scroll
           # animations. Require the same target bounds in consecutive queries.
           current_target="$(jq -c '{bounds,className,contentDescription}' <<<"$FOUND_ELEMENT")"
@@ -228,7 +228,7 @@ find_element() {
             continue
           fi
         fi
-        if [[ "$PLATFORM" == ios-sim ]] && jq -e '.className == "textField" or .className == "menuItem"' <<<"$FOUND_ELEMENT" >/dev/null; then
+        if [[ "$PLATFORM" == ios* ]] && jq -e '.className == "textField" or .className == "menuItem"' <<<"$FOUND_ELEMENT" >/dev/null; then
           # A partially covered element may be hittable while its center is not.
           # Let XCTest select the actual hit point instead of tapping the IME.
           call_tool mobile_execute_ui_actions "$(jq -cn --arg d "$DEVICE_ID" --arg f "$label" \
@@ -293,7 +293,7 @@ fill_field() {
         find_element "$label" true true field
       fi
     fi
-    if [[ "$PLATFORM" == ios-sim ]]; then
+    if [[ "$PLATFORM" == ios* ]]; then
       # Native tap may scroll the field while presenting the keyboard.
       find_element "$label" false true field
     fi
@@ -359,13 +359,14 @@ finish_flow() {
 cold_launch() {
   if [[ "$PLATFORM" == android ]]; then
     "$PLATFORM_COMMAND" -s "$DEVICE_ID" shell am force-stop "$APP_ID"
-  else
+  elif [[ "$PLATFORM" == ios-sim ]]; then
     if ! "$PLATFORM_COMMAND" simctl terminate "$DEVICE_ID" "$APP_ID" 2>"$ARTIFACT_DIR/terminate.log"; then
       if ! grep -qi 'found nothing to terminate' "$ARTIFACT_DIR/terminate.log"; then
         cat "$ARTIFACT_DIR/terminate.log" >&2; return 1
       fi
     fi
   fi
+  # On real iOS, the agent's XCUIApplication.launch() restarts the target app.
   email_value=''; password_value=''
   call_tool mobile_launch_app "$(jq -cn --arg d "$DEVICE_ID" --arg a "$APP_ID" '{deviceId:$d,appId:$a}')"
   assert_text 'Welcome back.'
@@ -380,7 +381,7 @@ printf '%s\n' "$(jq -cn --arg name "orbit-$CASE_ID" '{jsonrpc:"2.0",id:1,method:
 receive 1
 printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}' >&3
 initialized=true
-# The server has no terminate tool; only cold-stop uses the platform CLI.
+# The server has no terminate tool; Android/Simulator cold-stop uses the CLI.
 if [[ -n "${APP_PATH:-${APK_PATH:-}}" ]]; then
   call_tool mobile_install_app "$(jq -cn --arg d "$DEVICE_ID" --arg p "${APP_PATH:-$APK_PATH}" '{deviceId:$d,apkPath:$p}')"
 fi

@@ -12,7 +12,19 @@ PLATFORM=android DEVICE_ID=<adb-serial> bash examples/flutter_app/automation_tes
 
 # Booted iOS Simulator with the installed example app and Xcode available.
 PLATFORM=ios-sim DEVICE_ID=<simulator-udid> bash examples/flutter_app/automation_test/it-02.sh
+
+# Unlocked, paired iPhone with the app installed and signed XCTest runner built.
+export DEVICE_BOT_IOS_AGENT_BIND=0.0.0.0:18787
+export DEVICE_BOT_IOS_AGENT_TOKEN="$(uuidgen)"
+PLATFORM=ios DEVICE_ID=<iphone-udid> bash examples/flutter_app/automation_test/it-02.sh
 ```
+
+For a physical iPhone, the agent bridge must be reachable from the phone on
+the local network. The server discovers Mac LAN addresses; override
+`DEVICE_BOT_IOS_AGENT_HOSTS` if needed. Keep the phone unlocked during testing.
+Use a signed **Release/Profile** build of the Flutter fixture on physical iOS.
+A Debug build launched by MCP/XCTest without the Flutter debugger can crash
+before the first UI query. `APP_PATH` can install the signed fixture through MCP.
 
 Defaults: Android app `com.example.flutter_app`, iOS app
 `com.example.flutter-myapp`. Override `APP_ID` for another installed build.
@@ -24,7 +36,8 @@ Dependencies: Bash, jq, base64 and the platform CLI (`adb` or `xcrun`).
 Each invocation creates a fresh process/session and prints an artifact directory
 containing MCP responses, numbered element queries, screenshots and any coverage
 limitations. Demo credentials are included in these local artifacts. Only the
-cold-stop precondition uses adb/simctl; app installation, launch, screenshots,
+cold-stop precondition on Android/Simulator uses adb/simctl; real iOS restarts
+the app through the agent's `XCUIApplication.launch()`. App installation, launch, screenshots,
 element inspection, gestures and typing go through MCP.
 
 Input replacement uses a long press followed by the native **Select all** action
@@ -104,3 +117,13 @@ After fixing the iOS agent and helper, the latest results are **4 PASS,
 checks with the explicit limitations above. All nine exited zero. The full
 regression was followed by an IT-05 rerun after the final text-payload whitespace
 fix. See [the fixes, verification scope and evidence](FIX_IOS_2026-11-02.md).
+
+## Physical iOS validation on 2026-11-02
+
+The real-iOS runner now preserves text payload/focus and queries Flutter native
+nodes with the same fixes as the Simulator. Physical-device IME also matches
+semantic identifiers such as `Next:` when the visible label is localized.
+The focused-input/whitespace/Next/Done/banner regression passed on an iPhone 15
+Pro Max through the real runner's command dispatcher. The full shell suite over
+the MCP LAN bridge remains unverified because the phone-to-Mac connection timed
+out. See [the physical-device evidence and limitations](FIX_REAL_IOS_2026-11-02.md).

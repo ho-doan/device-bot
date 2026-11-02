@@ -140,12 +140,11 @@ public final class DeviceKitXCTestHostAgent {
       return ["ok": ok, "message": ok ? "coordinate" : "swipe_failed"]
     case "text":
       ensureApp()
-      if let field = driver.app?.textFields.firstMatch, field.exists {
-        field.tap()
-      } else if let view = driver.app?.textViews.firstMatch, view.exists {
-        view.tap()
+      guard let text = command.params["text"] as? String else {
+        return ["ok": false, "message": "text_required"]
       }
-      let ok = driver.typeText(string(command.params["text"]) ?? "")
+      // Typing must preserve the caller's focused input and exact payload.
+      let ok = driver.typeText(text)
       return ["ok": ok, "message": ok ? "text" : "type_failed"]
     case "button":
       let name = (string(command.params["name"]) ?? "").uppercased()

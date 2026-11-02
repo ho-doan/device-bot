@@ -20,6 +20,63 @@ final class MobileMcpRealRunnerUITests: XCTestCase {
   /// after `requestLocalNetworkPermission` returns into the command loop.
   private var localNetworkBrowser: NWBrowser?
 
+  /// Runs the real command dispatcher on a device without the LAN bridge.
+  /// The fixture is Orbit; opt in with DEVICE_BOT_REGRESSION_APP_ID.
+  func testFocusedInputAndWhitespace() throws {
+    continueAfterFailure = false
+    guard let appId = ProcessInfo.processInfo.environment["DEVICE_BOT_REGRESSION_APP_ID"] else {
+      throw XCTSkip("Set DEVICE_BOT_REGRESSION_APP_ID to the installed Orbit fixture")
+    }
+    let agent = MobileMcpRealHostAgent(hosts: [], port: 0, token: nil)
+    func send(_ method: String, _ params: [String: Any] = [:]) throws -> [String: Any] {
+      let body = agent.execute(Command(id: UUID().uuidString, method: method, params: params))
+      let ok = try XCTUnwrap(body["ok"] as? Bool)
+      if !ok {
+        XCTContext.runActivity(named: "Native UI after \(method) failure") { activity in
+          let keyboard = XCUIApplication(bundleIdentifier: appId).keyboards.firstMatch.debugDescription
+          let tree = XCTAttachment(string: keyboard)
+          tree.lifetime = .keepAlways
+          activity.add(tree)
+          activity.add(XCTAttachment(screenshot: XCUIScreen.main.screenshot()))
+        }
+      }
+      XCTAssertTrue(ok, "\(method): \(body["message"] ?? "failed")")
+      guard ok else { throw NSError(domain: "DeviceBotRegression", code: 1) }
+      return body
+    }
+    func field(_ label: String) throws -> [String: Any] {
+      let body = try send("dump", ["filter": label, "elementType": "textField", "maxResults": 2])
+      let elements = try XCTUnwrap(body["elements"] as? [[String: Any]])
+      XCTAssertEqual(elements.count, 1, "Expected exactly one \(label) field")
+      return try XCTUnwrap(elements.first)
+    }
+
+    _ = try send("launch", ["bundleId": appId])
+    defer { _ = try? send("stop") }
+    let email = "  ALEX@ORBIT.DEMO  "
+    let password = " Orbit123! "
+    _ = try send("tap-element", ["filter": "Email address"])
+    _ = try send("text", ["text": email])
+    XCTAssertEqual(try field("Email address")["value"] as? String, email)
+    _ = try send("ime-action", ["action": "next"])
+    XCTAssertEqual(try field("Password")["focused"] as? Bool, true)
+    _ = try send("text", ["text": password])
+    _ = try send("tap-element", ["filter": "Show password"])
+    XCTAssertEqual(try field("Email address")["value"] as? String, email)
+    XCTAssertEqual(try field("Password")["value"] as? String, password)
+    _ = try send("ime-action", ["action": "done"])
+
+    let banner = "Email or password is incorrect. Try the demo account below."
+    let deadline = Date().addingTimeInterval(8)
+    var found = false
+    repeat {
+      let body = try send("dump", ["filter": banner, "maxResults": 2])
+      found = (body["elements"] as? [[String: Any]])?.contains { $0["label"] as? String == banner } ?? false
+      if !found { RunLoop.current.run(until: Date().addingTimeInterval(0.25)) }
+    } while !found && Date() < deadline
+    XCTAssertTrue(found, "Expected the validation banner from the native Flutter tree")
+  }
+
   func testServe() {
     let environment = ProcessInfo.processInfo.environment
     let hosts = (environment["DEVICE_BOT_HOSTS"] ?? "")
@@ -224,7 +281,7 @@ private final class MobileMcpRealHostAgent {
     }
   }
 
-  private func execute(_ command: Command) -> [String: Any] {
+  fileprivate func execute(_ command: Command) -> [String: Any] {
     switch command.method {
     case "health":
       return ["ok": true, "bundleId": currentBundleId ?? ""]
@@ -304,8 +361,11 @@ private final class MobileMcpRealHostAgent {
       return ["ok": ok, "message": ok ? "swipe" : "swipe_failed"]
     case "text":
       ensureApp()
-      focusFirstTextInput()
-      let ok = typeText(string(command.params["text"]) ?? "")
+      guard let text = command.params["text"] as? String else {
+        return ["ok": false, "message": "text_required"]
+      }
+      // Preserve the focused input and the exact text payload, including spaces.
+      let ok = typeText(text)
       return ["ok": ok, "message": ok ? "text" : "text_failed"]
     case "ime-action":
       ensureApp()
@@ -342,19 +402,6 @@ private final class MobileMcpRealHostAgent {
     }
   }
 
-  private func focusFirstTextInput() {
-    guard let app = driver.app else { return }
-    let field = app.textFields.firstMatch
-    if field.exists && field.isHittable {
-      field.tap()
-    } else {
-      let view = app.textViews.firstMatch
-      if view.exists && view.isHittable {
-        view.tap()
-      }
-    }
-  }
-
   private func typeText(_ text: String) -> Bool {
     guard let app = driver.app else { return false }
     let submits = text.contains("\n") || text.contains("\r")
@@ -366,11 +413,18 @@ private final class MobileMcpRealHostAgent {
 
   private func pressSubmitKey(in app: XCUIApplication) -> Bool {
     let labels = ["Go", "Search", "Return", "Done"]
-    let predicate = NSPredicate(format: "label IN[c] %@", labels)
+    let predicate = keyboardActionPredicate(labels)
     let key = app.keyboards.buttons.matching(predicate).firstMatch
     guard key.exists && key.isHittable else { return false }
     key.tap()
     return true
+  }
+
+  private func keyboardActionPredicate(_ labels: [String]) -> NSPredicate {
+    // Physical Vietnamese keyboards expose e.g. identifier "Next:" and label
+    // "Tiếp". Match the requested semantic action without guessing translations.
+    let identifiers = labels.flatMap { [$0, $0 + ":"] }
+    return NSPredicate(format: "label IN[c] %@ OR identifier IN[c] %@", labels, identifiers)
   }
 
   private func pressImeAction(_ action: String, in app: XCUIApplication) -> Bool {
@@ -383,9 +437,16 @@ private final class MobileMcpRealHostAgent {
     case "send": label = "Send"
     default: return false
     }
-    let predicate = NSPredicate(format: "label ==[c] %@", label)
-    let key = app.keyboards.buttons.matching(predicate).firstMatch
-    guard key.exists, key.isHittable else { return false }
+    let keys = app.keyboards.buttons.matching(keyboardActionPredicate([label]))
+    var availableKey: XCUIElement?
+    let ready = XCTNSPredicateExpectation(
+      predicate: NSPredicate { _, _ in
+        availableKey = keys.allElementsBoundByIndex.first { $0.exists && $0.isHittable }
+        return availableKey != nil
+      }, object: nil
+    )
+    guard XCTWaiter.wait(for: [ready], timeout: 5) == .completed,
+      let key = availableKey else { return false }
     key.tap()
     return true
   }
@@ -395,9 +456,13 @@ private final class MobileMcpRealHostAgent {
     let normalizedFilter = filter.flatMap { nonEmpty($0) }?.lowercased()
     let limit = max(maxResults ?? 100, 0)
     guard limit > 0 else { return [] }
-    guard let queries = queries(for: elementType, in: app) else {
+    guard let typedQueries = queries(for: elementType, in: app) else {
       throw DumpError.unsupportedElementType(elementType ?? "")
     }
+    let baseQueries = elementType == nil && normalizedFilter != nil
+      ? [app.descendants(matching: .any)] : typedQueries
+    let keyboard = app.keyboards.firstMatch
+    let keyboardFrame = keyboard.exists ? keyboard.frame : .zero
     let predicate = normalizedFilter.map {
       NSPredicate(
         format: "identifier CONTAINS[c] %@ OR label CONTAINS[c] %@ OR value CONTAINS[c] %@",
@@ -408,14 +473,14 @@ private final class MobileMcpRealHostAgent {
     }
 
     var elements: [[String: Any]] = []
-    for baseQuery in queries {
+    for baseQuery in baseQueries {
       let query = predicate.map { baseQuery.matching($0) } ?? baseQuery
       var index = 0
       while elements.count < limit {
         let element = query.element(boundBy: index)
         index += 1
         guard element.exists else { break }
-        elements.append(elementJson(element))
+        elements.append(try elementJson(element, keyboard: keyboard, keyboardFrame: keyboardFrame))
       }
       if elements.count >= limit { break }
     }
@@ -426,77 +491,75 @@ private final class MobileMcpRealHostAgent {
     guard let app = driver.app else { return false }
     let normalizedFilter = filter.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !normalizedFilter.isEmpty else { return false }
-    let predicate = NSPredicate(
+    let exact = NSPredicate(
+      format: "identifier ==[c] %@ OR label ==[c] %@ OR value ==[c] %@",
+      normalizedFilter, normalizedFilter, normalizedFilter
+    )
+    let contains = NSPredicate(
       format: "identifier CONTAINS[c] %@ OR label CONTAINS[c] %@ OR value CONTAINS[c] %@",
-      normalizedFilter,
-      normalizedFilter,
-      normalizedFilter
+      normalizedFilter, normalizedFilter, normalizedFilter
     )
     let queries: [XCUIElementQuery] = [
-      app.buttons,
-      app.textFields,
-      app.secureTextFields,
-      app.textViews,
-      app.searchFields,
-      app.links,
-      app.staticTexts,
+      app.buttons, app.textFields, app.secureTextFields, app.textViews,
+      app.searchFields, app.switches, app.descendants(matching: .checkBox),
+      app.menuItems, app.links, app.staticTexts,
     ]
-    for query in queries {
-      let element = query.matching(predicate).firstMatch
-      guard element.exists && element.isEnabled else { continue }
-
-      let frame = element.frame
-      guard frame.width > 0, frame.height > 0 else { continue }
-
-      // Safari exposes the ChatGPT send control as a tall web button. Its
-      // reported hit-test state is unstable, and element.tap() can fail the
-      // whole XCTest even after isHittable returned true. Use coordinate input
-      // at the control's visible top edge for this semantic action.
-      if normalizedFilter.localizedCaseInsensitiveContains("send") {
-        let y = frame.height > frame.width * 3
-          ? frame.minY + min(12, frame.height / 2)
-          : frame.midY
-        if driver.tap(x: frame.midX, y: y) {
+    // Prefer the actual Password field over the Show password button, while
+    // preserving substring queries for existing browser flows.
+    for predicate in [exact, contains] {
+      for query in queries {
+        let element = query.matching(predicate).firstMatch
+        guard element.exists && element.isEnabled else { continue }
+        let frame = element.frame
+        guard frame.width > 0, frame.height > 0 else { continue }
+        // Preserve the existing workaround for tall web send controls.
+        if normalizedFilter.localizedCaseInsensitiveContains("send") {
+          let y = frame.height > frame.width * 3
+            ? frame.minY + min(12, frame.height / 2) : frame.midY
+          if driver.tap(x: frame.midX, y: y) { return true }
+          continue
+        }
+        if element.isHittable {
+          element.tap()
           return true
         }
-        continue
-      }
-
-      if element.isHittable {
-        element.tap()
-        return true
-      }
-
-      // Safari web-content buttons can be enabled and have a valid frame while
-      // XCTest reports isHittable=false. Keep semantic tap-element actions
-      // usable by falling back to the same frame-based coordinate injection
-      // used by mobile_click_on_screen_at_coordinates.
-      if driver.tap(x: frame.midX, y: frame.midY) {
-        return true
+        if driver.tap(x: frame.midX, y: frame.midY) { return true }
       }
     }
     return false
   }
 
-  private func elementJson(_ element: XCUIElement) -> [String: Any] {
-    [
+  private func elementJson(
+    _ element: XCUIElement, keyboard: XCUIElement, keyboardFrame: CGRect
+  ) throws -> [String: Any] {
+    // Resolve native attributes once, as on the Simulator driver.
+    let snapshot = try element.snapshot()
+    let frame = snapshot.frame
+    let coveredByKeyboard = keyboardFrame.contains(CGPoint(x: frame.midX, y: frame.midY))
+    let keyboardMatch = coveredByKeyboard
+      ? keyboard.descendants(matching: snapshot.elementType).matching(
+        NSPredicate(format: "label == %@ AND identifier == %@", snapshot.label, snapshot.identifier)
+      ).firstMatch : nil
+    let isKeyboardControl = keyboardMatch.map { $0.exists && $0.frame == frame } ?? false
+    return [
       "nodeId": "ios-\(UUID().uuidString)",
-      "automationId": nonEmpty(element.identifier) as Any,
-      "text": element.elementType == .staticText ? nonEmpty(element.label) as Any : NSNull(),
-      "label": nonEmpty(element.label) as Any,
-      "value": stringValue(element.value) as Any,
-      "role": role(for: element.elementType),
+      "automationId": nonEmpty(snapshot.identifier) as Any,
+      "text": snapshot.elementType == .staticText ? nonEmpty(snapshot.label) as Any : NSNull(),
+      "label": nonEmpty(snapshot.label) as Any,
+      "value": stringValue(snapshot.value) as Any,
+      "role": role(for: snapshot.elementType),
       "bounds": [
-        "x": element.frame.minX,
-        "y": element.frame.minY,
-        "width": element.frame.width,
-        "height": element.frame.height,
+        "x": frame.minX,
+        "y": frame.minY,
+        "width": frame.width,
+        "height": frame.height,
       ],
-      "enabled": element.isEnabled,
-      "clickable": element.isHittable,
-      "focused": optionalFocus(element).map { $0 as Any } ?? NSNull(),
-      "checked": checkedState(element).map { $0 as Any } ?? NSNull(),
-      "selected": selectedState(element).map { $0 as Any } ?? NSNull(),
+      "enabled": snapshot.isEnabled,
+      // Native Flutter hit-testing can include controls covered by the IME.
+      "clickable": element.isHittable && (!coveredByKeyboard || isKeyboardControl),
+      "focused": optionalFocus(snapshot as? NSObject).map { $0 as Any } ?? NSNull(),
+      "checked": checkedState(snapshot).map { $0 as Any } ?? NSNull(),
+      "selected": selectedState(snapshot).map { $0 as Any } ?? NSNull(),
     ]
   }
 
@@ -504,13 +567,10 @@ private final class MobileMcpRealHostAgent {
     switch elementType.flatMap({ nonEmpty($0) }) {
     case nil:
       return [
-        app.textFields,
-        app.secureTextFields,
-        app.textViews,
-        app.searchFields,
-        app.buttons,
-        app.links,
-        app.staticTexts,
+        app.textFields, app.secureTextFields, app.textViews, app.searchFields,
+        app.buttons, app.links, app.staticTexts, app.switches,
+        app.descendants(matching: .checkBox), app.scrollViews,
+        app.otherElements.matching(NSPredicate(format: "label != '' OR value != nil")),
       ]
     case "textField":
       return [app.textFields, app.secureTextFields, app.textViews, app.searchFields]
@@ -535,13 +595,14 @@ private final class MobileMcpRealHostAgent {
     }
   }
 
-  private func optionalFocus(_ element: XCUIElement) -> Bool? {
-    let selector = NSSelectorFromString("hasFocus")
-    guard element.responds(to: selector) else { return nil }
-    return element.value(forKey: "hasFocus") as? Bool
+  private func optionalFocus(_ element: NSObject?) -> Bool? {
+    // UI focus and the text-input responder are distinct on iOS.
+    let selector = NSSelectorFromString("hasKeyboardFocus")
+    guard let element, element.responds(to: selector) else { return nil }
+    return element.value(forKey: "hasKeyboardFocus") as? Bool
   }
 
-  private func checkedState(_ element: XCUIElement) -> Bool? {
+  private func checkedState(_ element: XCUIElementAttributes) -> Bool? {
     switch element.elementType {
     case .switch, .checkBox:
       if let value = stringValue(element.value)?.lowercased() {
@@ -554,7 +615,7 @@ private final class MobileMcpRealHostAgent {
     }
   }
 
-  private func selectedState(_ element: XCUIElement) -> Bool? {
+  private func selectedState(_ element: XCUIElementAttributes) -> Bool? {
     switch element.elementType {
     case .button, .switch, .checkBox, .radioButton:
       return element.isSelected
@@ -569,6 +630,8 @@ private final class MobileMcpRealHostAgent {
     case .staticText: return "text"
     case .textField, .secureTextField, .textView, .searchField: return "textField"
     case .link: return "link"
+    case .menuItem: return "menuItem"
+    case .other: return "other"
     case .image: return "image"
     case .checkBox: return "checkBox"
     case .switch: return "switch"
@@ -677,7 +740,7 @@ private func bridgeUrl(host: String, port: Int, path: String) -> URL? {
   return URL(string: "http://\(formattedHost):\(port)\(path)")
 }
 
-private struct Command {
+fileprivate struct Command {
   let id: String
   let method: String
   let params: [String: Any]

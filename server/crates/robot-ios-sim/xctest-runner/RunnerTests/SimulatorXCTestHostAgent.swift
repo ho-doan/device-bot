@@ -76,9 +76,11 @@ final class DeviceKitXCTestHostAgent {
       return ["ok": ok, "message": ok ? "swipe" : "swipe_failed"]
     case "text":
       ensureApp()
-      if let field = driver.app?.textFields.firstMatch, field.exists { field.tap() }
-      else if let view = driver.app?.textViews.firstMatch, view.exists { view.tap() }
-      let ok = driver.typeText(string(command.params["text"]) ?? "")
+      guard let text = command.params["text"] as? String else {
+        return ["ok": false, "message": "text_required"]
+      }
+      // Text is payload, not an identifier: preserve spaces and IME newlines.
+      let ok = driver.typeText(text)
       return ["ok": ok, "message": ok ? "text" : "text_failed"]
     case "ime-action":
       ensureApp()

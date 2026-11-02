@@ -33,10 +33,15 @@ uses **Cut** and verifies the native field is empty before typing. If selection
 is unavailable or incomplete, the script fails. iOS gestures use XCTest point
 coordinates; Android gestures use screen pixels. Scripts search in both scroll
 directions to reach controls after the keyboard or validation changes layout.
-The password textbox is located beside the native Show/Hide password action;
-the email textbox is the remaining input. This avoids relying on Flutter
+On Android, the password textbox is located beside the native Show/Hide password
+action; the email textbox is the remaining input. iOS uses a typed `textField`
+query with the native label. This avoids relying on Flutter
 `ValueKey`s or Android hint attributes that MCP currently does not expose.
-Android swipes use the app ScrollView viewport so they do not hit the keyboard.
+Swipes use the app ScrollView viewport so they do not hit the keyboard.
+On iOS, taps wait for consecutive queries to report the same target bounds.
+Text fields and editing menu items use native element taps; ordinary Flutter
+controls use the verified visible bounds to avoid native auto-scroll surprises.
+The iOS helper queries Orbit's Flutter checkboxes as native `switch` elements.
 When replacing a masked demo password, the helper temporarily reveals it to
 access text selection, verifies the replacement, and restores masking. The app
 bar account avatar is exposed as the native `AL` button on Android.
@@ -78,3 +83,24 @@ reference for a future YAML-to-MCP client; these shell entrypoints do not invoke
   IT-01 again against the latest shared helper. All five exited with code 0.
   Follow-up console logs: `/private/tmp/device-bot-remaining.K0mIEf/`.
 - The new scripts/shared helper have not been revalidated on iOS Simulator.
+
+The bullets above are the baseline before the shell scripts used element type, focus, checked state, and IME actions. A later run on the same Android device, `R58MA6QCSRJ`, covered the scripts that those tools can actually change:
+
+- IT-03 exited 0 as `PASS`. IME Next moved focus to the password field and IME Done submitted the form.
+- IT-06 exited 0 as `PARTIAL`. The reset screen has one `textField`, and IME Done submits a valid email. The remaining limitation is the 700 ms busy state and disabled controls.
+- IT-08 exited 0 as `PARTIAL`. Checkbox `checked` was true for the initial task, false after clearing it, and true for all three completed tasks. `LinearProgressIndicator.value` and line-through remain in Flutter. The task list sits below the first viewport, so the checkbox query scrolls until the control is in the tree.
+- IT-04, IT-07, and IT-09 were not changed. The short busy window and the GoRouter assertions are still outside these MCP tools.
+- iOS Simulator was not part of this run.
+
+## iOS Simulator validation on 2026-11-02
+
+All IT-01 through IT-09 were executed through the global MCP binary with a
+freshly built XCTest agent and app bundle `com.example.flutter-myapp`.
+The initial run had IT-01 pass and IT-02 through IT-09 fail. See the
+[baseline results](RESULTS_IOS_2026-11-02.md).
+
+After fixing the iOS agent and helper, the latest results are **4 PASS,
+5 PARTIAL, 0 FAIL**: IT-01/02/03/05 passed; IT-04/06/07/08/09 completed their UI
+checks with the explicit limitations above. All nine exited zero. The full
+regression was followed by an IT-05 rerun after the final text-payload whitespace
+fix. See [the fixes, verification scope and evidence](FIX_IOS_2026-11-02.md).

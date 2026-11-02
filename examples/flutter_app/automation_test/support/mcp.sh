@@ -83,11 +83,14 @@ scroll_screen() {
   call_tool mobile_list_elements_on_screen "$(jq -cn --arg d "$DEVICE_ID" \
     '{deviceId:$d,maxResults:100,timeoutMs:60000}')"
   if [[ "$PLATFORM" == ios-sim ]]; then
-    # XCTest bounds/input use points, whereas simulator screenshots use pixels.
-    # Derive a safe gesture region from hittable elements in the native tree.
+    # Use the app's largest scroll viewport, not keyboard/accessory buttons.
+    # XCTest reports these bounds in the same points used by input actions.
     dimensions="$(jq -ce '[.result.structuredContent.elements[] |
-      select(.clickable and .bounds.left >= 0 and .bounds.top >= 0) | .bounds] |
-      {w:(map(.right)|max),h:(map(.bottom)|max)} | select(.w>0 and .h>0)' <<<"$last_response")"
+      select(.className=="scrollView") | .bounds |
+      select(.right>.left and .bottom>.top)] |
+      max_by((.right-.left)*(.bottom-.top)) |
+      {x:.left,y:.top,w:(.right-.left),h:(.bottom-.top)} |
+      select(.w>0 and .h>0)' <<<"$last_response")"
   else
     # The IME shrinks the app viewport. A screenshot-sized swipe would hit the
     # keyboard instead of the form; use the native ScrollView bounds.
@@ -96,8 +99,8 @@ scroll_screen() {
       first | {w:.right,h:.bottom} | select(.w>0 and .h>0)' <<<"$last_response")"
   fi
   call_tool mobile_swipe_on_screen "$(jq -cn --arg d "$DEVICE_ID" --arg direction "$direction" --argjson s "$dimensions" \
-    '{deviceId:$d,startX:($s.w*0.5),startY:($s.h*(if $direction=="down" then 0.72 else 0.4 end)),
-      endX:($s.w*0.5),endY:($s.h*(if $direction=="down" then 0.4 else 0.72 end)),durationMs:350}')"
+    '{deviceId:$d,startX:(($s.x//0)+$s.w*0.5),startY:(($s.y//0)+$s.h*(if $direction=="down" then 0.72 else 0.4 end)),
+      endX:(($s.x//0)+$s.w*0.5),endY:(($s.y//0)+$s.h*(if $direction=="down" then 0.4 else 0.72 end)),durationMs:350}')"
 }
 scroll_down() { scroll_screen down; }
 
@@ -143,31 +146,57 @@ assert_focused_field() {
 }
 
 assert_checked() {
-  local label="$1" expected="$2"
-  query_elements "$label" checkBox
-  if ! jq -e --arg label "$label" --argjson expected "$expected" '
-    [.[] | select(((.text // "") + "\n" + (.contentDescription // "")) | contains($label))]
-    | length == 1 and .[0].checked == $expected
-  ' "$ARTIFACT_DIR/last-query.json" >/dev/null; then
-    printf 'FAIL: %s checked=%s was not observed\n' "$label" "$expected" >&2
-    return 1
-  fi
-  printf 'PASS: %s checked=%s\n' "$label" "$expected"
+  local label="$1" expected="$2" attempt found native_type=checkBox
+  # Orbit's Flutter CheckboxListTile is exposed by XCTest as a native switch.
+  [[ "$PLATFORM" == ios-sim ]] && native_type=switch
+  for ((attempt=0; attempt<12; attempt++)); do
+    query_elements "$label" "$native_type"
+    found="$(jq -r --arg label "$label" '
+      [.[] | select(((.text // "") + "\n" + (.contentDescription // "")) | contains($label))] | length
+    ' "$ARTIFACT_DIR/last-query.json")"
+    if [[ "$found" == 1 ]] && jq -e --arg label "$label" --argjson expected "$expected" '
+      [.[] | select(((.text // "") + "\n" + (.contentDescription // "")) | contains($label))]
+      | .[0].checked == $expected
+    ' "$ARTIFACT_DIR/last-query.json" >/dev/null; then
+      printf 'PASS: %s checked=%s\n' "$label" "$expected"
+      return 0
+    fi
+    # A visible checkbox with another state is a real mismatch, not a scroll miss.
+    if [[ "$found" != 0 ]]; then
+      printf 'FAIL: %s checked=%s was not observed\n' "$label" "$expected" >&2
+      return 1
+    fi
+    if ((attempt >= 1 && attempt < 11)); then
+      if ((attempt < 5)); then scroll_screen down; else scroll_screen up; fi
+    fi
+    sleep 0.5
+  done
+  printf 'FAIL: %s checked=%s was not observed\n' "$label" "$expected" >&2
+  return 1
 }
 
 # kind=field restricts matching to native text fields, avoiding hints/demo text.
 # kind=any allows tapping inert headings to move focus without a navigation action.
 find_element() {
   local label="$1" tap="${2:-false}" scroll="${3:-false}" kind="${4:-label}" attempt matches count
+  local previous_target='' current_target
   for ((attempt=0; attempt<12; attempt++)); do
-    if [[ "$kind" == field ]]; then query_elements ''; else query_elements "$label"; fi
-    matches="$(jq -c --arg label "$label" --arg kind "$kind" --argjson tap "$tap" '
+    if [[ "$kind" == field && "$PLATFORM" == ios-sim ]]; then
+      query_elements "$label" textField
+    elif [[ "$kind" == field ]]; then
+      query_elements ''
+    else
+      query_elements "$label"
+    fi
+    matches="$(jq -c --arg label "$label" --arg kind "$kind" --arg platform "$PLATFORM" --argjson tap "$tap" '
       # Android hints are not normalized. Identify the password field by the
       # Show/Hide password button in the same row; email is the other textbox.
       . as $all |
       [$all[] | select((.contentDescription // "") | test("^(Show|Hide) password$";"i")) |
         ((.bounds.top+.bounds.bottom)/2)] as $passwordRows |
-      (if $kind=="field" then
+      (if $kind=="field" and $platform=="ios-sim" then
+         [.[] | select((.contentDescription // "" | ascii_downcase)==($label|ascii_downcase))]
+       elif $kind=="field" then
          [.[] | select(.className|test("EditText|textField";"i")) |
           .bounds as $b |
           select((any($passwordRows[]; . >= $b.top and . <= $b.bottom)) == ($label=="Password"))]
@@ -179,17 +208,41 @@ find_element() {
         and ($kind!="field" or (.className|test("EditText|textField";"i")))
         and .bounds.left >= 0 and .bounds.top >= 0
         and .bounds.right > .bounds.left and .bounds.bottom > .bounds.top
-        and (($tap | not) or (.enabled and (.clickable or $kind=="any"))))]' "$ARTIFACT_DIR/last-query.json")"
+        and (($tap | not) or (.enabled and (.clickable or $kind=="any"))))] |
+      if $tap and $platform=="ios-sim" then
+        . as $all | [.[] | select(.className|test("^(button|textField|switch|checkBox|menuItem|link|radio|slider)$"))] as $controls |
+        if ($controls|length)>0 then $controls else $all end
+      else . end' "$ARTIFACT_DIR/last-query.json")"
     count="$(jq length <<<"$matches")"
     if ((count > 0)); then
       FOUND_ELEMENT="$(jq -c '.[0]' <<<"$matches")"
       if [[ "$tap" == true ]]; then
         [[ "$count" == 1 ]] || { printf 'Ambiguous: %s\n' "$label" >&2; return 1; }
-        call_tool mobile_click_on_screen_at_coordinates "$(jq -c --arg d "$DEVICE_ID" '
-          .[0].bounds | {deviceId:$d,x:((.left+.right)/2),y:((.top+.bottom)/2)}' <<<"$matches")"
+        if [[ "$PLATFORM" == ios-sim ]]; then
+          # Flutter publishes intermediate frames during keyboard/scroll
+          # animations. Require the same target bounds in consecutive queries.
+          current_target="$(jq -c '{bounds,className,contentDescription}' <<<"$FOUND_ELEMENT")"
+          if [[ "$current_target" != "$previous_target" ]]; then
+            previous_target="$current_target"
+            sleep 0.25
+            continue
+          fi
+        fi
+        if [[ "$PLATFORM" == ios-sim ]] && jq -e '.className == "textField" or .className == "menuItem"' <<<"$FOUND_ELEMENT" >/dev/null; then
+          # A partially covered element may be hittable while its center is not.
+          # Let XCTest select the actual hit point instead of tapping the IME.
+          call_tool mobile_execute_ui_actions "$(jq -cn --arg d "$DEVICE_ID" --arg f "$label" \
+            '{deviceId:$d,actions:[{type:"tap_element",filter:$f}]}')"
+        else
+          # Use verified visible bounds for ordinary Flutter controls. Native
+          # switch/button tap may unexpectedly scroll their Flutter container.
+          call_tool mobile_click_on_screen_at_coordinates "$(jq -c --arg d "$DEVICE_ID" '
+            .[0].bounds | {deviceId:$d,x:((.left+.right)/2),y:((.top+.bottom)/2)}' <<<"$matches")"
+        fi
       fi
       printf 'PASS: %s\n' "$label"; return 0
     fi
+    previous_target=''
     if [[ "$scroll" == true ]] && ((attempt >= 1 && attempt < 11)); then
       # Search both directions: validation/keyboard changes can scroll the form.
       if ((attempt < 5)); then scroll_screen down; else scroll_screen up; fi
@@ -239,6 +292,10 @@ fill_field() {
         restore_hidden=true
         find_element "$label" true true field
       fi
+    fi
+    if [[ "$PLATFORM" == ios-sim ]]; then
+      # Native tap may scroll the field while presenting the keyboard.
+      find_element "$label" false true field
     fi
     # Long-press the native field, then use its Select all editing action.
     # Android mobile_type_keys rejects control characters, so do not send \b.

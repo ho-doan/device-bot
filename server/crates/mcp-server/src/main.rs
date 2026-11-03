@@ -14,6 +14,7 @@ use robot_ios_sim::IosSimulatorRobot;
 use robot_macos::MacosRobot;
 use robot_windows::WindowsRobot;
 
+mod assets;
 mod update;
 
 fn android_adb_path() -> String {
@@ -264,6 +265,15 @@ async fn main() -> std::io::Result<()> {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    if matches!(command.as_deref(), Some("--check-install")) {
+        if arguments.next().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "--check-install accepts no arguments",
+            ));
+        }
+        return assets::check_install();
+    }
     if matches!(command.as_deref(), Some("--check-update")) {
         if arguments.next().is_some() {
             return Err(std::io::Error::new(
@@ -356,8 +366,7 @@ async fn main() -> std::io::Result<()> {
                 "--provision-ios-xctest accepts exactly one device UDID",
             ));
         }
-        let project = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../robot-ios-real/xctest-runner/MobileMcpRealRunner.xcodeproj");
+        let project = assets::xctest_project("ios-real");
         let team = std::env::var("DEVICE_BOT_IOS_TEAM").ok();
         let identity_hint = std::env::var("DEVICE_BOT_IOS_SIGNING_IDENTITY").ok();
         robot_ios_real::provision_xctest_runner(
@@ -404,8 +413,7 @@ async fn main() -> std::io::Result<()> {
     });
     let ios_agent_launcher = ios_agent_hosts
         .map(|hosts| {
-            let project = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../robot-ios-real/xctest-runner/MobileMcpRealRunner.xcodeproj");
+            let project = assets::xctest_project("ios-real");
             let derived_data = project
                 .parent()
                 .expect("real-iOS XCTest project has a parent directory")
@@ -453,8 +461,7 @@ async fn main() -> std::io::Result<()> {
         Arc::new(IosSimulatorRobot::with_xctest_runner_and_agent(
             xcrun_path,
             "xcodebuild",
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../robot-ios-sim/xctest-runner/MobileMcpSimulatorRunner.xcodeproj"),
+            assets::xctest_project("ios-sim"),
             artifact_dir,
             ios_sim_agent,
             ios_sim_agent_address.ip().to_string(),

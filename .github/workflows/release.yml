@@ -15,9 +15,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-15
             target: aarch64-apple-darwin
-          - runner: macos-14
+          - runner: macos-15-intel
             target: x86_64-apple-darwin
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
@@ -29,29 +29,26 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - run: cargo build --manifest-path server/Cargo.toml --release --locked -p device-bot --target ${{ matrix.target }}
       - name: Package macOS binary
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          staging="device-bot-${GITHUB_REF_NAME}-${{ matrix.target }}"
-          mkdir -p "$staging"
-          cp "server/target/${{ matrix.target }}/release/device-bot" "$staging/device-bot"
-          tar -czf "${staging}.tar.gz" -C "$staging" device-bot
+          python3 scripts/package_release.py --binary "server/target/${{ matrix.target }}/release/device-bot" --target '${{ matrix.target }}' --version "$GITHUB_REF_NAME" --output dist
       - name: Package Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $staging = "device-bot-${env:GITHUB_REF_NAME}-${{ matrix.target }}"
-          New-Item -ItemType Directory -Path $staging -Force | Out-Null
-          Copy-Item "server\target\${{ matrix.target }}\release\device-bot.exe" "$staging\device-bot.exe"
-          Compress-Archive -Path "$staging\device-bot.exe" -DestinationPath "$staging.zip" -Force
+          python scripts/package_release.py --binary "server/target/${{ matrix.target }}/release/device-bot.exe" --target '${{ matrix.target }}' --version $env:GITHUB_REF_NAME --output dist
       - uses: actions/upload-artifact@v4
         with:
           name: device-bot-${{ matrix.target }}
           path: |
-            device-bot-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
-            device-bot-${{ github.ref_name }}-${{ matrix.target }}.zip
+            dist/device-bot-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+            dist/device-bot-${{ github.ref_name }}-${{ matrix.target }}.zip
 
   publish:
     name: Publish GitHub release

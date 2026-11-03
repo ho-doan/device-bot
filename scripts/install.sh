@@ -7,7 +7,7 @@ INSTALL_DIR="${DEVICE_BOT_INSTALL_DIR:-$HOME/.local/bin}"
 REPOSITORY="${DEVICE_BOT_REPOSITORY:-ho-doan/device-bot}"
 BINARY_NAME="device-bot"
 
-for command in curl shasum tar install mkdir mktemp awk sleep; do
+for command in curl shasum tar install mkdir mktemp awk sleep cp mv env; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "Required command not found: ${command}" >&2
     exit 1
@@ -43,12 +43,17 @@ if [ -z "$VERSION" ]; then
   VERSION="$(printf '%s\n' "$release_json" | awk -F'"' '/"tag_name"[[:space:]]*:/ { sub(/^v/, "", $4); print $4; exit }')"
 fi
 
+VERSION="${VERSION#v}"
 case "$VERSION" in
   ''|*[!A-Za-z0-9._-]*)
     echo "Invalid release version: ${VERSION}" >&2
     exit 1
     ;;
 esac
+if ! printf '%s\n' "$VERSION" | awk '/^[0-9]+\.[0-9]+\.[0-9]+$/ {ok=1} END {exit !ok}'; then
+  echo "Version must be a numeric release such as 0.1.1." >&2
+  exit 1
+fi
 
 ARCHIVE="${BINARY_NAME}-v${VERSION}-${TARGET}.tar.gz"
 BASE_URL="https://github.com/${REPOSITORY}/releases/download/v${VERSION}"
@@ -121,8 +126,23 @@ if [ ! -f "${TEMP_DIR}/${BINARY_NAME}" ]; then
   exit 1
 fi
 
+ASSETS="device-bot-assets/${VERSION}"
+if [ ! -f "${TEMP_DIR}/${ASSETS}/manifest.json" ]; then
+  echo "The release archive does not contain versioned XCTest assets." >&2
+  exit 1
+fi
+if [ "$("${TEMP_DIR}/${BINARY_NAME}" --version)" != "$VERSION" ]; then
+  echo "Release binary version does not match ${VERSION}." >&2
+  exit 1
+fi
+env -u DEVICE_BOT_ASSET_DIR "${TEMP_DIR}/${BINARY_NAME}" --check-install
+
 mkdir -p "$INSTALL_DIR"
-install -m 0755 "${TEMP_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
+mkdir -p "${INSTALL_DIR}/device-bot-assets"
+cp -R "${TEMP_DIR}/${ASSETS}" "${INSTALL_DIR}/device-bot-assets/"
+install -m 0755 "${TEMP_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/.device-bot-install.$$"
+mv "${INSTALL_DIR}/.device-bot-install.$$" "${INSTALL_DIR}/${BINARY_NAME}"
+env -u DEVICE_BOT_ASSET_DIR "${INSTALL_DIR}/${BINARY_NAME}" --check-install
 
 echo "Installed ${BINARY_NAME} ${VERSION} to ${INSTALL_DIR}/${BINARY_NAME}"
 case ":${PATH:-}:" in

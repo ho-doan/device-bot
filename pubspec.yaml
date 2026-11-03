@@ -1,7 +1,8 @@
 name: device_kit_lib
-description: "A new Flutter plugin project."
-version: 0.0.1
-homepage:
+description: "Device automation toolkit with Flutter helpers and a native MCP server."
+version: 0.1.1
+homepage: https://github.com/ho-doan/device-bot
+repository: https://github.com/ho-doan/device-bot
 
 environment:
   sdk: ^3.11.1

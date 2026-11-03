@@ -126,9 +126,19 @@ try {
     Expand-Archive -Path $ArchivePath -DestinationPath $TempDir -Force
     $binary = Join-Path $TempDir $BinaryName
     if (-not (Test-Path -Path $binary -PathType Leaf)) { throw "The release archive does not contain $BinaryName." }
+    $assets = Join-Path $TempDir "device-bot-assets\$Version"
+    if (-not (Test-Path (Join-Path $assets "manifest.json"))) { throw "The release archive has no versioned assets." }
+    if ((& $binary --version).Trim() -ne $Version) { throw "Release binary version mismatch." }
 
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    $assetParent = Join-Path $InstallDir "device-bot-assets"
+    New-Item -ItemType Directory -Path $assetParent -Force | Out-Null
+    $assetDestination = Join-Path $assetParent $Version
+    New-Item -ItemType Directory -Path $assetDestination -Force | Out-Null
+    Copy-Item -Path (Join-Path $assets "*") -Destination $assetDestination -Recurse -Force
     Copy-Item -Path $binary -Destination (Join-Path $InstallDir $BinaryName) -Force
+    & (Join-Path $InstallDir $BinaryName) --check-install
+    if ($LASTEXITCODE -ne 0) { throw "Installed Device Bot verification failed." }
 
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $pathEntries = if ($userPath) { $userPath -split ";" } else { @() }

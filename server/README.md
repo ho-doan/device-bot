@@ -99,6 +99,11 @@ Remove-Item $script
 Set `DEVICE_BOT_VERSION` to pin a release and `DEVICE_BOT_INSTALL_DIR` to
 override the default install directory. The release archives must be named
 `device-bot-v<VERSION>-<TARGET>.tar.gz` on macOS and `.zip` on Windows.
+Version 0.1.1 and later ship XCTest projects in
+`<install-dir>/device-bot-assets/<version>/`, so iOS automation does not require
+the release builder's checkout. Run `device-bot --check-install` to validate the
+installed version and complete asset manifest before starting CI. An explicit
+`DEVICE_BOT_ASSET_DIR` can override the versioned asset root for development.
 After installation, configure the MCP client to launch `device-bot`
 over stdio, or pass `--listen HOST:PORT` for the HTTP transport.
 

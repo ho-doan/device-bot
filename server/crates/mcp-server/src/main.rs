@@ -395,6 +395,7 @@ async fn main() -> std::io::Result<()> {
     let ios_agent_hosts = real_ios_agent_hosts(ios_agent_address)?;
     let ios_agent = XCTestAgentBridge::new(ios_agent_token.clone());
     let listener = tokio::net::TcpListener::bind(ios_agent_address).await?;
+    let ios_agent_address = listener.local_addr()?;
     let agent_router = ios_agent.router();
     tokio::spawn(async move {
         if let Err(error) = axum::serve(listener, agent_router).await {
@@ -433,6 +434,7 @@ async fn main() -> std::io::Result<()> {
     let ios_sim_agent =
         XCTestAgentBridge::new(std::env::var("DEVICE_BOT_IOS_SIM_AGENT_TOKEN").ok());
     let ios_sim_listener = tokio::net::TcpListener::bind(ios_sim_agent_address).await?;
+    let ios_sim_agent_address = ios_sim_listener.local_addr()?;
     let ios_sim_agent_router = ios_sim_agent.router();
     tokio::spawn(async move {
         if let Err(error) = axum::serve(ios_sim_listener, ios_sim_agent_router).await {

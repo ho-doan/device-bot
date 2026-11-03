@@ -764,10 +764,15 @@ impl Robot for IosSimulatorRobot {
                 "no screen recording is running for device {device_id}"
             )));
         };
+        #[cfg(unix)]
         if let Some(pid) = recording.child.id() {
             // `simctl io recordVideo` finalizes its MP4 when it receives SIGINT.
             unsafe { libc::kill(pid as i32, libc::SIGINT) };
         }
+        #[cfg(not(unix))]
+        recording.child.start_kill().map_err(|error| {
+            RobotError::CommandFailed(format!("could not stop simctl screen recording: {error}"))
+        })?;
         recording.child.wait().await.map_err(|error| {
             RobotError::CommandFailed(format!("could not stop simctl screen recording: {error}"))
         })?;

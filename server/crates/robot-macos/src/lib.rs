@@ -1082,17 +1082,21 @@ impl Robot for MacosRobot {
                 "no macOS screen recording is in progress".into(),
             ));
         };
+        #[cfg(target_os = "macos")]
         if let Some(pid) = recording.child.id() {
             // ffmpeg finalizes a playable MP4 when interrupted with SIGINT.
-            #[cfg(target_os = "macos")]
             unsafe {
                 libc::kill(pid as i32, libc::SIGINT);
             }
-            #[cfg(not(target_os = "macos"))]
+        }
+        #[cfg(not(target_os = "macos"))]
+        let recording = {
+            let mut recording = recording;
             recording.child.start_kill().map_err(|error| {
                 RobotError::CommandFailed(format!("could not stop screen recording: {error}"))
             })?;
-        }
+            recording
+        };
         let output = recording.child.wait_with_output().await.map_err(|error| {
             RobotError::CommandFailed(format!(
                 "could not finalize macOS screen recording: {error}"

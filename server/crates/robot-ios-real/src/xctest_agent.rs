@@ -65,6 +65,7 @@ impl XCTestAgentBridge {
 
     pub fn router(&self) -> Router {
         Router::new()
+            .route("/health", get(health))
             .route("/next", get(next))
             .route("/result", post(result))
             .with_state(Arc::clone(&self.state))
@@ -123,6 +124,21 @@ impl XCTestAgentBridge {
     }
 }
 
+async fn health(State(state): State<Arc<StateData>>, headers: HeaderMap) -> Response {
+    if !authorized(&headers, &state) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let bridge = XCTestAgentBridge { state };
+    match bridge.dispatch("health", serde_json::json!({}), Duration::from_secs(2)).await {
+        // dispatch already validates AgentResult.ok; it is not part of the payload.
+        Ok(_) =>
+            Json(serde_json::json!({"healthy":true})).into_response(),
+        _ => (StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"healthy":false,"detail":"XCTest helper did not confirm its heartbeat"})))
+            .into_response(),
+    }
+}
+
 fn authorized(headers: &HeaderMap, state: &StateData) -> bool {
     let Some(token) = state.token.as_deref() else {
         return true;
@@ -164,6 +180,95 @@ async fn result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn health_endpoint_requires_authentication_and_a_live_round_trip() {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+        let bridge = XCTestAgentBridge::new(Some("test-token".into()));
+        let response = bridge
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(bridge.state.commands.lock().await.is_empty());
+        let pending = tokio::spawn(
+            bridge.router().oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .header(TOKEN_HEADER, "test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            ),
+        );
+        let command = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(c) = bridge.state.commands.lock().await.pop_front() {
+                    break c;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(command.method, "health");
+        // Exercise the same JSON decoding as a real Swift helper response.
+        let result = bridge
+            .router()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/result")
+                    .header(TOKEN_HEADER, "test-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "id": command.id,
+                            "ok": true,
+                            "bundleId": "com.example.app"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.status(), StatusCode::NO_CONTENT);
+        let response = pending.await.unwrap().unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap()["healthy"],
+            true
+        );
+    }
+
+    #[tokio::test]
+    async fn health_endpoint_reports_nonresponsive_helper_and_clears_probe() {
+        use tower::ServiceExt;
+        let bridge = XCTestAgentBridge::new(None);
+        let response = bridge
+            .router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/health")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(bridge.state.commands.lock().await.is_empty());
+        assert!(bridge.state.waiters.lock().await.is_empty());
+    }
 
     #[tokio::test]
     async fn dispatches_a_command_and_matches_its_result() {

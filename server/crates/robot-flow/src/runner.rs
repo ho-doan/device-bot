@@ -708,13 +708,32 @@ impl FlowRunner {
                     found.len()
                 ));
             }
+            // Native trees can retain offscreen controls with an all-zero
+            // rectangle. Search the viewport for those controls; malformed
+            // geometry and ambiguity remain errors, not selector fallbacks.
+            found.retain(|e| {
+                !["left", "top", "right", "bottom"]
+                    .iter()
+                    .all(|key| e["bounds"][key].as_f64() == Some(0.))
+            });
             if let Some(e) = found.first() {
                 let bounds = rectangle(e)?;
                 if !tap || (e["enabled"] == true && e["clickable"] == true) {
+                    // Unselected resource IDs may be snapshot-local handles.
+                    // Stability tracks the observed selector/geometry, not those
+                    // handles. Explicitly selected IDs remain part of the match.
+                    let selected_id = s
+                        .resource_id
+                        .as_ref()
+                        .or(s.prefer_resource_id.as_ref())
+                        .filter(|id| {
+                            e.get("resourceId").and_then(Value::as_str) == Some(id.as_str())
+                        });
                     let identity = json!([
                         bounds,
-                        e.get("resourceId"),
+                        selected_id,
                         e.get("className"),
+                        e.get("text"),
                         e.get("contentDescription")
                     ]);
                     if identity == previous {

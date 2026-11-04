@@ -1,0 +1,248 @@
+---
+# Requires the rebuilt Orbit fixture with Semantics.identifier annotations.
+# These IDs identify controls across platforms; editing recipes stay native.
+version: 1
+selectors:
+  demo:
+    filter: demo-button
+    resource_id: demo-button
+  sign_in:
+    filter: sign-in-button
+    resource_id: sign-in-button
+  forgot:
+    filter: forgot-password-button
+    resource_id: forgot-password-button
+  reset:
+    filter: password-reset-button
+    resource_id: password-reset-button
+  back:
+    filter: back-to-sign-in-button
+    resource_id: back-to-sign-in-button
+  profile:
+    filter: view-profile-button
+    resource_id: view-profile-button
+  avatar:
+    filter: account-avatar-button
+    resource_id: account-avatar-button
+  sign_out:
+    filter: sign-out-button
+    resource_id: sign-out-button
+  password_toggle:
+    filter: password-toggle-button
+    resource_id: password-toggle-button
+  task1:
+    filter: task-1-checkbox
+    resource_id: task-1-checkbox
+  task2:
+    filter: task-2-checkbox
+    resource_id: task-2-checkbox
+  task3:
+    filter: task-3-checkbox
+    resource_id: task-3-checkbox
+  show_password:
+    label: Show password
+  hide_password:
+    label: Hide password
+  select_all:
+    label: Select all
+  cut:
+    label: Cut
+  account:
+    label: Account
+  overview:
+    label: Overview
+  fields:
+    element_type: textField
+  email:
+    filter: email-field
+    resource_id: email-field
+    replace_recipe: replace_plain
+  password:
+    filter: password-field
+    resource_id: password-field
+    replace_recipe: replace_password
+    verify_recipe: verify_password
+  viewport:
+    filter: orbit-viewport
+    resource_id: orbit-viewport
+    largest: true
+recipes:
+  replace_plain:
+  - focus_field:
+      target: "${target}"
+  - gesture:
+      target: "${target}"
+      from:
+        x: 0.25
+        y: 0.5
+      to:
+        x: 0.25
+        y: 0.5
+      duration_ms: 1000
+  - if_element:
+      target: select_all
+      then:
+      - tap_element:
+          target: select_all
+      else:
+      - tap_element:
+          target: cut
+      - assert_value:
+          target: "${target}"
+          expected: ''
+  - type_text:
+      text: "${text}"
+  - assert_value:
+      target: "${target}"
+      expected: "${text}"
+  replace_password:
+  - if_element:
+      target: show_password
+      then:
+      - tap_element:
+          target: show_password
+      - run:
+          recipe: replace_plain
+          with:
+            target: "${target}"
+            text: "${text}"
+      - tap_element:
+          target: hide_password
+      else:
+      - run:
+          recipe: replace_plain
+          with:
+            target: "${target}"
+            text: "${text}"
+  verify_password:
+  - if_element:
+      target: show_password
+      then:
+      - tap_element:
+          target: show_password
+      - assert_value:
+          target: "${target}"
+          expected: "${text}"
+      - tap_element:
+          target: hide_password
+      else:
+      - assert_value:
+          target: "${target}"
+          expected: "${text}"
+  tap_avatar:
+  - tap_element:
+      target: avatar
+targets:
+  android:
+    device:
+      platform: android
+      state: available
+    app_id: com.example.flutter_app
+    preconditions:
+    - fixture_ready
+    viewport: viewport
+    selectors: {}
+    recipes: {}
+  ios-sim:
+    device:
+      platform: ios
+      state: available
+    app_id: com.example.flutter-myapp
+    preconditions:
+    - fixture_ready
+    viewport: viewport
+    selectors:
+      select_all:
+        label: Select all
+        native_tap: true
+        stable_samples: 2
+      cut:
+        label: Cut
+        native_tap: true
+        stable_samples: 2
+      email:
+        filter: email-field
+        resource_id: email-field
+        replace_recipe: replace_plain
+        native_tap: true
+        stable_samples: 2
+      password:
+        filter: password-field
+        resource_id: password-field
+        replace_recipe: replace_password
+        verify_recipe: verify_password
+        native_tap: true
+        stable_samples: 2
+    recipes: {}
+    stable_samples: 2
+  ios:
+    device:
+      platform: ios
+      state: available
+    app_id: com.example.flutter-myapp
+    preconditions:
+    - fixture_ready
+    viewport: viewport
+    selectors:
+      select_all:
+        label: Select all
+        native_tap: true
+        stable_samples: 2
+      cut:
+        label: Cut
+        native_tap: true
+        stable_samples: 2
+      email:
+        filter: email-field
+        resource_id: email-field
+        replace_recipe: replace_plain
+        native_tap: true
+        stable_samples: 2
+      password:
+        filter: password-field
+        resource_id: password-field
+        replace_recipe: replace_password
+        verify_recipe: verify_password
+        native_tap: true
+        stable_samples: 2
+    recipes: {}
+    stable_samples: 2
+  windows:
+    device:
+      platform: windows
+      state: available
+      id: windows-host
+    app_id: "${env:ORBIT_APP_PATH}"
+    preconditions:
+    - fixture_ready
+    viewport: viewport
+    selectors:
+      email:
+        filter: email-field
+        resource_id: email-field
+        replace_recipe: replace_plain
+        require_focus: true
+      password:
+        filter: password-field
+        resource_id: password-field
+        replace_recipe: replace_password
+        verify_recipe: verify_password
+        require_focus: true
+    recipes:
+      replace_plain:
+      - focus_field:
+          target: "${target}"
+      - gesture:
+          target: "${target}"
+          from:
+            x: 0.99
+            y: 0.5
+          to:
+            x: 0.01
+            y: 0.5
+          duration_ms: 450
+      - type_text:
+          text: "${text}"
+      - assert_value:
+          target: "${target}"
+          expected: "${text}"

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
+import '../identified_control.dart';
 import '../session.dart';
 import '../theme.dart';
 
@@ -83,28 +84,34 @@ class _AuthScreenState extends State<AuthScreen> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final wide = constraints.maxWidth >= 960;
-            final form = SingleChildScrollView(
-              padding: EdgeInsets.symmetric(
-                horizontal: wide ? 56 : 24,
-                vertical: 32,
-              ),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 420),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const OrbitLogo(),
-                      const SizedBox(height: 48),
-                      _buildForm(context),
-                      const SizedBox(height: 32),
-                      Text(
-                        'A little less noise. A lot more focus.',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+            final form = Semantics(
+              identifier: 'orbit-viewport',
+              child: SingleChildScrollView(
+                padding: EdgeInsets.symmetric(
+                  horizontal: wide ? 56 : 24,
+                  vertical: 32,
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const OrbitLogo(),
+                        const SizedBox(height: 48),
+                        _buildForm(context),
+                        const SizedBox(height: 32),
+                        Text(
+                          'A little less noise. A lot more focus.',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -137,9 +144,12 @@ class _AuthScreenState extends State<AuthScreen> {
             'Reset request simulated. This demo does not send email or change your password.',
           ),
           const SizedBox(height: 24),
-          FilledButton(
-            onPressed: () => _navigate('login'),
-            child: const Text('Back to sign in'),
+          IdentifiedControl(
+            identifier: 'back-to-sign-in-button',
+            child: FilledButton(
+              onPressed: () => _navigate('login'),
+              child: const Text('Back to sign in'),
+            ),
           ),
         ],
       );
@@ -199,103 +209,130 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
               const SizedBox(height: 20),
             ],
-            TextFormField(
-              key: const ValueKey('email-field'),
-              controller: _email,
-              enabled: !_busy,
-              decoration: const InputDecoration(
-                labelText: 'Email address',
-                hintText: 'you@example.com',
-                prefixIcon: Icon(Icons.mail_outline),
+            Semantics(
+              identifier: 'email-field',
+              child: TextFormField(
+                key: const ValueKey('email-field'),
+                controller: _email,
+                enabled: !_busy,
+                decoration: const InputDecoration(
+                  labelText: 'Email address',
+                  hintText: 'you@example.com',
+                  prefixIcon: Icon(Icons.mail_outline),
+                ),
+                keyboardType: TextInputType.emailAddress,
+                autofillHints: const [
+                  AutofillHints.username,
+                  AutofillHints.email,
+                ],
+                textInputAction: widget.resetPassword
+                    ? TextInputAction.done
+                    : TextInputAction.next,
+                autocorrect: false,
+                validator: (value) =>
+                    RegExp(
+                      r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
+                    ).hasMatch(value?.trim() ?? '')
+                    ? null
+                    : 'Enter a valid email address.',
+                onFieldSubmitted: widget.resetPassword
+                    ? (_) => _submit()
+                    : null,
               ),
-              keyboardType: TextInputType.emailAddress,
-              autofillHints: const [
-                AutofillHints.username,
-                AutofillHints.email,
-              ],
-              textInputAction: widget.resetPassword
-                  ? TextInputAction.done
-                  : TextInputAction.next,
-              autocorrect: false,
-              validator: (value) =>
-                  RegExp(
-                    r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
-                  ).hasMatch(value?.trim() ?? '')
-                  ? null
-                  : 'Enter a valid email address.',
-              onFieldSubmitted: widget.resetPassword ? (_) => _submit() : null,
             ),
             if (!widget.resetPassword) ...[
               const SizedBox(height: 20),
-              TextFormField(
-                key: const ValueKey('password-field'),
-                controller: _password,
-                enabled: !_busy,
-                obscureText: _obscure,
-                autocorrect: false,
-                enableSuggestions: false,
-                autofillHints: const [AutofillHints.password],
-                textInputAction: TextInputAction.done,
-                decoration: InputDecoration(
-                  labelText: 'Password',
-                  prefixIcon: const Icon(Icons.lock_outline),
-                  suffixIcon: IconButton(
-                    tooltip: _obscure ? 'Show password' : 'Hide password',
-                    onPressed: () => setState(() => _obscure = !_obscure),
-                    icon: Icon(
-                      _obscure
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined,
+              Semantics(
+                identifier: 'password-field',
+                child: TextFormField(
+                  key: const ValueKey('password-field'),
+                  controller: _password,
+                  enabled: !_busy,
+                  obscureText: _obscure,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  autofillHints: const [AutofillHints.password],
+                  textInputAction: TextInputAction.done,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    prefixIcon: const Icon(Icons.lock_outline),
+                    suffixIcon: MergeSemantics(
+                      child: Semantics(
+                        identifier: 'password-toggle-button',
+                        child: IconButton(
+                          key: const ValueKey('password-visibility-control'),
+                          tooltip: _obscure ? 'Show password' : 'Hide password',
+                          onPressed: () => setState(() => _obscure = !_obscure),
+                          icon: Icon(
+                            _obscure
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
+                  validator: (value) => value == null || value.isEmpty
+                      ? 'Enter your password.'
+                      : null,
+                  onFieldSubmitted: (_) => _submit(),
                 ),
-                validator: (value) => value == null || value.isEmpty
-                    ? 'Enter your password.'
-                    : null,
-                onFieldSubmitted: (_) => _submit(),
               ),
               Align(
                 alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: _busy ? null : () => _navigate('forgot-password'),
-                  child: const Text('Forgot password?'),
+                child: IdentifiedControl(
+                  identifier: 'forgot-password-button',
+                  child: TextButton(
+                    onPressed: _busy
+                        ? null
+                        : () => _navigate('forgot-password'),
+                    child: const Text('Forgot password?'),
+                  ),
                 ),
               ),
             ] else
               const SizedBox(height: 24),
-            FilledButton(
-              key: const ValueKey('submit-button'),
-              onPressed: _busy ? null : _submit,
-              child: _busy
-                  ? Semantics(
-                      label: 'Please wait',
-                      child: const SizedBox(
-                        height: 24,
-                        width: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Flexible(
-                          child: Text(
-                            widget.resetPassword
-                                ? 'Try password reset'
-                                : 'Sign in',
-                          ),
+            IdentifiedControl(
+              identifier: widget.resetPassword
+                  ? 'password-reset-button'
+                  : 'sign-in-button',
+              child: FilledButton(
+                key: const ValueKey('submit-button'),
+                onPressed: _busy ? null : _submit,
+                child: _busy
+                    ? Semantics(
+                        label: 'Please wait',
+                        child: const SizedBox(
+                          height: 24,
+                          width: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         ),
-                        const SizedBox(width: 12),
-                        const Icon(Icons.arrow_forward_rounded, size: 20),
-                      ],
-                    ),
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              widget.resetPassword
+                                  ? 'Try password reset'
+                                  : 'Sign in',
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Icon(Icons.arrow_forward_rounded, size: 20),
+                        ],
+                      ),
+              ),
             ),
             const SizedBox(height: 24),
             if (widget.resetPassword)
-              TextButton.icon(
-                onPressed: _busy ? null : () => _navigate('login'),
-                icon: const Icon(Icons.arrow_back_rounded),
-                label: const Text('Back to sign in'),
+              IdentifiedControl(
+                identifier: 'back-to-sign-in-button',
+                child: TextButton.icon(
+                  onPressed: _busy ? null : () => _navigate('login'),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  label: const Text('Back to sign in'),
+                ),
               )
             else ...[
               SurfaceCard(
@@ -326,16 +363,19 @@ class _AuthScreenState extends State<AuthScreen> {
                       '${DemoSession.demoEmail}\n${DemoSession.demoPassword}',
                     ),
                     const SizedBox(height: 12),
-                    OutlinedButton(
-                      key: const ValueKey('demo-button'),
-                      onPressed: _busy
-                          ? null
-                          : () {
-                              _email.text = DemoSession.demoEmail;
-                              _password.text = DemoSession.demoPassword;
-                              _submit();
-                            },
-                      child: const Text('Try demo workspace'),
+                    IdentifiedControl(
+                      identifier: 'demo-button',
+                      child: OutlinedButton(
+                        key: const ValueKey('demo-button'),
+                        onPressed: _busy
+                            ? null
+                            : () {
+                                _email.text = DemoSession.demoEmail;
+                                _password.text = DemoSession.demoPassword;
+                                _submit();
+                              },
+                        child: const Text('Try demo workspace'),
+                      ),
                     ),
                   ],
                 ),

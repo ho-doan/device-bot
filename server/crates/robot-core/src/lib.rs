@@ -19,6 +19,8 @@ pub enum RobotError {
     InvalidInput(String),
 }
 
+pub mod health;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RobotDevice {
     pub id: String,

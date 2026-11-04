@@ -11,6 +11,8 @@ pub mod xctest_robot;
 pub use xctest_agent::XCTestAgentBridge;
 pub use xctest_robot::{IosXCTestRobot, XCTestAgentLauncher};
 
+pub mod health;
+
 /// Finds the team ID belonging to the requested (or only) local Apple
 /// Development signing identity. Xcode still needs a valid login for that team
 /// to create provisioning profiles, but callers no longer need to copy its ID

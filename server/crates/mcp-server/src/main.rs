@@ -274,6 +274,56 @@ async fn main() -> std::io::Result<()> {
         }
         return assets::check_install();
     }
+    if matches!(command.as_deref(), Some("--health")) {
+        let device_id = arguments
+            .next()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "--health requires exactly one Simulator UDID or physical iPhone ID",
+                )
+            })?;
+        if arguments.next().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "--health requires exactly one Simulator UDID or physical iPhone ID",
+            ));
+        }
+        let xcrun = std::env::var("XCRUN_PATH").unwrap_or_else(|_| "xcrun".into());
+        let simulator = IosSimulatorRobot::with_xctest_runner(
+            &xcrun,
+            "xcodebuild",
+            assets::xctest_project("ios-sim"),
+            "artifacts",
+        );
+        let sim_devices = tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            robot_core::Robot::list_devices(&simulator),
+        )
+        .await;
+        let is_sim = matches!(sim_devices, Ok(Ok(ref devices)) if
+            devices.iter().any(|d| d.id.eq_ignore_ascii_case(&device_id)));
+        let report = if is_sim {
+            simulator
+                .check_health(&device_id)
+                .await
+                .map_err(|e| std::io::Error::other(e.to_string()))?
+        } else {
+            robot_ios_real::health::physical_health(&xcrun, &device_id).await
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(std::io::Error::other)?
+        );
+        if !report.ready_for_new_session {
+            return Err(std::io::Error::other(format!(
+                "health check: {}",
+                report.status
+            )));
+        }
+        return Ok(());
+    }
     if matches!(command.as_deref(), Some("--check-update")) {
         if arguments.next().is_some() {
             return Err(std::io::Error::new(

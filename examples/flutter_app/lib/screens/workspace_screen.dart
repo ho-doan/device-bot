@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../identified_control.dart';
 import '../session.dart';
 import '../theme.dart';
 
@@ -31,10 +32,16 @@ class WorkspaceShell extends StatelessWidget {
           actions: [
             Padding(
               padding: const EdgeInsets.only(right: 16),
-              child: IconButton(
-                tooltip: 'Your account',
-                onPressed: () => navigate(1),
-                icon: const CircleAvatar(child: Text('AL')),
+              child: MergeSemantics(
+                child: Semantics(
+                  identifier: 'account-avatar-button',
+                  child: IconButton(
+                    key: const ValueKey('account-avatar-control'),
+                    tooltip: 'Your account',
+                    onPressed: () => navigate(1),
+                    icon: const CircleAvatar(child: Text('AL')),
+                  ),
+                ),
               ),
             ),
           ],
@@ -65,10 +72,16 @@ class WorkspaceShell extends StatelessWidget {
                       alignment: Alignment.bottomCenter,
                       child: Padding(
                         padding: const EdgeInsets.only(bottom: 24),
-                        child: IconButton(
-                          tooltip: 'Sign out',
-                          onPressed: session.signOut,
-                          icon: const Icon(Icons.logout_rounded),
+                        child: MergeSemantics(
+                          child: Semantics(
+                            identifier: 'rail-sign-out-button',
+                            child: IconButton(
+                              key: const ValueKey('rail-sign-out-control'),
+                              tooltip: 'Sign out',
+                              onPressed: session.signOut,
+                              icon: const Icon(Icons.logout_rounded),
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -107,12 +120,17 @@ class WorkspaceContent extends StatelessWidget {
   final Widget child;
 
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-    padding: EdgeInsets.all(MediaQuery.sizeOf(context).width >= 800 ? 40 : 24),
-    child: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1040),
-        child: child,
+  Widget build(BuildContext context) => Semantics(
+    identifier: 'orbit-viewport',
+    child: SingleChildScrollView(
+      padding: EdgeInsets.all(
+        MediaQuery.sizeOf(context).width >= 800 ? 40 : 24,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1040),
+          child: child,
+        ),
       ),
     ),
   );
@@ -196,10 +214,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              FilledButton.icon(
-                onPressed: () => context.goNamed('account'),
-                icon: const Icon(Icons.person_outline),
-                label: const Text('View your profile'),
+              IdentifiedControl(
+                identifier: 'view-profile-button',
+                child: FilledButton.icon(
+                  onPressed: () => context.goNamed('account'),
+                  icon: const Icon(Icons.person_outline),
+                  label: const Text('View your profile'),
+                ),
               ),
             ],
           ),
@@ -262,22 +283,25 @@ class _HomeScreenState extends State<HomeScreen> {
               const Text('Check things off. Enjoy the small wins.'),
               const SizedBox(height: 16),
               for (var i = 0; i < _tasks.length; i++)
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  value: _completed.contains(i),
-                  onChanged: (value) => setState(() {
-                    value! ? _completed.add(i) : _completed.remove(i);
-                  }),
-                  title: Text(
-                    _tasks[i].$1,
-                    style: TextStyle(
-                      decoration: _completed.contains(i)
-                          ? TextDecoration.lineThrough
-                          : null,
+                IdentifiedControl(
+                  identifier: 'task-${i + 1}-checkbox',
+                  child: CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: _completed.contains(i),
+                    onChanged: (value) => setState(() {
+                      value! ? _completed.add(i) : _completed.remove(i);
+                    }),
+                    title: Text(
+                      _tasks[i].$1,
+                      style: TextStyle(
+                        decoration: _completed.contains(i)
+                            ? TextDecoration.lineThrough
+                            : null,
+                      ),
                     ),
+                    subtitle: Text(_tasks[i].$2),
                   ),
-                  subtitle: Text(_tasks[i].$2),
                 ),
               const SizedBox(height: 16),
               Semantics(
@@ -379,11 +403,14 @@ class AccountScreen extends StatelessWidget {
                 'You’re exploring a demo account. Changes and your sign-in session are kept only while the app is running.',
               ),
               const SizedBox(height: 24),
-              OutlinedButton.icon(
-                key: const ValueKey('sign-out-button'),
-                onPressed: session.signOut,
-                icon: const Icon(Icons.logout_rounded),
-                label: const Text('Sign out'),
+              IdentifiedControl(
+                identifier: 'sign-out-button',
+                child: OutlinedButton.icon(
+                  key: const ValueKey('sign-out-button'),
+                  onPressed: session.signOut,
+                  icon: const Icon(Icons.logout_rounded),
+                  label: const Text('Sign out'),
+                ),
               ),
             ],
           ),

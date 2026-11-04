@@ -353,6 +353,8 @@ impl IosXCTestRobot {
                 "--json-output",
                 &output_path_string,
             ])
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
             .output()
             .await
             .map_err(|error| {

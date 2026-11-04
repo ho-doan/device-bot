@@ -11,6 +11,26 @@ Read [the YAML client contract](../../../server/docs/yaml-mcp-client.md) for bui
 run, setup, schema and evidence rules. The profiles are candidate migrations:
 validation is not live parity. See [the YAML validation results](RESULTS_YAML_2026-11-04.md).
 
+`targets-semantics.yaml` is an opt-in profile experiment for the rebuilt Orbit
+fixture. It uses shared Semantics IDs for fields, buttons, task controls and the
+viewport, removing the label/row/native-role differences in those selectors.
+`targets.yaml` retains the preceding selectors for comparison. `ValueKey` alone
+is insufficient on Android/iOS. Identifying a checkbox by ID does not change
+its native role. Clipboard/text replacement and keyboard behavior still use
+native recipes. The fixture's 17 widget tests and profile dry-runs pass. After
+MCP reinstall and XCTest rebuild, the native Simulator Semantics smoke passes;
+IT-01 now passes including MP4 export after recovering a stale Simulator host
+recording session. Other platforms and full case parity remain unverified.
+
+```sh
+robot-flow --dry-run --profiles examples/flutter_app/automation_test/targets-semantics.yaml \
+  --target ios-sim examples/flutter_app/automation_test/it-0*.yaml
+```
+
+Rebuild/install the annotated fixture before trying this profile live. See the
+[latest recording diagnosis report](../../../.codex-runs/video-diagnosis-2026-11-04/report.md)
+for the verified layer and the remaining platform gaps.
+
 ## Bash baseline
 
 `it-01.sh` through `it-09.sh` mirror the **observable native UI** portions of

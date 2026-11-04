@@ -1,0 +1,38 @@
+[
+  [
+    {
+      "bounds": {
+        "bottom": 234,
+        "left": 24,
+        "right": 267,
+        "top": 194
+      },
+      "className": "text",
+      "clickable": true,
+      "contentDescription": "A fresh start, Alex.",
+      "elementType": "staticText",
+      "enabled": true,
+      "focused": false,
+      "resourceId": "ios-7-0",
+      "text": "A fresh start, Alex."
+    }
+  ],
+  [
+    {
+      "bounds": {
+        "bottom": 234,
+        "left": 24,
+        "right": 267,
+        "top": 194
+      },
+      "className": "text",
+      "clickable": true,
+      "contentDescription": "A fresh start, Alex.",
+      "elementType": "staticText",
+      "enabled": true,
+      "focused": false,
+      "resourceId": "ios-8-0",
+      "text": "A fresh start, Alex."
+    }
+  ]
+]

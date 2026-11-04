@@ -43,6 +43,48 @@ The binary executes `adb` and `xcrun` from `PATH`. Set `ANDROID_ADB_PATH` or
 The process accepts one JSON-RPC message per stdin line and writes one response
 per stdout line. Diagnostic output is reserved for stderr.
 
+## iOS health checks
+
+Check an existing Simulator or physical iPhone session without starting the MCP
+server, launching/building/installing a helper, recording video, or resetting a device:
+
+```bash
+device-bot --health <SIMULATOR_UDID_OR_IPHONE_ID>
+```
+
+The command writes a JSON report to stdout. Exit code `0` means every check
+passed (`status: "healthy"`, `readyForNewSession: true`); a nonzero exit means
+invalid arguments, a failed check (`unhealthy`), or an unconfirmed/warning check
+(`degraded`). Diagnostics go to stderr. Missing helpers and unavailable probes
+never count as successful checks.
+
+Simulator probes cover CoreSimulator discovery, boot state, a guest command,
+a screenshot response (temporary PNG removed after the probe), open recording files held by SimRenderServer,
+XCTest project/build products, and a live helper heartbeat. Physical iPhone
+probes cover CoreDevice discovery/connection and a live helper heartbeat; they
+do not inspect recording ownership or application responsiveness.
+
+The heartbeat uses the existing MCP bridge's authenticated `/health` endpoint,
+which queues a helper command and waits for its result. Start a normal MCP/UI
+session first if a live helper check is needed. Use the same
+`DEVICE_BOT_IOS_SIM_AGENT_BIND` / `DEVICE_BOT_IOS_SIM_AGENT_TOKEN` (Simulator)
+or `DEVICE_BOT_IOS_AGENT_BIND` / `DEVICE_BOT_IOS_AGENT_TOKEN` (physical iPhone)
+as that session. Default bridge addresses are `127.0.0.1:18788` and
+`127.0.0.1:18787` respectively. An older running bridge without `/health` needs
+a session restart with the updated binary.
+
+The bridge is shared within each platform: its heartbeat confirms a connected
+helper, and does not identify which device answered when multiple helpers use
+one bridge. Run with one target/helper per bridge for device-specific diagnosis.
+It also does not prove the foreground app's UI/event loop is responsive.
+
+Simulator recording startup runs the recording ownership check too. A busy or
+unattributed open video file blocks startup and reports owner PID/path details;
+`recordingOwners` also includes the session PID encoded in Device Bot filenames
+and whether that PID exists. This is a read-only observation, not a recorder
+reservation or permission to terminate a process. Inspect `recommendedActions`
+and the owning session before taking recovery actions.
+
 ## YAML flows
 
 `robot-flow` is a declarative MCP stdio client. It completes the MCP lifecycle,

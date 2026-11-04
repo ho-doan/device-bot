@@ -26,6 +26,7 @@ use tokio::{
     time::{Instant, sleep},
 };
 
+pub mod health;
 static ARTIFACT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const XCTEST_BUILD_TIMEOUT: Duration = Duration::from_secs(90);
 const XCTEST_RUNNER_BUNDLE_ID: &str = "com.mobilemcp.simulatorrunner.tests.xctrunner";
@@ -129,6 +130,7 @@ impl IosSimulatorRobot {
         let output = Command::new(&self.xcrun_path)
             .args(args)
             .stdin(Stdio::null())
+            .kill_on_drop(true)
             .output()
             .await
             .map_err(|error| {
@@ -727,6 +729,14 @@ impl Robot for IosSimulatorRobot {
         if recordings.contains_key(device_id) {
             return Err(RobotError::InvalidInput(format!(
                 "a screen recording is already running for device {device_id}"
+            )));
+        }
+        let preflight = self.check_recording_session(device_id).await?;
+        if preflight.check.status != robot_core::health::CheckStatus::Pass {
+            return Err(RobotError::CommandFailed(format!(
+                "recording preflight blocked: {}. Run device-bot --health {device_id}",
+                serde_json::to_string(&preflight)
+                    .unwrap_or_else(|_| preflight.check.detail.clone())
             )));
         }
         let path = self.next_recording_path(device_id);

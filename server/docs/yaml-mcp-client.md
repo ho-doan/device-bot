@@ -88,15 +88,40 @@ Selectors support exact case-insensitive native `label`/`labels`, MCP `filter`,
 `element_type`, `resource_id`, `class_contains`, `row_with`/`exclude_row_with`,
 and explicit `prefer_resource_id`. `largest` selects a geometry viewport.
 `native_tap` chooses the existing batch `tap_element` operation;
-`stable_samples` requires repeated matching bounds. `require_focus` verifies
+`stable_samples` requires repeated matching bounds. Unselected snapshot-local
+resource IDs do not prevent stabilization; explicitly selected IDs still constrain
+the match. Offscreen all-zero bounds use the existing bounded viewport search;
+malformed bounds and ambiguous selectors remain errors. `require_focus` verifies
 editor activation. `replace_recipe`/`verify_recipe` attach profile-specific
 editing/verification sequences to `fill_field`.
 
-Android textbox row relationships and the iOS checkbox-to-switch mapping are
-fixture declarations in `targets.yaml`. The runner has no Orbit labels or
-platform-specific UI branches. The viewport is measured from fresh native bounds,
-including nonzero origins and keyboard-shrunken layouts. The selected profile's
-`viewport` enables bounded down/up searches when an element is missing.
+The Orbit fixture now attaches stable `Semantics.identifier` values to fields,
+buttons, task checkboxes and viewport containers. Rebuild/install the annotated
+fixture before using the opt-in `targets-semantics.yaml`: `fixture_ready`
+includes that requirement. `targets.yaml` retains the preceding selectors for
+comparison until native evidence validates the experimental profile.
+A Flutter `ValueKey` alone does not establish a native accessibility ID.
+
+Selectors for these controls use the same `resource_id` across targets. The task
+selectors do not constrain `element_type`, so a native checkbox/switch difference
+does not change identification or rename the control. Email/password no longer
+need native-label row relationships; avatar no longer needs an AL/Your account
+fallback. Each viewport has `orbit-viewport`; `largest` chooses its geometry when
+the widget-tree bridge propagates that identifier to descendants. Bounds remain
+fresh, including nonzero origins and keyboard-shrunken layouts.
+
+Single controls use merged Semantics so their identifier retains existing labels,
+actions and checked/disabled state. Fields keep independent password-toggle
+semantics. IconButton widget keys distinguish outer widget controls from internal
+button widgets in the existing Windows snapshot; tests require exactly one
+matching actionable node for the shared ID.
+
+Text replacement, clipboard menu actions, focus confirmation and native-tap
+stabilization remain target recipes/settings. Semantics identifiers do not remove
+those native behavior differences. The runner has no Orbit labels or platform UI
+branches. The selected `viewport` enables bounded down/up searches when missing
+controls may be outside the current view. Widget semantics tests and dry-runs do
+not establish native device parity; see the recorded verification results.
 
 ## Steps and semantics
 

@@ -51,3 +51,65 @@ and [live case report](../../../.codex-runs/yaml-mcp-client-2026-11-04-resume/li
 These are local evidence artifacts. Android has no attached device; Windows and
 physical iOS remain unverified. Live IT-02..09 and full migration acceptance are
 still pending. The Bash baseline and opt-in CI gate remain in place.
+
+
+## Semantics selector experiment
+
+The fixture now exposes stable Semantics identifiers. The opt-in
+`targets-semantics.yaml` identifies fields, buttons, avatar, task controls and
+viewport by shared IDs. `targets.yaml` is retained for comparison. Native control
+roles and text-editing recipes are preserved.
+
+All 17 fixture widget tests and analyzer pass on Flutter 3.41.3. The added tests
+check platform-themed Semantics action/state/identifier behavior and unique
+Windows widget-tree bridge IDs. Nine scenarios compile for each target in both
+profiles (36 experimental and 36 previous-profile dry-runs).
+
+An arm64 Simulator build and installation succeeded. The native MCP probe still
+failed at its first query, `email_id`, with a 25-second RPC timeout. No native
+ID response or platform parity is claimed. See the
+[Semantics experiment report](../../../.codex-runs/semantics-profiles-2026-11-04/report.md)
+for the exact verified layer, successful build command and live failure evidence.
+
+
+## MCP reinstall follow-up — latest result
+
+Rebuilt/reinstalled device-bot 0.1.3 from `983dc40`, refreshed its XCTest assets,
+rebuilt the Simulator runner and reinstalled the annotated fixture. Installation
+manifest is valid and the installed binary hash matches the new build. Native
+queries now return responses with a 110-second RPC deadline.
+
+Native responses exposed two client defects, now covered by failing-before /
+passing-after regressions: generated snapshot IDs were incorrectly treated as
+stable IDs, and offscreen all-zero rectangles bypassed bounded viewport search.
+All 33 robot-flow tests and Clippy pass after these client fixes.
+
+The final native Semantics smoke is **PASS**: field/demo/avatar IDs, workspace,
+viewport search and checked=true on visible task-1-checkbox are confirmed.
+Screenshot evidence was saved and inspected. **IT-01 remains FAIL** only at
+recording export: every UI check and screenshot passes, but the returned video
+path has no file. An absolute artifact directory does not fix that gap. No
+recording fallback or server/driver source change was made.
+
+See the [MCP reinstall report](../../../.codex-runs/mcp-reinstall-2026-11-04/report.md)
+for hashes, install checks, native traces, screenshots, JUnit and the remaining
+coverage limits. Earlier timeout results above remain historical evidence.
+
+
+## Recording diagnosis — latest IT-01 result
+
+The missing-video cause is now identified: an old Simulator host recording from
+12:22 remained active inside SimRenderServer. New recorder processes exited
+with code 16 / Host recording is already in progress, while MCP still reported
+started/saved because the driver discarded stderr and ignored the exit status.
+After targeted runtime recovery, the old session finalized to a 45 MB video
+lasting 8130 seconds. Cold-start readiness/early-stop behavior was also examined.
+
+The plain MCP recording probe now succeeds. **IT-01 is PASS**, including all UI
+assertions, both screenshots and MP4 export. The video is checked with ffprobe
+and full ffmpeg decode. No production driver or tool-schema code changed in this
+diagnosis; permanent lifecycle/error-reporting hardening remains separate work.
+
+See the [recording diagnosis report](../../../.codex-runs/video-diagnosis-2026-11-04/report.md)
+for the stderr, service/file-owner evidence, reproduction, recovery steps and
+final video. Earlier IT-01 video failures above are historical results.

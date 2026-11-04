@@ -704,6 +704,88 @@ fn nested_recipe_parameters_are_not_interpolated_twice() {
     );
 }
 
+#[tokio::test]
+async fn stable_bounds_do_not_depend_on_snapshot_generated_ids() {
+    // Captured Simulator responses for the same visible heading: bounds, label
+    // and class are unchanged, while the transport's snapshot IDs differ.
+    let queries: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/ios-heading-sequence.json")).unwrap();
+    let state = Arc::new(Mutex::new(State {
+        queries: queries.into(),
+        ..State::default()
+    }));
+    let profile = Profile {
+        stable_samples: Some(2),
+        ..Profile::default()
+    };
+    let f = flow("  - assert_element: {label: 'A fresh start, Alex.'}");
+    let report = run(&f, &profile, state).await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+}
+
+#[tokio::test]
+async fn moving_bounds_still_reset_stability_samples() {
+    let queries: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/ios-heading-sequence.json")).unwrap();
+    let mut moved = queries[1].clone();
+    moved[0]["bounds"]["left"] = json!(34);
+    moved[0]["bounds"]["right"] = json!(277);
+    let state = Arc::new(Mutex::new(State {
+        queries: VecDeque::from([queries[0].clone(), moved.clone(), moved]),
+        ..State::default()
+    }));
+    let profile = Profile {
+        stable_samples: Some(2),
+        ..Profile::default()
+    };
+    let f = flow("  - assert_element: {label: 'A fresh start, Alex.'}");
+    let report = run(&f, &profile, state.clone()).await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    let calls = &state.lock().unwrap().calls;
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c["params"]["name"] == "mobile_list_elements_on_screen")
+            .count(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn offscreen_zero_bounds_trigger_bounded_viewport_search() {
+    let mut hidden = node("Task");
+    hidden["bounds"] = json!({"left":0,"top":0,"right":0,"bottom":0});
+    hidden["clickable"] = json!(false);
+    let state = Arc::new(Mutex::new(State {
+        queries: VecDeque::from([
+            json!([hidden.clone()]),
+            json!([hidden]),
+            json!([node("Screen")]),
+            json!([node("Task")]),
+        ]),
+        ..State::default()
+    }));
+    let mut profile = Profile {
+        viewport: Some("screen".into()),
+        ..Profile::default()
+    };
+    profile.selectors.insert(
+        "screen".into(),
+        serde_yaml::from_str("label: Screen").unwrap(),
+    );
+    let f = flow("  - assert_element: {label: Task}");
+    let report = run(&f, &profile, state.clone()).await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    assert!(
+        state
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .any(|c| c["params"]["name"] == "mobile_swipe_on_screen")
+    );
+}
+
 #[cfg(unix)]
 mod stdio {
     use super::*;

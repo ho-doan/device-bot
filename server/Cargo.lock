@@ -714,13 +714,10 @@ name = "robot-flow"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "robot-chrome",
- "robot-core",
- "robot-macos",
+ "base64",
  "serde",
  "serde_json",
  "serde_yaml",
- "thiserror",
  "tokio",
 ]
 

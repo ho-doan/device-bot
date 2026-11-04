@@ -10,14 +10,9 @@ name = "robot-flow"
 path = "src/main.rs"
 
 [dependencies]
-robot-chrome = { path = "../robot-chrome" }
-robot-core = { path = "../robot-core" }
-robot-macos = { path = "../robot-macos" }
+async-trait.workspace = true
+base64 = "0.22.1"
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
-
-[dev-dependencies]
-async-trait.workspace = true
+tokio = { workspace = true, features = ["io-util", "signal"] }

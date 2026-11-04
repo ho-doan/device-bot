@@ -1,0 +1,63 @@
+---
+version: 2
+name: orbit_it_09
+description: Native UI assertions ported from it-09.sh; fixture setup is external.
+steps:
+- id: it-09-01
+  select_device: "${device}"
+- id: it-09-02
+  start_screen_recording: {}
+- id: it-09-03
+  launch_app:
+    app_id: "${app_id}"
+- id: it-09-04
+  assert_element:
+    label: Welcome back.
+- id: it-09-05
+  tap_element:
+    target: demo
+- id: it-09-06
+  assert_element:
+    label: A fresh start, Alex.
+- id: it-09-07
+  tap_element:
+    target: profile
+- id: it-09-08
+  assert_element:
+    label: Alex Lane
+- id: it-09-09
+  tap_element:
+    target: sign_out
+- id: it-09-10
+  assert_element:
+    label: Welcome back.
+- id: it-09-11
+  assert_absent:
+    label: Alex Lane
+- id: it-09-12
+  assert_absent:
+    label: A fresh start, Alex.
+- id: it-09-13
+  screenshot:
+    path: signed-out.png
+- id: it-09-14
+  note_limitation:
+    message: Direct protected /home and /account GoRouter requests and from query
+      assertions are not available through current MCP tools; these security checks
+      remain in Flutter.
+- id: it-09-15
+  reset_fields: {}
+- id: it-09-16
+  tap_element:
+    target: demo
+- id: it-09-17
+  assert_element:
+    label: Alex Lane
+- id: it-09-18
+  assert_element:
+    label: alex@orbit.demo
+- id: it-09-19
+  screenshot:
+    path: result.png
+- id: it-09-20
+  stop_screen_recording: {}

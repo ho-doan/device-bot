@@ -1,63 +1,32 @@
-# Derived from integration_test/app_flows_test.dart, IT-01, and signInDemo().
-# Predicted selectors: confirm text/contentDescription on the live device tree.
-# Flutter ValueKey('demo-button') is not a guaranteed native accessibility ID.
-#
-# Reference scenario for the future YAML-to-MCP client. For a live MCP run,
-# use the sibling it-01.sh, which invokes the installed device-bot over stdio.
-# Do not add platform drivers to robot-flow to execute this scenario.
-# Prerequisites for a future live YAML run:
-# - Implement YAML execution through device-bot MCP (see .planning/notes).
-# - Install the current example app, unlock the device, and cold-stop the app:
-#     adb -s <serial> shell am force-stop com.example.flutter_app
-# - This selector requires exactly one available Android device. Add id: <serial>
-#   to select_device when multiple devices are connected.
-# - Demo button and Small wins must be visible. Smaller screens require swipes
-#   based on observed screen bounds; this template does not guess coordinates.
-#
-# Limits of current schema: waits are fixed, assertions use substring filters,
-# and no app-stop, wait-for-element, or scroll-until-element action is available.
-# GoRouter /login?from=/home, /home and takeException() remain Flutter assertions.
-# robot-flow runs drivers directly; YAML execution does not exercise MCP transport.
-version: 1
-name: orbit_it_01_cold_launch_demo_login
-description: Cold-start login UI, enter the demo workspace, and verify initial progress.
+---
+version: 2
+name: orbit_it_01
+description: Native UI assertions ported from it-01.sh; fixture setup is external.
 steps:
-  - id: select_android
-    select_device:
-      platform: android
-      state: available
-  - id: launch_orbit
-    launch_app:
-      app_id: com.example.flutter_app
-  - id: wait_for_login_ui
-    wait:
-      ms: 3000
-  - id: assert_login_heading
-    assert_element:
-      filter: Welcome back.
-      max_results: 10
-  - id: capture_login
-    screenshot:
-      path: artifacts/flows/it-01-login.png
-  - id: assert_demo_button
-    assert_element:
-      filter: Try demo workspace
-      max_results: 10
-  - id: enter_demo_workspace
-    tap_element:
-      filter: Try demo workspace
-      max_results: 10
-  - id: wait_for_demo_sign_in
-    wait:
-      ms: 3000
-  - id: assert_workspace_heading
-    assert_element:
-      filter: A fresh start, Alex.
-      max_results: 10
-  - id: assert_initial_progress
-    assert_element:
-      filter: 1/3
-      max_results: 10
-  - id: capture_workspace
-    screenshot:
-      path: artifacts/flows/it-01-workspace.png
+- id: it-01-01
+  select_device: "${device}"
+- id: it-01-02
+  start_screen_recording: {}
+- id: it-01-03
+  launch_app:
+    app_id: "${app_id}"
+- id: it-01-04
+  assert_element:
+    label: Welcome back.
+- id: it-01-05
+  screenshot:
+    path: login.png
+- id: it-01-06
+  tap_element:
+    target: demo
+- id: it-01-07
+  assert_element:
+    label: A fresh start, Alex.
+- id: it-01-08
+  assert_element:
+    label: 1/3
+- id: it-01-09
+  screenshot:
+    path: result.png
+- id: it-01-10
+  stop_screen_recording: {}

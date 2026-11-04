@@ -1,0 +1,82 @@
+---
+version: 2
+name: orbit_it_03
+description: Native UI assertions ported from it-03.sh; fixture setup is external.
+steps:
+- id: it-03-01
+  select_device: "${device}"
+- id: it-03-02
+  start_screen_recording: {}
+- id: it-03-03
+  launch_app:
+    app_id: "${app_id}"
+- id: it-03-04
+  assert_element:
+    label: Welcome back.
+- id: it-03-05
+  assert_element:
+    label: Show password
+- id: it-03-06
+  fill_field:
+    target: email
+    text: alex@orbit.demo
+- id: it-03-07
+  call_tool:
+    name: mobile_press_ime_action
+    arguments:
+      deviceId: "<selected>"
+      action: next
+- id: it-03-08
+  assert_state:
+    target: password
+    property: focused
+    expected: true
+- id: it-03-09
+  type_text:
+    text: Orbit123!
+- id: it-03-10
+  tap_element:
+    target: show_password
+- id: it-03-11
+  assert_element:
+    label: Hide password
+- id: it-03-12
+  assert_value:
+    target: password
+    expected: Orbit123!
+- id: it-03-13
+  screenshot:
+    path: password-visible.png
+- id: it-03-14
+  tap_element:
+    target: hide_password
+- id: it-03-15
+  assert_element:
+    label: Show password
+- id: it-03-16
+  tap_element:
+    target: show_password
+- id: it-03-17
+  assert_value:
+    target: password
+    expected: Orbit123!
+- id: it-03-18
+  tap_element:
+    target: hide_password
+- id: it-03-19
+  focus_field:
+    target: password
+- id: it-03-20
+  call_tool:
+    name: mobile_press_ime_action
+    arguments:
+      deviceId: "<selected>"
+      action: done
+- id: it-03-21
+  assert_element:
+    label: A fresh start, Alex.
+- id: it-03-22
+  screenshot:
+    path: result.png
+- id: it-03-23
+  stop_screen_recording: {}

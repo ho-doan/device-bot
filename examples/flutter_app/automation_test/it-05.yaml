@@ -1,0 +1,71 @@
+---
+version: 2
+name: orbit_it_05
+description: Native UI assertions ported from it-05.sh; fixture setup is external.
+steps:
+- id: it-05-01
+  select_device: "${device}"
+- id: it-05-02
+  start_screen_recording: {}
+- id: it-05-03
+  launch_app:
+    app_id: "${app_id}"
+- id: it-05-04
+  assert_element:
+    label: Welcome back.
+- id: it-05-05
+  fill_field:
+    target: email
+    text: alex@orbit.demo
+- id: it-05-06
+  fill_field:
+    target: password
+    text: orbit123!
+- id: it-05-07
+  tap_element:
+    target: sign_in
+- id: it-05-08
+  assert_element:
+    label: Email or password is incorrect. Try the demo account below.
+- id: it-05-09
+  fill_field:
+    target: password
+    text: " Orbit123! "
+- id: it-05-10
+  tap_element:
+    target: sign_in
+- id: it-05-11
+  assert_element:
+    label: Email or password is incorrect. Try the demo account below.
+- id: it-05-12
+  fill_field:
+    target: password
+    text: 'Orbit123! '
+- id: it-05-13
+  tap_element:
+    target: sign_in
+- id: it-05-14
+  assert_element:
+    label: Email or password is incorrect. Try the demo account below.
+- id: it-05-15
+  screenshot:
+    path: rejected-passwords.png
+- id: it-05-16
+  fill_field:
+    target: email
+    text: "  ALEX@ORBIT.DEMO  "
+- id: it-05-17
+  fill_field:
+    target: password
+    text: Orbit123!
+- id: it-05-18
+  tap_element:
+    target: sign_in
+- id: it-05-19
+  assert_element:
+    label: A fresh start, Alex.
+- id: it-05-20
+  screenshot:
+    path: result.png
+- id: it-05-21
+  stop_screen_recording: {}

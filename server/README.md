@@ -45,32 +45,26 @@ per stdout line. Diagnostic output is reserved for stderr.
 
 ## YAML flows
 
-`robot-flow` runs QC- or AI-authored YAML one step at a time. Flow
-orchestration stays outside `robot-core`: `select_device`, waits,
-element queries/assertions, recording, screenshots, and other scenario steps
-belong to `robot-flow`; platform crates only implement the `Robot` boundary.
+`robot-flow` is a declarative MCP stdio client. It completes the MCP lifecycle,
+validates required tools, and translates YAML steps into existing MCP calls.
+It no longer constructs platform drivers. Scenario orchestration, profiles,
+selectors and declarative recipes stay in the client; device routing stays in
+device-bot. See [the YAML client contract](docs/yaml-mcp-client.md).
 
-Validate and execute the two macOS browser smoke flows without touching a
-device:
-
-```bash
-cargo run -p robot-flow -- --dry-run \
-  examples/chrome_chatgpt.yaml \
-  examples/safari_chatgpt.yaml
-```
-
-On a macOS host with Accessibility permission, the same command without
-`--dry-run` executes the steps through `robot-macos`:
+Validate the shared Orbit scenarios without starting a server or touching a device:
 
 ```bash
-cargo run -p robot-flow -- examples/chrome_chatgpt.yaml
-cargo run -p robot-flow -- examples/safari_chatgpt.yaml
+cargo run --manifest-path server/Cargo.toml -p robot-flow -- --dry-run \
+  --profiles examples/flutter_app/automation_test/targets.yaml \
+  --target ios-sim examples/flutter_app/automation_test/it-0*.yaml
 ```
 
-The YAML schema currently supports device selection, app/URL navigation,
-waits, coordinate or accessibility-element input, assertions, screenshots,
-and screen recording. New scenario-only steps should be added to
-`robot-flow`, not to `robot-core`.
+For live execution, prepare the fixture outside the runner, pass an explicit
+device and confirm the profile's setup preconditions. The linked contract lists
+commands, current capability limits and migration from the old v1 browser flows.
+The released device-bot archive does not yet distribute the new robot-flow client;
+build/copy that binary separately. Neither the MCP server nor its tool schemas
+are changed by this YAML client implementation.
 
 ## Install a released MCP server
 

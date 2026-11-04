@@ -1,0 +1,85 @@
+---
+version: 2
+name: orbit_it_07
+description: Native UI assertions ported from it-07.sh; fixture setup is external.
+steps:
+- id: it-07-01
+  select_device: "${device}"
+- id: it-07-02
+  start_screen_recording: {}
+- id: it-07-03
+  launch_app:
+    app_id: "${app_id}"
+- id: it-07-04
+  assert_element:
+    label: Welcome back.
+- id: it-07-05
+  note_limitation:
+    message: MCP cannot request GoRouter /account directly. Establish the protected
+      account return destination by signing out from Account; cold-start route/query
+      checks remain in Flutter.
+- id: it-07-06
+  tap_element:
+    target: demo
+- id: it-07-07
+  assert_element:
+    label: A fresh start, Alex.
+- id: it-07-08
+  tap_element:
+    target: account
+- id: it-07-09
+  assert_element:
+    label: Alex Lane
+- id: it-07-10
+  tap_element:
+    target: sign_out
+- id: it-07-11
+  assert_element:
+    label: Welcome back.
+- id: it-07-12
+  assert_absent:
+    label: Alex Lane
+- id: it-07-13
+  tap_element:
+    target: forgot
+- id: it-07-14
+  assert_element:
+    label: Forgot your password?
+- id: it-07-15
+  tap_element:
+    target: back
+- id: it-07-16
+  assert_element:
+    label: Welcome back.
+- id: it-07-17
+  tap_element:
+    target: forgot
+- id: it-07-18
+  fill_field:
+    target: email
+    text: alex@orbit.demo
+- id: it-07-19
+  tap_element:
+    target: reset
+- id: it-07-20
+  assert_element:
+    label: You’re all set.
+- id: it-07-21
+  tap_element:
+    target: back
+- id: it-07-22
+  reset_fields: {}
+- id: it-07-23
+  tap_element:
+    target: demo
+- id: it-07-24
+  assert_element:
+    label: Alex Lane
+- id: it-07-25
+  assert_element:
+    label: alex@orbit.demo
+- id: it-07-26
+  screenshot:
+    path: result.png
+- id: it-07-27
+  stop_screen_recording: {}

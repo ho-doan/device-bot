@@ -1,0 +1,65 @@
+---
+version: 2
+name: orbit_it_04
+description: Native UI assertions ported from it-04.sh; fixture setup is external.
+steps:
+- id: it-04-01
+  select_device: "${device}"
+- id: it-04-02
+  start_screen_recording: {}
+- id: it-04-03
+  launch_app:
+    app_id: "${app_id}"
+- id: it-04-04
+  assert_element:
+    label: Welcome back.
+- id: it-04-05
+  fill_field:
+    target: email
+    text: alex@orbit.demo
+- id: it-04-06
+  fill_field:
+    target: password
+    text: incorrect
+- id: it-04-07
+  note_limitation:
+    message: The 700 ms busy state, disabled controls and duplicate-submit request
+      count cannot be reliably observed through sequential native MCP queries.
+- id: it-04-08
+  tap_element:
+    target: sign_in
+- id: it-04-09
+  assert_element:
+    label: Email or password is incorrect. Try the demo account below.
+- id: it-04-10
+  assert_value:
+    target: email
+    expected: alex@orbit.demo
+- id: it-04-11
+  tap_element:
+    target: show_password
+- id: it-04-12
+  assert_value:
+    target: password
+    expected: incorrect
+- id: it-04-13
+  screenshot:
+    path: failed-login.png
+- id: it-04-14
+  tap_element:
+    target: hide_password
+- id: it-04-15
+  fill_field:
+    target: password
+    text: Orbit123!
+- id: it-04-16
+  tap_element:
+    target: sign_in
+- id: it-04-17
+  assert_element:
+    label: A fresh start, Alex.
+- id: it-04-18
+  screenshot:
+    path: result.png
+- id: it-04-19
+  stop_screen_recording: {}

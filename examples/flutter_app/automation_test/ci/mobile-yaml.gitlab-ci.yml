@@ -1,0 +1,45 @@
+# Standalone opt-in pilot. When including this file, retain the caller's stages
+# and add `mobile` to that list. Install robot-flow/device-bot on the native host.
+stages:
+  - mobile
+
+variables:
+  MOBILE_YAML_ENABLED: "false"
+  MOBILE_RUNNER_TAG: "mobile-ios-sim"
+  ROBOT_FLOW_BIN: "robot-flow"
+  ORBIT_TARGET: "ios-sim"
+  ORBIT_SCENARIO: "it-01.yaml"
+
+mobile:yaml:
+  stage: mobile
+  tags:
+    - $MOBILE_RUNNER_TAG
+  resource_group: $MOBILE_RUNNER_TAG
+  cache: []
+  timeout: 30m
+  interruptible: false
+  rules:
+    - if: '$MOBILE_YAML_ENABLED == "true"'
+      when: manual
+      allow_failure: false
+    - when: never
+  script:
+    - mkdir -p artifacts/yaml
+    - ': "${DEVICE_ID:?Set DEVICE_ID}" "${APP_ID:?Set APP_ID}" "${MOBILE_SETUP_SCRIPT:?Set an external fixture build/install/cold-stop script}"'
+    - 'case "$ORBIT_SCENARIO" in it-0[1-9].yaml) ;; *) exit 2 ;; esac'
+    - command -v "$ROBOT_FLOW_BIN"
+    - bash "$MOBILE_SETUP_SCRIPT" "$ORBIT_SCENARIO"
+    - >-
+      "$ROBOT_FLOW_BIN" --profiles examples/flutter_app/automation_test/targets.yaml
+      --target "$ORBIT_TARGET" --device "$DEVICE_ID" --app-id "$APP_ID"
+      --confirm fixture_ready --artifacts artifacts/yaml
+      "examples/flutter_app/automation_test/$ORBIT_SCENARIO"
+  after_script:
+    - python3 examples/flutter_app/automation_test/support/ci_yaml_report.py artifacts/yaml
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - artifacts/yaml/
+    reports:
+      junit: artifacts/yaml/*/junit.xml

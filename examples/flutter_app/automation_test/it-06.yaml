@@ -1,0 +1,81 @@
+---
+version: 2
+name: orbit_it_06
+description: Native UI assertions ported from it-06.sh; fixture setup is external.
+steps:
+- id: it-06-01
+  select_device: "${device}"
+- id: it-06-02
+  start_screen_recording: {}
+- id: it-06-03
+  launch_app:
+    app_id: "${app_id}"
+- id: it-06-04
+  assert_element:
+    label: Welcome back.
+- id: it-06-05
+  tap_element:
+    target: forgot
+- id: it-06-06
+  assert_element:
+    label: Forgot your password?
+- id: it-06-07
+  assert_absent:
+    label: Show password
+- id: it-06-08
+  assert_count:
+    target: fields
+    count: 1
+- id: it-06-09
+  tap_element:
+    target: reset
+- id: it-06-10
+  assert_element:
+    label: Enter a valid email address.
+- id: it-06-11
+  fill_field:
+    target: email
+    text: someone@example.org
+- id: it-06-12
+  call_tool:
+    name: mobile_press_ime_action
+    arguments:
+      deviceId: "<selected>"
+      action: done
+- id: it-06-13
+  note_limitation:
+    message: The 700 ms reset busy state and disabled controls cannot be reliably
+      observed through sequential native MCP queries.
+- id: it-06-14
+  assert_element:
+    label: You’re all set.
+- id: it-06-15
+  assert_element:
+    label: Reset request simulated. This demo does not send email or change your password.
+- id: it-06-16
+  screenshot:
+    path: reset-complete.png
+- id: it-06-17
+  tap_element:
+    target: back
+- id: it-06-18
+  reset_fields: {}
+- id: it-06-19
+  fill_field:
+    target: email
+    text: alex@orbit.demo
+- id: it-06-20
+  fill_field:
+    target: password
+    text: Orbit123!
+- id: it-06-21
+  tap_element:
+    target: sign_in
+- id: it-06-22
+  assert_element:
+    label: A fresh start, Alex.
+- id: it-06-23
+  screenshot:
+    path: result.png
+- id: it-06-24
+  stop_screen_recording: {}

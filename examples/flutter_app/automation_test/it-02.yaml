@@ -1,0 +1,65 @@
+---
+version: 2
+name: orbit_it_02
+description: Native UI assertions ported from it-02.sh; fixture setup is external.
+steps:
+- id: it-02-01
+  select_device: "${device}"
+- id: it-02-02
+  start_screen_recording: {}
+- id: it-02-03
+  launch_app:
+    app_id: "${app_id}"
+- id: it-02-04
+  assert_element:
+    label: Welcome back.
+- id: it-02-05
+  tap_element:
+    target: sign_in
+- id: it-02-06
+  assert_element:
+    label: Enter a valid email address.
+- id: it-02-07
+  assert_element:
+    label: Enter your password.
+- id: it-02-08
+  assert_element:
+    label: Check the highlighted fields to continue.
+- id: it-02-09
+  screenshot:
+    path: empty-validation.png
+- id: it-02-10
+  fill_field:
+    target: email
+    text: not-an-email
+- id: it-02-11
+  fill_field:
+    target: password
+    text: Orbit123!
+- id: it-02-12
+  tap_element:
+    target: sign_in
+- id: it-02-13
+  assert_element:
+    label: Enter a valid email address.
+- id: it-02-14
+  assert_absent:
+    label: Enter your password.
+- id: it-02-15
+  screenshot:
+    path: invalid-email.png
+- id: it-02-16
+  fill_field:
+    target: email
+    text: alex@orbit.demo
+- id: it-02-17
+  tap_element:
+    target: sign_in
+- id: it-02-18
+  assert_element:
+    label: A fresh start, Alex.
+- id: it-02-19
+  screenshot:
+    path: result.png
+- id: it-02-20
+  stop_screen_recording: {}

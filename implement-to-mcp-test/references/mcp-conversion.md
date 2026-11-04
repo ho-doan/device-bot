@@ -1,4 +1,4 @@
-# Chuyển scenario sang Bash gọi MCP
+# Chuyển scenario sang YAML gọi MCP
 
 ## Khám phá helper và capability
 
@@ -9,19 +9,24 @@ tài liệu đó là backlog, không phải danh sách capability đã hoàn t�
 
 Mẫu tham khảo của repo device-bot:
 
-- `examples/flutter_app/automation_test/support/mcp.sh`: transport và helper.
-- `it-03.sh`: focus/password và IME; `it-06.sh`: số field/reset;
-  `it-08.sh`: checked và điều hướng.
+- `server/docs/yaml-mcp-client.md`: contract YAML/client và giới hạn hiện tại.
+- `examples/flutter_app/automation_test/targets.yaml`: selector/recipe dùng chung
+  và override theo platform; đây là candidate migration, cần live evidence.
+- `it-03.yaml`: focus/password và IME; `it-06.yaml`: số field/reset;
+  `it-08.yaml`: checked và điều hướng.
+- `support/mcp.sh` và các `.sh`: baseline/evidence khi đối chiếu migration.
 - `examples/flutter_app/automation_test/README.md`: coverage và kết quả theo platform.
 
 Các đường dẫn trên tính từ root package device-bot. Nếu không có source đó,
 khám phá transport/helper của dự án đích và schema binary đang cài; không phụ
 thuộc đường dẫn máy tác giả hoặc tải nguồn chỉ để sao chép helper.
 
-Helper hiện có là code cần kiểm tra trước khi reuse. Ví dụ
+Helper baseline là code cần kiểm tra trước khi chuyển recipe sang YAML. Ví dụ
 `tap_account_avatar` từng query nhãn chính rồi query lại trong `tap_control`;
 fallback còn có thể bỏ qua disabled. Chỉnh trong phạm vi công việc khi cần,
-không khẳng định helper đã tuân thủ mọi quy tắc sau đây.
+không khẳng định helper đã tuân thủ mọi quy tắc sau đây. Scenario mới dùng logical
+selector; nhãn/role/native editing khác biệt nằm trong profile/recipe. YAML runner
+gọi MCP, không dựng driver và không fallback sang CLI để thao tác UI.
 
 ## Query và thao tác
 

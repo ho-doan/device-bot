@@ -1,11 +1,11 @@
 ---
 name: implement-to-mcp-test
-description: Prepare implemented mobile UI changes for automation and generate scenario .sh tests through device-bot MCP from acceptance criteria, app code, or Flutter integration tests. Use for post-implementation automation handoff or integration-test-to-MCP conversion.
+description: Prepare implemented mobile UI changes for automation and generate shared YAML scenarios and target profiles through a device-bot MCP client. Use for post-implementation automation handoff or integration-test-to-MCP conversion.
 ---
 
 # Implement to MCP test
 
-Đưa thay đổi UI đã implement thành scenario Bash chạy qua device-bot MCP,
+Đưa thay đổi UI đã implement thành scenario YAML chạy qua device-bot MCP client,
 giữ traceability từ yêu cầu đến hành động và assertion. Áp dụng cho app mobile
 có device-bot hỗ trợ; xác minh capability trên từng platform cần chạy.
 
@@ -50,31 +50,36 @@ Không có thiết bị hoặc thiếu capability: ghi cụ thể phần chưa x
 bao phủ, tiếp tục tạo phần script có căn cứ. Lỗi môi trường khi chạy phải được
 báo là chưa chạy hoặc lỗi thực thi, không đổi thành PASS/PARTIAL thành công.
 
-## 4. Sinh shell và kiểm tra
+## 4. Sinh YAML chung và kiểm tra
 
-Một scenario một `.sh`, logic transport/query/input/evidence dùng helper chung.
-Ưu tiên thư mục và helper của repo hiện tại; app khác phải đọc lại contract của
-helper, app ID và cơ chế setup, không sao chép luồng Orbit vào app khác.
+Một scenario một `.yaml`; target/profile khai báo app/device, selector và recipe
+khác biệt theo platform. Chọn profile khi chạy, giữ cùng sequence/assertion cho
+các platform. Với source device-bot, đọc `server/docs/yaml-mcp-client.md` và
+`examples/flutter_app/automation_test/targets.yaml` trước khi sinh YAML.
+App khác phải có selector/setup riêng có evidence, không sao chép nhãn Orbit.
 
-Shell dùng Bash, `set -euo pipefail`, `jq` để tạo JSON và kiểm tra MCP error.
-Kiểm tra thiếu env/dependency sớm. Device ID lấy từ cấu hình chạy; app ID từ
-cấu hình app, có override. Thao tác UI đi qua MCP; bước chuẩn bị cần CLI phải
-ghi riêng lý do và phạm vi. Khởi tạo MCP session đúng protocol của server.
+Runner dùng MCP initialize/initialized, tools/list và tools/call của binary sẽ
+chạy. Query/wait/retry/assert/evidence thuộc runner; driver routing thuộc server.
+Cold-stop/reset/fixture startup chưa có MCP tool phải là setup bên ngoài được
+xác minh và ghi nhận. Capability thiếu được báo rõ; giữ nguyên server/tool schema
+trong phạm vi chuẩn hóa YAML. `${env:NAME}` hoặc `text_from_env` lấy dữ liệu thật.
 
 Giữ hành động và assertion tương ứng từng scenario. Mỗi thao tác cần expected
 result quan sát được; tool trả thành công chưa chứng minh nghiệp vụ đúng.
 Thêm giới hạn thời gian/retry, cleanup và artifact theo case. Tránh ghi token
 và credential thật vào script/log; dùng dữ liệu demo hoặc biến môi trường.
 
-Chạy `bash -n` cho script/helper đã sửa; chạy ShellCheck nếu có và phù hợp repo.
-Sau đó chạy các scenario bị ảnh hưởng trên platform được yêu cầu khi có môi
-trường. Helper chung đổi thì chạy thêm case đại diện cho nhánh bị tác động.
+Chạy runner `--dry-run` cho mỗi profile và test recipe/selector bằng MCP fixture
+responses. Sau đó chạy scenario trên platform được yêu cầu khi có môi trường.
+Ghi riêng dry-run, fake-MCP test và live evidence. Giữ Bash baseline cho tới khi
+case YAML tương đương được xác minh; chỉ sửa/sinh Bash khi người dùng yêu cầu
+duy trì đường legacy đó.
 Không tự thay expected result, bỏ assertion hoặc mở rộng tính năng app chỉ để
 test xanh. Lỗi ngoài phạm vi được báo với evidence.
 
 ## Bàn giao
 
-Trả đường dẫn `.sh`/helper, lệnh chạy thực tế, bảng coverage và artifact.
+Trả đường dẫn YAML/profile, lệnh chạy thực tế, bảng coverage và artifact.
 Mỗi assertion liên kết với nguồn và cách quan sát native hoặc lý do chưa phủ.
 
 - `PASS`: đã chạy, đạt đủ assertion trong scope được khai báo.

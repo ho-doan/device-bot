@@ -1,0 +1,284 @@
+---
+version: 1
+selectors:
+  demo:
+    label: Try demo workspace
+  sign_in:
+    label: Sign in
+  show_password:
+    label: Show password
+  hide_password:
+    label: Hide password
+  select_all:
+    label: Select all
+  cut:
+    label: Cut
+  forgot:
+    label: Forgot password?
+  reset:
+    label: Try password reset
+  back:
+    label: Back to sign in
+  account:
+    label: Account
+  overview:
+    label: Overview
+  profile:
+    label: View your profile
+  avatar:
+    label: AL
+    element_type: button
+  sign_out:
+    label: Sign out
+  fields:
+    element_type: textField
+  password_toggle:
+    labels:
+    - Show password
+    - Hide password
+  task1:
+    label: Make space for a fresh start
+    element_type: checkBox
+  task2:
+    label: Choose your most important task
+    element_type: checkBox
+  task3:
+    label: Take a mindful break
+    element_type: checkBox
+  email:
+    element_type: textField
+    replace_recipe: replace_plain
+    exclude_row_with: password_toggle
+    allow_missing_row_anchor: true
+  password:
+    element_type: textField
+    replace_recipe: replace_password
+    verify_recipe: verify_password
+    row_with: password_toggle
+  viewport:
+    class_contains: ScrollView
+    largest: true
+  avatar_label:
+    label: Your account
+recipes:
+  replace_plain:
+  - focus_field:
+      target: "${target}"
+  - gesture:
+      target: "${target}"
+      from:
+        x: 0.25
+        y: 0.5
+      to:
+        x: 0.25
+        y: 0.5
+      duration_ms: 1000
+  - if_element:
+      target: select_all
+      then:
+      - tap_element:
+          target: select_all
+      else:
+      - tap_element:
+          target: cut
+      - assert_value:
+          target: "${target}"
+          expected: ''
+  - type_text:
+      text: "${text}"
+  - assert_value:
+      target: "${target}"
+      expected: "${text}"
+  replace_password:
+  - if_element:
+      target: show_password
+      then:
+      - tap_element:
+          target: show_password
+      - run:
+          recipe: replace_plain
+          with:
+            target: "${target}"
+            text: "${text}"
+      - tap_element:
+          target: hide_password
+      else:
+      - run:
+          recipe: replace_plain
+          with:
+            target: "${target}"
+            text: "${text}"
+  verify_password:
+  - if_element:
+      target: show_password
+      then:
+      - tap_element:
+          target: show_password
+      - assert_value:
+          target: "${target}"
+          expected: "${text}"
+      - tap_element:
+          target: hide_password
+      else:
+      - assert_value:
+          target: "${target}"
+          expected: "${text}"
+  tap_avatar:
+  - if_element:
+      target: avatar_label
+      then:
+      - tap_element:
+          target: avatar_label
+      else:
+      - tap_element:
+          target: avatar
+targets:
+  android:
+    device:
+      platform: android
+      state: available
+    app_id: com.example.flutter_app
+    preconditions:
+    - fixture_ready
+    viewport: viewport
+    selectors: {}
+    recipes: {}
+  ios-sim:
+    device:
+      platform: ios
+      state: available
+    app_id: com.example.flutter-myapp
+    preconditions:
+    - fixture_ready
+    viewport: viewport
+    selectors:
+      select_all:
+        label: Select all
+        native_tap: true
+        stable_samples: 2
+      cut:
+        label: Cut
+        native_tap: true
+        stable_samples: 2
+      avatar:
+        label: Your account
+      task1:
+        label: Make space for a fresh start
+        element_type: switch
+      task2:
+        label: Choose your most important task
+        element_type: switch
+      task3:
+        label: Take a mindful break
+        element_type: switch
+      email:
+        element_type: textField
+        label: Email address
+        replace_recipe: replace_plain
+        native_tap: true
+        stable_samples: 2
+      password:
+        element_type: textField
+        label: Password
+        replace_recipe: replace_password
+        verify_recipe: verify_password
+        native_tap: true
+        stable_samples: 2
+      viewport:
+        class_contains: scrollView
+        largest: true
+    recipes: {}
+    stable_samples: 2
+  ios:
+    device:
+      platform: ios
+      state: available
+    app_id: com.example.flutter-myapp
+    preconditions:
+    - fixture_ready
+    viewport: viewport
+    selectors:
+      select_all:
+        label: Select all
+        native_tap: true
+        stable_samples: 2
+      cut:
+        label: Cut
+        native_tap: true
+        stable_samples: 2
+      avatar:
+        label: Your account
+      task1:
+        label: Make space for a fresh start
+        element_type: switch
+      task2:
+        label: Choose your most important task
+        element_type: switch
+      task3:
+        label: Take a mindful break
+        element_type: switch
+      email:
+        element_type: textField
+        label: Email address
+        replace_recipe: replace_plain
+        native_tap: true
+        stable_samples: 2
+      password:
+        element_type: textField
+        label: Password
+        replace_recipe: replace_password
+        verify_recipe: verify_password
+        native_tap: true
+        stable_samples: 2
+      viewport:
+        class_contains: scrollView
+        largest: true
+    recipes: {}
+    stable_samples: 2
+  windows:
+    device:
+      platform: windows
+      state: available
+      id: windows-host
+    app_id: "${env:ORBIT_APP_PATH}"
+    preconditions:
+    - fixture_ready
+    viewport: viewport
+    selectors:
+      avatar:
+        label: Your account
+      sign_out:
+        label: Sign out
+        prefer_resource_id: sign-out-button
+      email:
+        element_type: textField
+        label: Email address
+        replace_recipe: replace_plain
+        require_focus: true
+      password:
+        element_type: textField
+        label: Password
+        replace_recipe: replace_password
+        verify_recipe: verify_password
+        require_focus: true
+      viewport:
+        class_contains: scrollView
+        largest: true
+    recipes:
+      replace_plain:
+      - focus_field:
+          target: "${target}"
+      - gesture:
+          target: "${target}"
+          from:
+            x: 0.99
+            y: 0.5
+          to:
+            x: 0.01
+            y: 0.5
+          duration_ms: 450
+      - type_text:
+          text: "${text}"
+      - assert_value:
+          target: "${target}"
+          expected: "${text}"

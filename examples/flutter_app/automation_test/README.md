@@ -1,5 +1,18 @@
 # Orbit UI flows through device-bot MCP
 
+## Shared YAML scenarios
+
+`it-01.yaml` through `it-09.yaml` now declare the same native UI checks using a
+single scenario per case. `targets.yaml` contains shared selectors/recipes and
+Android, iOS Simulator, physical-iOS and Windows overrides. The Rust `robot-flow`
+client calls the installed device-bot through MCP; the server/tools are unchanged.
+
+Read [the YAML client contract](../../../server/docs/yaml-mcp-client.md) for build,
+run, setup, schema and evidence rules. The profiles are candidate migrations:
+validation is not live parity. See [the YAML validation results](RESULTS_YAML_2026-11-04.md).
+
+## Bash baseline
+
 `it-01.sh` through `it-09.sh` mirror the **observable native UI** portions of
 `../integration_test/app_flows_test.dart`. They call the globally installed
 `device-bot` through MCP stdio (`initialize`, `notifications/initialized`,
@@ -130,9 +143,9 @@ Deep links are outside this example app's scope and are not counted as missing
 coverage or a reason for `PARTIAL`. The IT-07/IT-09 limitations refer to the
 original Flutter suite's internal GoRouter assertions, not OS deep links.
 
-IT-10 through IT-12 are outside the requested `IT-0*` set. `it-01.yaml` remains a
-reference for a future YAML-to-MCP client; these shell entrypoints do not invoke
-`robot-flow`.
+IT-10 through IT-12 are outside the requested `IT-0*` set. The shell entrypoints
+remain independent baseline runs; they do not invoke `robot-flow`. Keep them
+until the corresponding YAML case is verified on the target platform.
 
 ## Validation on 2026-10-30
 

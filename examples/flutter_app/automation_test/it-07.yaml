@@ -13,6 +13,7 @@ steps:
 - id: it-07-04
   assert_element:
     label: Welcome back.
+    timeout_ms: 120000
 - id: it-07-05
   note_limitation:
     message: MCP cannot request GoRouter /account directly. Establish the protected

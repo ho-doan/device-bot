@@ -685,7 +685,7 @@ impl FlowRunner {
             + Duration::from_millis(
                 args.get("timeout_ms")
                     .and_then(Value::as_u64)
-                    .unwrap_or(15_000),
+                    .unwrap_or(30_000),
             );
         let mut previous = Value::Null;
         let mut stable = 0;
@@ -753,7 +753,7 @@ impl FlowRunner {
             } else {
                 stable = 0;
                 previous = Value::Null;
-                if (1..9).contains(&attempts) {
+                if (1..11).contains(&attempts) {
                     if let Some(viewport) = self.profile.viewport.clone() {
                         let viewport = self
                             .profile
@@ -761,6 +761,9 @@ impl FlowRunner {
                             .get(&viewport)
                             .cloned()
                             .ok_or("unknown viewport selector")?;
+                        // Match the native shell search: four down, then six up.
+                        // The return leg must cross the original position to
+                        // find content above it, rather than merely retrace it.
                         self.scroll(&viewport, if attempts < 5 { "down" } else { "up" })
                             .await?;
                     }

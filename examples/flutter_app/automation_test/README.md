@@ -19,13 +19,25 @@ is insufficient on Android/iOS. Identifying a checkbox by ID does not change
 its native role. Clipboard/text replacement and keyboard behavior still use
 native recipes. The fixture's 17 widget tests and profile dry-runs pass. After
 MCP reinstall and XCTest rebuild, the native Simulator Semantics smoke passes;
-IT-01 now passes including MP4 export after recovering a stale Simulator host
-recording session. Other platforms and full case parity remain unverified.
+The full Simulator YAML suite now completes with 4 PASS, 5 PARTIAL and 0 FAIL,
+matching the post-fix shell baseline; all nine videos are exported and validated.
+Other platforms remain unverified. See the
+[Semantics correction report](../../../.codex-runs/semantics-yaml-fix-2026-11-04/report.md).
 
 ```sh
 robot-flow --dry-run --profiles examples/flutter_app/automation_test/targets-semantics.yaml \
   --target ios-sim examples/flutter_app/automation_test/it-0*.yaml
 ```
+
+The iOS Semantics profile keeps app control IDs separate from system editing
+menus: Select All/Cut match native `menuItem` nodes, and fields must expose
+`focused=true` before the next operation. For IME scenarios, show the Simulator's
+software keyboard while an editor is focused (Device Hub: Device → Keyboard →
+Toggle Software Keyboard); a focused field can still have an offscreen keyboard.
+The first Welcome back assertion allows 120 seconds for XCTest startup and
+stable samples. Subsequent selector searches default to 30 seconds with at most
+12 samples; viewport search tries four downward and six upward swipes so it can
+reach content above the starting position as well as below it.
 
 Rebuild/install the annotated fixture before trying this profile live. See the
 [latest recording diagnosis report](../../../.codex-runs/video-diagnosis-2026-11-04/report.md)

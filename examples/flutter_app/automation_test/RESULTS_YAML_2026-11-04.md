@@ -113,3 +113,27 @@ diagnosis; permanent lifecycle/error-reporting hardening remains separate work.
 See the [recording diagnosis report](../../../.codex-runs/video-diagnosis-2026-11-04/report.md)
 for the stderr, service/file-owner evidence, reproduction, recovery steps and
 final video. Earlier IT-01 video failures above are historical results.
+
+
+## Semantics profile correction — full Simulator rerun
+
+The full `it-01.yaml`–`it-09.yaml` suite now completes with **4 PASS, 5 PARTIAL,
+0 FAIL**, all exit 0, matching the post-fix shell baseline. IT-01/02/03/05 are
+PASS; IT-04/06/07/08/09 keep their declared coverage limits and are PARTIAL.
+
+The iOS Semantics profile narrows system editing menus to native menuItem
+nodes and verifies field focus. The runner searches above and below its starting
+viewport with the shell helper's bounded swipe pattern. YAML startup assertions
+allow cold XCTest startup; regular searches remain bounded. The software
+keyboard was shown through Device Hub before the final suite so native IME
+Next/Done could be exercised. No app or native-driver code changed, and no
+business assertion was removed.
+
+All 36 robot-flow tests, Clippy with warnings denied, formatting and diff checks
+pass. All nine MP4s are retained with ffprobe/full-decode checks. Post-suite health
+shows recording_session=pass and no recording owners; agent_bridge is unknown
+after the case servers exit. This does not establish other-platform parity.
+
+See the [correction and full live report](../../../.codex-runs/semantics-yaml-fix-2026-11-04/report.md)
+for per-case JSON/JUnit, videos, query traces, failure-before regressions, setup,
+binary/profile hashes and retained limitations.

@@ -1,0 +1,33 @@
+[
+  {
+    "bounds": {
+      "bottom": 424,
+      "left": 66,
+      "right": 162,
+      "top": 380
+    },
+    "className": "menuItem",
+    "clickable": true,
+    "contentDescription": "Select All",
+    "enabled": true,
+    "focused": false,
+    "resourceId": "ios-35-0",
+    "text": null
+  },
+  {
+    "bounds": {
+      "bottom": 411,
+      "left": 82,
+      "right": 146,
+      "top": 393
+    },
+    "className": "text",
+    "clickable": true,
+    "contentDescription": "Select All",
+    "elementType": "staticText",
+    "enabled": true,
+    "focused": false,
+    "resourceId": "ios-35-1",
+    "text": "Select All"
+  }
+]

@@ -13,6 +13,7 @@ steps:
 - id: it-08-04
   assert_element:
     label: Welcome back.
+    timeout_ms: 120000
 - id: it-08-05
   tap_element:
     target: demo

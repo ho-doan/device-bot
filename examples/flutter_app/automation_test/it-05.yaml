@@ -13,6 +13,7 @@ steps:
 - id: it-05-04
   assert_element:
     label: Welcome back.
+    timeout_ms: 120000
 - id: it-05-05
   fill_field:
     target: email

@@ -13,6 +13,7 @@ steps:
 - id: it-03-04
   assert_element:
     label: Welcome back.
+    timeout_ms: 120000
 - id: it-03-05
   assert_element:
     label: Show password

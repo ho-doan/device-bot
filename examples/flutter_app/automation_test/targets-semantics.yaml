@@ -154,10 +154,12 @@ targets:
     selectors:
       select_all:
         label: Select all
+        class_contains: menuItem
         native_tap: true
         stable_samples: 2
       cut:
         label: Cut
+        class_contains: menuItem
         native_tap: true
         stable_samples: 2
       email:
@@ -165,6 +167,7 @@ targets:
         resource_id: email-field
         replace_recipe: replace_plain
         native_tap: true
+        require_focus: true
         stable_samples: 2
       password:
         filter: password-field
@@ -172,6 +175,7 @@ targets:
         replace_recipe: replace_password
         verify_recipe: verify_password
         native_tap: true
+        require_focus: true
         stable_samples: 2
     recipes: {}
     stable_samples: 2
@@ -186,10 +190,12 @@ targets:
     selectors:
       select_all:
         label: Select all
+        class_contains: menuItem
         native_tap: true
         stable_samples: 2
       cut:
         label: Cut
+        class_contains: menuItem
         native_tap: true
         stable_samples: 2
       email:
@@ -197,6 +203,7 @@ targets:
         resource_id: email-field
         replace_recipe: replace_plain
         native_tap: true
+        require_focus: true
         stable_samples: 2
       password:
         filter: password-field
@@ -204,6 +211,7 @@ targets:
         replace_recipe: replace_password
         verify_recipe: verify_password
         native_tap: true
+        require_focus: true
         stable_samples: 2
     recipes: {}
     stable_samples: 2

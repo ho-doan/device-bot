@@ -825,3 +825,143 @@ mod stdio {
         }
     }
 }
+
+#[cfg(test)]
+fn ios_semantics_profile_for_fake_mcp() -> Profile {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../examples/flutter_app/automation_test/targets-semantics.yaml");
+    let mut profile = Profiles::from_path(&path)
+        .unwrap()
+        .targets
+        .remove("ios-sim")
+        .unwrap();
+    // Fake MCP replays captured native snapshots without a device or app setup.
+    // Live runs continue to require --confirm fixture_ready.
+    profile.preconditions.clear();
+    profile
+}
+
+#[tokio::test]
+async fn semantics_edit_menu_targets_the_native_action_not_its_text_child() {
+    let menu: Value =
+        serde_json::from_str(include_str!("fixtures/ios-select-all-menu.json")).unwrap();
+    let state = Arc::new(Mutex::new(State {
+        queries: VecDeque::from([menu.clone(), menu.clone(), menu]),
+        ..State::default()
+    }));
+    let f = flow(
+        "  - if_element: {target: select_all, then: [{tap_element: {target: select_all}}], else: []}",
+    );
+    let report = run(&f, &ios_semantics_profile_for_fake_mcp(), state.clone()).await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    assert!(
+        state
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .any(|c| c["params"]["name"] == "mobile_execute_ui_actions"
+                && c["params"]["arguments"]["actions"][0]["type"] == "tap_element")
+    );
+}
+
+#[tokio::test]
+async fn semantics_field_focus_is_observed_before_sending_ime_action() {
+    let mut email = node("Email address");
+    email["resourceId"] = json!("email-field");
+    email["className"] = json!("textField");
+    email["elementType"] = json!("textField");
+    email["focused"] = json!(false);
+    let mut focused = email.clone();
+    focused["focused"] = json!(true);
+    let state = Arc::new(Mutex::new(State {
+        queries: VecDeque::from([
+            json!([email.clone()]),
+            json!([email]),
+            json!([focused.clone()]),
+            json!([focused]),
+        ]),
+        ..State::default()
+    }));
+    let f = flow(
+        "  - focus_field: {target: email}\n  - call_tool: {name: mobile_press_ime_action, arguments: {deviceId: '<selected>', action: next}}",
+    );
+    let report = run(&f, &ios_semantics_profile_for_fake_mcp(), state.clone()).await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    let state = state.lock().unwrap();
+    assert!(
+        state.queries.is_empty(),
+        "IME must wait for native focused=true, not just tap success"
+    );
+}
+
+struct ScrollSearchFake {
+    inner: Fake,
+    position: i32,
+}
+#[async_trait]
+impl Mcp for ScrollSearchFake {
+    async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        if method == "tools/call" {
+            let name = params["name"].as_str().unwrap();
+            if name == "mobile_swipe_on_screen" {
+                self.position += if params["arguments"]["startY"].as_f64().unwrap()
+                    > params["arguments"]["endY"].as_f64().unwrap()
+                {
+                    1
+                } else {
+                    -1
+                };
+            }
+            if name == "mobile_list_elements_on_screen" {
+                let elements = if params["arguments"]["filter"] == "Screen" {
+                    json!([node("Screen")])
+                } else if self.position < 0 {
+                    json!([node("0/3")])
+                } else {
+                    let mut hidden = node("0/3");
+                    hidden["bounds"] = json!({"left":0,"right":0,"top":0,"bottom":0});
+                    hidden["clickable"] = json!(false);
+                    json!([hidden])
+                };
+                self.inner.0.lock().unwrap().queries.push_back(elements);
+            }
+        }
+        self.inner.request(method, params).await
+    }
+    async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
+        self.inner.notify(method, params).await
+    }
+    async fn close(&mut self) -> Result<(), String> {
+        self.inner.close().await
+    }
+}
+
+#[tokio::test]
+async fn viewport_search_reaches_above_its_starting_position() {
+    let state = Arc::new(Mutex::new(State::default()));
+    let mut profile = Profile {
+        viewport: Some("screen".into()),
+        ..Profile::default()
+    };
+    profile.selectors.insert(
+        "screen".into(),
+        serde_yaml::from_str("label: Screen").unwrap(),
+    );
+    let tmp = Temp::new();
+    let report = FlowRunner::new(
+        Some(Box::new(ScrollSearchFake {
+            inner: Fake(state),
+            position: 0,
+        })),
+        tmp.0.clone(),
+    )
+    .run(
+        &flow("  - assert_element: {label: '0/3'}"),
+        &profile,
+        &[],
+        Duration::from_secs(4),
+    )
+    .await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+}

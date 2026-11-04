@@ -13,6 +13,7 @@ steps:
 - id: it-01-04
   assert_element:
     label: Welcome back.
+    timeout_ms: 120000
 - id: it-01-05
   screenshot:
     path: login.png

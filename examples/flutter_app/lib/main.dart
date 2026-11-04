@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:uia_windows/uia_windows.dart';
 
 import 'screens/auth_screen.dart';
 import 'screens/workspace_screen.dart';
 import 'session.dart';
 import 'theme.dart';
 
-void main() => runApp(const OrbitApp());
+Future<void> main() async {
+  await UiaWindows.start();
+  runApp(const OrbitApp());
+}
 
 class OrbitApp extends StatefulWidget {
   const OrbitApp({super.key, this.initialLocation});

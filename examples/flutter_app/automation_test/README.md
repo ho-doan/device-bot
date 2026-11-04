@@ -31,7 +31,57 @@ Defaults: Android app `com.example.flutter_app`, iOS app
 `APP_PATH=/absolute/path/to/Runner.app` or `APK_PATH=/absolute/path/to/app.apk`
 installs the app through MCP before starting. `DEVICE_BOT_BIN` overrides the
 server executable; `RPC_TIMEOUT` is a positive integer in seconds (default 180).
-Dependencies: Bash, jq, base64 and the platform CLI (`adb` or `xcrun`).
+Dependencies: Bash, jq, base64 and the platform CLI (`adb`, `xcrun`, or Windows PowerShell).
+
+## Windows through Git Bash
+
+The same `it-01.sh` through `it-09.sh` run on Windows with Git Bash. Build the
+current MCP server and the Windows sample first; the sample's `UiaWindows.start()`
+provides its widget tree, configured IME actions, and Flutter touch swipes.
+
+```sh
+# From the repository root in Git Bash. Put jq.exe on PATH first.
+cargo build --manifest-path server/Cargo.toml -p device-bot
+(cd examples/flutter_app && flutter pub get && flutter build windows --debug)
+export PLATFORM=windows
+export DEVICE_ID=windows-host
+export DEVICE_BOT_BIN="$PWD/server/target/debug/device-bot.exe"
+
+bash examples/flutter_app/automation_test/it-03.sh
+
+# Run sequentially: the scenarios share the interactive Windows desktop.
+for case in examples/flutter_app/automation_test/it-0*.sh; do
+  bash "$case" || break
+done
+```
+
+`APP_ID` defaults to this sample's `build/windows/x64/runner/Debug/flutter_app.exe`;
+override it with an absolute executable path for another build of the same
+fixture. `DEVICE_ID` defaults to `windows-host` on Windows. Keep the session
+unlocked and avoid mouse/keyboard input during testing.
+
+Windows uses anonymous Bash coprocess pipes for MCP stdio because POSIX FIFOs
+are unavailable in Git Bash. Only fixture startup/shutdown uses
+`support/windows.ps1`; every scenario query, screenshot and UI action goes
+through MCP. Each case launches its own sample process, waits for its bridge,
+shows the runner, and closes only the PID/start-time/executable it created.
+Close any existing instance of that fixture before running. No app install
+operation is attempted on Windows.
+
+Field queries use the bridge's labels and separate `value` property. Replacement
+uses a native mouse drag across the editor and verifies the value after typing;
+password replacement temporarily reveals and re-masks the field. Vertical
+swipes use Flutter's touch gesture arena with physical-to-logical coordinates;
+horizontal editor selection remains native mouse input. IME actions require the
+focused editor to be configured for that exact action. Existing `PARTIAL`
+coverage limitations still apply.
+
+The Windows regression completed with **4 PASS, 5 PARTIAL, 0 FAIL**, all exit 0.
+See [the Windows results and retained evidence](RESULTS_WINDOWS_2026-11-03.md).
+
+The Windows driver verifies the target PID is in the foreground before input
+and screenshots. Text uses Win32 Unicode packets so keyboard layouts and Telex
+composition do not change literal passwords, Unicode, or surrounding spaces.
 
 Each invocation creates a fresh process/session and prints an artifact directory
 containing MCP responses, numbered element queries, screenshots and any coverage
@@ -40,7 +90,7 @@ cold-stop precondition on Android/Simulator uses adb/simctl; real iOS restarts
 the app through the agent's `XCUIApplication.launch()`. App installation, launch, screenshots,
 element inspection, gestures and typing go through MCP.
 
-Input replacement uses a long press followed by the native **Select all** action
+On Android/iOS, input replacement uses a long press followed by the native **Select all** action
 (case-insensitive, English UI). When the entire word is already selected, it
 uses **Cut** and verifies the native field is empty before typing. If selection
 is unavailable or incomplete, the script fails. iOS gestures use XCTest point

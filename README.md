@@ -16,37 +16,41 @@ are selected dynamically by bundle/package/executable identifier.
 
 ## Device-control flow
 
-```text
-                    External tools
-                         │
-                    JSON-RPC
-                         │
-              ┌──────────▼──────────┐
-              │ Automation Agent    │
-              │ Dart Core           │
-              │                     │
-              │ socket server       │
-              │ session             │
-              │ selector            │
-              │ wait/retry          │
-              └──────────┬──────────┘
-                         │
-                    PlatformDriver
-                         │
-       ┌──────────────────┬──────────────────┐
-       │                  │                  │
-   Root Flutter draft  Root Flutter draft  Rust server
-      Windows UIA          Web/CDP       Android/iOS/macOS
-                                             /Windows
+```mermaid
+flowchart TD
+    clients["MCP clients: external tools, Git Bash tests, Flutter companion"]
+    clients -->|"JSON-RPC over stdio or Streamable HTTP"| server["device-bot: Rust MCP server"]
+    server --> registry["robot-core: RobotRegistry / Robot"]
+    registry --> platforms["Android / iOS / macOS robots"]
+    registry --> chrome["Chrome DevTools robot"]
+    registry --> windows["robot-windows"]
+    windows -->|"Launch, tap, text, horizontal drag, screenshot"| native["Native Windows input and desktop capture"]
+    windows -->|"Element discovery fallback"| uia["Windows UI Automation"]
+    windows <-->|"PID-scoped loopback TCP"| flutter["Flutter target app: UiaWindows.start() / packages/uia_windows/lib"]
 ```
 
-The root Flutter draft now retains only its Windows UIA and Web/CDP surfaces.
-Pigeon generates the Dart and C++ bindings used by that retained Windows
-adapter. Android, iOS, macOS, and their native automation services are owned
-by the Rust server under `server/crates/`.
+The Rust MCP server owns sessions and tool dispatch. `RobotRegistry` routes
+requests by device ID to the platform's `Robot` implementation. Scenario
+waits/retries belong to the client or runner; element queries, filtering and
+input dispatch use `robot-core` and the platform drivers.
 
-Selectors and retry/wait logic remain in Dart; production mobile and desktop
-drivers are implemented by the server's platform crates.
+On Windows, `mobile_launch_app` records the target PID. A Flutter app that calls
+`await UiaWindows.start()` registers an optional local bridge. `robot-windows`
+prefers that process's widget tree for element discovery and uses native UIA
+when the bridge is unavailable. The bridge also handles configured IME actions
+and vertical touch swipes. Tap, literal text, horizontal mouse selection and
+screenshots use the native Windows paths. Flutter traversal, state extraction,
+coordinate conversion and widget actions live in
+[`packages/uia_windows/lib`](packages/uia_windows/lib/).
+
+The [Git Bash scenarios](examples/flutter_app/automation_test/README.md) use this
+MCP flow. Their `support/windows.ps1` helper prepares and closes the Windows
+fixture around each run.
+
+The root Flutter draft retains its own Dart JSON-RPC entrypoint, selectors and
+Windows UIA/Web adapters. Pigeon generates the Dart/C++ bindings for that draft
+Windows adapter. See the [server README](server/README.md) for the production
+MCP interface and platform capabilities.
 
 ## Native server implementations
 
@@ -57,10 +61,11 @@ Flutter package:
 - iOS: `server/crates/robot-ios-real/` and `server/crates/robot-ios-sim/`
 - macOS: `server/crates/robot-macos/`
 - Windows: `server/crates/robot-windows/`
+- Chrome DevTools: `server/crates/robot-chrome/`
 
-## Windows UI Automation implementation
+## Root Flutter draft: Windows UI Automation implementation
 
-The Windows plugin uses Microsoft UI Automation (UIA) for semantic tree dumps
+The root Flutter Windows plugin uses Microsoft UI Automation (UIA) for semantic tree dumps
 and element actions, `SendInput` for coordinate/key input, Win32 clipboard
 APIs, and Windows Imaging Component (WIC) for PNG desktop screenshots. Every
 operation includes the session, operation name, thread, target, process id,

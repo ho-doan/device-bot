@@ -194,7 +194,7 @@ claim that macOS, Windows, Android, or iOS browser automation is supported.
 | iOS Simulator | boot, app install/uninstall/launch, screenshot, MP4 recording, tap, text, swipe, XCTest elements | Requires Xcode and the bundled XCTest runner to be buildable for the target app. Chrome UI flow still requires the Chrome DevTools robot. |
 | Real iOS device | CoreDevice discovery, install/uninstall, app launch, XCTest screenshot/input/swipe/elements, and QuickTime MP4 recording when the signed XCTest agent is reachable | Recording uses QuickTime's iPhone capture device and therefore requires the trusted iPhone to be connected by USB. A wireless device is discoverable, but its XCTest agent must bind to a LAN-reachable MCP host; the default loopback bind is not sufficient. |
 | macOS host | screenshot, MP4 recording, launch app, tap, text, accessibility elements | No installer/uninstaller or drag. Requires Screen Recording permission for recording and Accessibility permission for input. |
-| Windows host | screenshot, launch app, tap, text, drag, UIA accessibility elements | No recording, installer/uninstaller, or OmniParser coordinate fallback. UIA uses the raw view and requires an interactive Windows session; target and MCP process elevation/desktop session must be compatible. |
+| Windows host | screenshot, launch app, tap, text, drag, UIA accessibility elements, opt-in Flutter widget-tree discovery | No recording, installer/uninstaller, or OmniParser coordinate fallback. Requires an interactive Windows session; target and MCP process elevation/desktop session must be compatible. |
 | Chrome DevTools page | screenshot, MP4 recording, click, text, drag, DOM elements, navigate the attached page | It requires a reachable DevTools endpoint. |
 
 The compatibility methods named `open_url` still exist in several platform
@@ -358,8 +358,16 @@ The macOS and Windows drivers expose their local host only on their respective
 operating systems. `mobile_launch_app` opens an installed native application;
 Windows also supports drag gestures. macOS requires Accessibility permission
 for pointer/keyboard input. Neither desktop driver currently installs apps.
-Windows also lacks recording, native element discovery, and the planned
-OmniParser coordinate fallback.
+Windows also lacks recording and the planned OmniParser coordinate fallback.
+For Flutter Windows apps, call `await UiaWindows.start()` from
+[`packages/uia_windows`](../packages/uia_windows/README.md) before `runApp`.
+The Windows robot automatically prefers that process's live widget tree and
+falls back to native UIA if discovery is unavailable. Configured IME actions
+and vertical touch swipes are available through the Flutter bridge. Literal
+text uses Win32 Unicode input, and the target foreground PID is verified before
+input. The sample in
+`examples/flutter_app` includes this startup call. Launch the app through
+`mobile_launch_app` to retain its PID as the automation target.
 
 Chrome is exposed when a DevTools endpoint is available. Start Chrome with
 remote debugging, for example:

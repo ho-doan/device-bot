@@ -57,6 +57,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.3.3"
+  ffi:
+    dependency: transitive
+    description:
+      name: ffi
+      sha256: "6d7fd89431262d8f3125e81b50d3847a091d846eafcd4fdb88dd06f36d705a45"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.2.0"
   file:
     dependency: transitive
     description:
@@ -260,6 +268,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.9"
+  uia_windows:
+    dependency: "direct main"
+    description:
+      path: "../../packages/uia_windows"
+      relative: true
+    source: path
+    version: "1.0.0"
   vector_math:
     dependency: transitive
     description:
@@ -294,4 +309,4 @@ packages:
     version: "3.2.0"
 sdks:
   dart: ">=3.11.1 <4.0.0"
-  flutter: ">=3.38.0"
+  flutter: ">=3.41.0"

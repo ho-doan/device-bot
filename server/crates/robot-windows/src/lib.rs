@@ -14,9 +14,14 @@ use std::{
 };
 
 use async_trait::async_trait;
-use robot_core::{Bounds, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
+use robot_core::{
+    Bounds, DeviceState, ElementQuery, ImeAction, Platform, Point, Robot, RobotDevice, RobotError,
+    UiElement, apply_element_query,
+};
 use serde_json::{Value, json};
 use tokio::{process::Command, sync::Mutex};
+
+mod flutter_bridge;
 
 const DEVICE_ID: &str = "windows-host";
 const MAX_UI_NODES: usize = 5_000;
@@ -58,15 +63,18 @@ impl WindowsRobot {
     }
 
     async fn powershell(&self, script: String) -> Result<Vec<u8>, RobotError> {
-        let output = Command::new(&self.powershell_path)
+        let mut command = Command::new(&self.powershell_path);
+        command
             .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", &script])
             .stdin(Stdio::null())
-            .kill_on_drop(true)
-            .output()
-            .await
-            .map_err(|error| {
-                RobotError::CommandFailed(format!("could not start PowerShell: {error}"))
-            })?;
+            .kill_on_drop(true);
+        // A console spawned between activation and SendInput can steal focus
+        // from the target. Keep every driver helper invisible on Windows.
+        #[cfg(target_os = "windows")]
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let output = command.output().await.map_err(|error| {
+            RobotError::CommandFailed(format!("could not start PowerShell: {error}"))
+        })?;
         if output.status.success() {
             Ok(output.stdout)
         } else {
@@ -92,6 +100,23 @@ impl WindowsRobot {
 
         self.activate_target().await?;
         let process_id = *self.active_process_id.lock().await;
+        let bridge_process = match process_id {
+            Some(id) => Some(id),
+            None if flutter_bridge::directory().is_dir() => self.foreground_process_id().await.ok(),
+            None => None,
+        };
+        if let Some(id) = bridge_process {
+            if let Some(elements) = flutter_bridge::elements(id).await {
+                return Ok(apply_element_query(
+                    elements,
+                    &ElementQuery {
+                        element_type: None,
+                        filter: filter.map(str::to_owned),
+                        max_results,
+                    },
+                ));
+            }
+        }
         let script = build_uia_script(process_id, filter, max_results);
         let output = tokio::time::timeout(UIA_QUERY_TIMEOUT, self.powershell(script))
             .await
@@ -101,6 +126,31 @@ impl WindowsRobot {
                 )
             })??;
         parse_uia_elements(&output)
+    }
+
+    async fn foreground_process_id(&self) -> Result<u32, RobotError> {
+        let output = self.powershell(r#"
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class DeviceBotForeground {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+}
+'@
+$targetPid = [uint32]0
+[void][DeviceBotForeground]::GetWindowThreadProcessId([DeviceBotForeground]::GetForegroundWindow(), [ref]$targetPid)
+[Console]::WriteLine($targetPid)
+"#.into()).await?;
+        parse_process_id(&output)
+    }
+
+    async fn target_process_id(&self) -> Result<u32, RobotError> {
+        let active = *self.active_process_id.lock().await;
+        match active {
+            Some(id) => Ok(id),
+            None => self.foreground_process_id().await,
+        }
     }
 
     async fn activate_target(&self) -> Result<(), RobotError> {
@@ -115,13 +165,51 @@ using System.Runtime.InteropServices;
 public static class DeviceBotWindow {{
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint source, uint target, bool attach);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr window);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [StructLayout(LayoutKind.Sequential)] private struct MSG {{
+    public IntPtr window;
+    public uint message;
+    public UIntPtr wParam;
+    public IntPtr lParam;
+    public uint time;
+    public int x, y;
+    public uint reserved;
+  }}
+  [DllImport("user32.dll")] private static extern bool PeekMessage(out MSG message, IntPtr window, uint min, uint max, uint remove);
+  public static void Activate(IntPtr window) {{
+    // Avoid resetting keyboard focus/input state on every query or keystroke
+    // when the target is already foreground.
+    if (GetForegroundWindow() == window) return;
+    MSG queued;
+    PeekMessage(out queued, IntPtr.Zero, 0, 0, 0);
+    uint ignored;
+    uint current = GetCurrentThreadId();
+    uint foreground = GetWindowThreadProcessId(GetForegroundWindow(), out ignored);
+    uint target = GetWindowThreadProcessId(window, out ignored);
+    bool attachedForeground = foreground != 0 && foreground != current && AttachThreadInput(current, foreground, true);
+    bool attachedTarget = target != 0 && target != current && target != foreground && AttachThreadInput(current, target, true);
+    try {{
+      ShowWindow(window, 9);
+      BringWindowToTop(window);
+      SetForegroundWindow(window);
+    }} finally {{
+      if (attachedTarget) AttachThreadInput(current, target, false);
+      if (attachedForeground) AttachThreadInput(current, foreground, false);
+    }}
+  }}
 }}
 '@
 $process = Get-Process -Id {process_id} -ErrorAction Stop
 $window = $process.MainWindowHandle
 if ($window -eq [IntPtr]::Zero) {{ throw "Windows process {process_id} has no main window." }}
-[void][DeviceBotWindow]::ShowWindow($window, 9)
-[void][DeviceBotWindow]::SetForegroundWindow($window)
+[DeviceBotWindow]::Activate($window)
+$foregroundPid = [uint32]0
+[void][DeviceBotWindow]::GetWindowThreadProcessId([DeviceBotWindow]::GetForegroundWindow(), [ref]$foregroundPid)
+if ($foregroundPid -ne {process_id}) {{ throw "Could not activate Windows target {process_id}; foreground process is $foregroundPid. No input was sent." }}
 "#
         );
         self.powershell(script).await.map(|_| ())
@@ -130,19 +218,6 @@ if ($window -eq [IntPtr]::Zero) {{ throw "Windows process {process_id} has no ma
 
 fn ps_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
-}
-
-fn send_keys_literal(text: &str) -> String {
-    text.chars()
-        .map(|character| match character {
-            '+' | '^' | '%' | '~' | '(' | ')' | '[' | ']' => format!("{{{character}}}"),
-            '{' => "{{}".into(),
-            '}' => "{}}".into(),
-            '\n' => "{ENTER}".into(),
-            '\r' => String::new(),
-            _ => character.to_string(),
-        })
-        .collect()
 }
 
 fn mouse_helpers() -> &'static str {
@@ -490,6 +565,7 @@ if ($null -eq $apps) {
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
         self.require_device(device_id)?;
+        self.activate_target().await?;
         tokio::fs::create_dir_all(&self.artifact_dir)
             .await
             .map_err(|error| {
@@ -558,10 +634,59 @@ if ($null -eq $apps) {
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
         self.activate_target().await?;
-        self.powershell(format!(
-            "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait({})",
-            ps_quote(&send_keys_literal(text))
-        )).await.map(|_| ())
+        let script = r#"
+Add-Type @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class DeviceBotKeyboard {
+  [StructLayout(LayoutKind.Sequential)] private struct KEYBDINPUT {
+    public ushort key, scan;
+    public uint flags, time;
+    public UIntPtr extra;
+  }
+  [StructLayout(LayoutKind.Sequential)] private struct MOUSEINPUT {
+    public int x, y;
+    public uint data, flags, time;
+    public UIntPtr extra;
+  }
+  [StructLayout(LayoutKind.Explicit)] private struct INPUTDATA {
+    [FieldOffset(0)] public KEYBDINPUT keyboard;
+    [FieldOffset(0)] public MOUSEINPUT mouse;
+  }
+  [StructLayout(LayoutKind.Sequential)] private struct INPUT {
+    public uint type;
+    public INPUTDATA data;
+  }
+  [DllImport("user32.dll", SetLastError=true)] private static extern uint SendInput(uint count, INPUT[] input, int size);
+  public static void TypeLiteral(string text) {
+    var input = new List<INPUT>();
+    foreach (char character in text) {
+      if (character == '\r') continue;
+      // Unicode packets preserve literal text despite keyboard layout, dead
+      // keys, or a Telex input method. Newlines retain the existing Enter behavior.
+      bool enter = character == '\n';
+      var key = new KEYBDINPUT {
+        key = enter ? (ushort)13 : (ushort)0,
+        scan = enter ? (ushort)0 : character,
+        flags = enter ? 0u : 4u
+      };
+      input.Add(new INPUT { type=1, data=new INPUTDATA { keyboard=key } });
+      key.flags |= 2;
+      input.Add(new INPUT { type=1, data=new INPUTDATA { keyboard=key } });
+    }
+    if (input.Count == 0) return;
+    var keys = input.ToArray();
+    if (SendInput((uint)keys.Length, keys, Marshal.SizeOf(typeof(INPUT))) != keys.Length) {
+      throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows could not insert the literal text");
+    }
+  }
+}
+'@
+[DeviceBotKeyboard]::TypeLiteral(__TEXT__)
+"#.replace("__TEXT__", &ps_quote(text));
+        self.powershell(script).await.map(|_| ())
     }
 
     async fn swipe(
@@ -573,12 +698,48 @@ if ($null -eq $apps) {
     ) -> Result<(), RobotError> {
         self.require_device(device_id)?;
         self.activate_target().await?;
+        if (end.y - start.y).abs() > (end.x - start.x).abs() {
+            let process_id = self.target_process_id().await?;
+            if flutter_bridge::action(
+                process_id,
+                json!({
+                    "command": "swipe",
+                    "startX": start.x, "startY": start.y,
+                    "endX": end.x, "endY": end.y,
+                    "durationMs": duration_ms.unwrap_or(300).min(2000),
+                }),
+            )
+            .await?
+            {
+                return Ok(());
+            }
+        }
         let steps = 12_u64;
         let delay = duration_ms.unwrap_or(300) / steps;
         self.powershell(format!(
             "{}; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {}); [MobileMcpMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); for ($step = 1; $step -le {}; $step++) {{ [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point([Math]::Round({} + ({} - {}) * $step / {}), [Math]::Round({} + ({} - {}) * $step / {})); Start-Sleep -Milliseconds {} }}; [MobileMcpMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)",
             mouse_helpers(), start.x.round(), start.y.round(), steps, start.x, end.x, start.x, steps, start.y, end.y, start.y, steps, delay
         )).await.map(|_| ())
+    }
+
+    async fn press_ime_action(&self, device_id: &str, action: ImeAction) -> Result<(), RobotError> {
+        self.require_device(device_id)?;
+        self.activate_target().await?;
+        let process_id = self.target_process_id().await?;
+        if flutter_bridge::action(
+            process_id,
+            json!({
+                "command": "imeAction", "action": action.as_str(),
+            }),
+        )
+        .await?
+        {
+            Ok(())
+        } else {
+            Err(RobotError::Unsupported(
+                "Windows IME actions require the Flutter widget bridge".into(),
+            ))
+        }
     }
 
     async fn install_app(&self, device_id: &str, _apk_path: &str) -> Result<(), RobotError> {
@@ -616,9 +777,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn powershell_literals_are_quoted_and_sendkeys_is_escaped() {
+    fn powershell_literals_are_quoted() {
         assert_eq!(ps_quote("O'Brien"), "'O''Brien'");
-        assert_eq!(send_keys_literal("a+b\n"), "a{+}b{ENTER}");
     }
 
     #[test]
@@ -679,5 +839,53 @@ mod tests {
     async fn zero_max_results_does_not_start_powershell() {
         let robot = WindowsRobot::new("artifacts");
         assert!(robot.uia_elements(None, Some(0)).await.unwrap().is_empty());
+    }
+
+    // Run against a started, visible examples/flutter_app Windows build:
+    // DEVICE_BOT_FLUTTER_SMOKE_PID=<pid> cargo test -p robot-windows flutter_live -- --ignored
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    #[ignore = "requires a running Flutter sample and an interactive desktop"]
+    async fn flutter_live_widget_tree_and_native_input() {
+        let process_id: u32 = std::env::var("DEVICE_BOT_FLUTTER_SMOKE_PID")
+            .expect("set DEVICE_BOT_FLUTTER_SMOKE_PID to the running sample PID")
+            .parse()
+            .unwrap();
+        let robot = WindowsRobot::new("artifacts");
+        *robot.active_process_id.lock().await = Some(process_id);
+        let query = ElementQuery {
+            element_type: Some(robot_core::ElementType::TextField),
+            filter: Some("email-field".into()),
+            max_results: Some(1),
+        };
+        let elements = robot
+            .list_elements_query(DEVICE_ID, query.clone())
+            .await
+            .unwrap();
+        assert_eq!(elements.len(), 1);
+        let email = &elements[0];
+        assert_eq!(email.resource_id.as_deref(), Some("email-field"));
+        robot
+            .tap(
+                DEVICE_ID,
+                Point {
+                    x: f64::from(email.bounds.left + email.bounds.right) / 2.0,
+                    y: f64::from(email.bounds.top + email.bounds.bottom) / 2.0,
+                },
+            )
+            .await
+            .unwrap();
+        let literal = "+rust Ỏbit123! ^%{}[]  ";
+        robot.type_text(DEVICE_ID, literal).await.unwrap();
+        let updated = robot.list_elements_query(DEVICE_ID, query).await.unwrap();
+        assert_eq!(updated[0].focused, Some(true));
+        assert!(updated[0].value.as_deref().unwrap().contains(literal));
+        // An absent bridge must leave native UIA usable for this same target.
+        let manifest = flutter_bridge::directory().join(format!("{process_id}.json"));
+        let saved = manifest.with_extension("smoke-backup");
+        tokio::fs::rename(&manifest, &saved).await.unwrap();
+        let native = robot.list_elements(DEVICE_ID).await;
+        tokio::fs::rename(&saved, &manifest).await.unwrap();
+        assert!(native.is_ok(), "native UIA fallback failed: {native:?}");
     }
 }

@@ -3,12 +3,20 @@
 # All UI actions use the installed MCP server; Android/Simulator cold-stop uses CLI.
 set -euo pipefail
 : "${CASE_ID:?Set CASE_ID before sourcing support/mcp.sh}"
-: "${DEVICE_ID:?Set DEVICE_ID to the Android serial or iOS device/Simulator UDID}"
 readonly PLATFORM="${PLATFORM:-android}"
+if [[ "$PLATFORM" == windows ]]; then DEVICE_ID="${DEVICE_ID:-windows-host}"; fi
+: "${DEVICE_ID:?Set DEVICE_ID to the target device ID}"
 case "$PLATFORM" in
   android) APP_ID="${APP_ID:-com.example.flutter_app}"; PLATFORM_COMMAND="${ANDROID_ADB_PATH:-adb}" ;;
   ios|ios-sim) APP_ID="${APP_ID:-com.example.flutter-myapp}"; PLATFORM_COMMAND="${XCRUN_PATH:-xcrun}"; unset SDKROOT ;;
-  *) printf 'PLATFORM must be android, ios or ios-sim\n' >&2; exit 2 ;;
+  windows)
+    APP_ID="${APP_ID:-$(cygpath -m "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)/build/windows/x64/runner/Debug/flutter_app.exe")}"
+    PLATFORM_COMMAND=powershell.exe
+    export DEVICE_BOT_FLUTTER_AUTOSTART=0
+    # Native jq otherwise writes CRLF into Bash command substitutions/base64.
+    jq() { command jq -b "$@"; }
+    ;;
+  *) printf 'PLATFORM must be android, ios, ios-sim or windows\n' >&2; exit 2 ;;
 esac
 readonly APP_ID PLATFORM_COMMAND
 readonly RPC_TIMEOUT="${RPC_TIMEOUT:-180}"
@@ -18,11 +26,20 @@ for dependency in jq "${DEVICE_BOT_BIN:-device-bot}" "$PLATFORM_COMMAND"; do
 done
 readonly ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/device-bot-${CASE_ID}.XXXXXX")"
 printf 'Artifacts: %s\n' "$ARTIFACT_DIR"
-mkfifo "$ARTIFACT_DIR/input" "$ARTIFACT_DIR/output"
-"${DEVICE_BOT_BIN:-device-bot}" <"$ARTIFACT_DIR/input" >"$ARTIFACT_DIR/output" &
-readonly MCP_PID=$!
-exec 3>"$ARTIFACT_DIR/input"
-exec 4<"$ARTIFACT_DIR/output"
+if [[ "$PLATFORM" == windows ]]; then
+  # Git Bash supports anonymous coprocess pipes; Windows has no POSIX FIFOs.
+  coproc MCP_PROCESS { exec "${DEVICE_BOT_BIN:-device-bot}" 2>"$ARTIFACT_DIR/server.log"; }
+  readonly MCP_PID=$MCP_PROCESS_PID
+  exec 3>&"${MCP_PROCESS[1]}" 4<&"${MCP_PROCESS[0]}"
+  input_fd=${MCP_PROCESS[1]}; output_fd=${MCP_PROCESS[0]}
+  exec {input_fd}>&- {output_fd}<&-
+else
+  mkfifo "$ARTIFACT_DIR/input" "$ARTIFACT_DIR/output"
+  "${DEVICE_BOT_BIN:-device-bot}" <"$ARTIFACT_DIR/input" >"$ARTIFACT_DIR/output" &
+  readonly MCP_PID=$!
+  exec 3>"$ARTIFACT_DIR/input"
+  exec 4<"$ARTIFACT_DIR/output"
+fi
 next_id=2
 last_response=''
 initialized=false
@@ -64,6 +81,12 @@ screenshot() {
   jq -er '.result.content[] | select(.type=="image" and .mimeType=="image/png") | .data' \
     <<<"$last_response" | base64 --decode >"$ARTIFACT_DIR/$1.png"
 }
+windows_fixture() {
+  local helper
+  helper="$(cygpath -w "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/windows.ps1")"
+  powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$helper" \
+    -Action "$1" -AppPath "$APP_ID" -StatePath "$(cygpath -w "$ARTIFACT_DIR/windows-fixture.json")"
+}
 cleanup() {
   local status=$?
   trap - EXIT
@@ -71,8 +94,12 @@ cleanup() {
   exec 3>&- 4<&-
   kill "$MCP_PID" 2>/dev/null || true
   wait "$MCP_PID" 2>/dev/null || true
-  unlink "$ARTIFACT_DIR/input"
-  unlink "$ARTIFACT_DIR/output"
+  if [[ "$PLATFORM" == windows ]]; then
+    windows_fixture stop || true
+  else
+    unlink "$ARTIFACT_DIR/input"
+    unlink "$ARTIFACT_DIR/output"
+  fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -82,9 +109,9 @@ scroll_screen() {
   local dimensions
   call_tool mobile_list_elements_on_screen "$(jq -cn --arg d "$DEVICE_ID" \
     '{deviceId:$d,maxResults:100,timeoutMs:60000}')"
-  if [[ "$PLATFORM" == ios* ]]; then
+  if [[ "$PLATFORM" == ios* || "$PLATFORM" == windows ]]; then
     # Use the app's largest scroll viewport, not keyboard/accessory buttons.
-    # XCTest reports these bounds in the same points used by input actions.
+    # iOS points and Windows pixels match their respective input actions.
     dimensions="$(jq -ce '[.result.structuredContent.elements[] |
       select(.className=="scrollView") | .bounds |
       select(.right>.left and .bottom>.top)] |
@@ -181,7 +208,7 @@ find_element() {
   local label="$1" tap="${2:-false}" scroll="${3:-false}" kind="${4:-label}" attempt matches count
   local previous_target='' current_target
   for ((attempt=0; attempt<12; attempt++)); do
-    if [[ "$kind" == field && "$PLATFORM" == ios* ]]; then
+    if [[ "$kind" == field && ( "$PLATFORM" == ios* || "$PLATFORM" == windows ) ]]; then
       query_elements "$label" textField
     elif [[ "$kind" == field ]]; then
       query_elements ''
@@ -194,7 +221,7 @@ find_element() {
       . as $all |
       [$all[] | select((.contentDescription // "") | test("^(Show|Hide) password$";"i")) |
         ((.bounds.top+.bounds.bottom)/2)] as $passwordRows |
-      (if $kind=="field" and ($platform|startswith("ios")) then
+      (if $kind=="field" and (($platform|startswith("ios")) or $platform=="windows") then
          [.[] | select((.contentDescription // "" | ascii_downcase)==($label|ascii_downcase))]
        elif $kind=="field" then
          [.[] | select(.className|test("EditText|textField";"i")) |
@@ -209,10 +236,17 @@ find_element() {
         and .bounds.left >= 0 and .bounds.top >= 0
         and .bounds.right > .bounds.left and .bounds.bottom > .bounds.top
         and (($tap | not) or (.enabled and (.clickable or $kind=="any"))))] |
-      if $tap and ($platform|startswith("ios")) then
+      if $tap and (($platform|startswith("ios")) or $platform=="windows") then
         . as $all | [.[] | select(.className|test("^(button|textField|switch|checkBox|menuItem|link|radio|slider)$"))] as $controls |
         if ($controls|length)>0 then $controls else $all end
       else . end' "$ARTIFACT_DIR/last-query.json")"
+    if [[ "$PLATFORM" == windows && "$label" == 'Sign out' && "$tap" == true ]]; then
+      # Desktop shows both rail and profile sign-out controls. Prefer the
+      # fixture's explicit profile key when both controls are visible.
+      local keyed
+      keyed="$(jq -c '[.[] | select(.resourceId=="sign-out-button")]' <<<"$matches")"
+      if [[ "$(jq length <<<"$keyed")" == 1 ]]; then matches="$keyed"; fi
+    fi
     count="$(jq length <<<"$matches")"
     if ((count > 0)); then
       FOUND_ELEMENT="$(jq -c '.[0]' <<<"$matches")"
@@ -278,10 +312,25 @@ type_text() {
   call_tool mobile_type_keys "$(jq -cn --arg d "$DEVICE_ID" --arg t "$1" '{deviceId:$d,text:$t}')"
 }
 
+focus_field() {
+  local label="$1" attempt
+  find_element "$label" true true field
+  if [[ "$PLATFORM" == windows ]]; then
+    # Windows can consume the activation click. Prove Flutter editor focus
+    # before sending literal input, without silently typing into another target.
+    for ((attempt=0; attempt<3; attempt++)); do
+      find_element "$label" false true field
+      if jq -e '.focused == true' <<<"$FOUND_ELEMENT" >/dev/null; then return 0; fi
+      find_element "$label" true true field
+    done
+    assert_focused_field "$label"
+  fi
+}
+
 fill_field() {
   local label="$1" value="$2" previous bounds restore_hidden=false
   if [[ "$label" == 'Email address' ]]; then previous="$email_value"; else previous="$password_value"; fi
-  find_element "$label" true true field
+  focus_field "$label"
   if [[ -n "$previous" ]]; then
     if [[ "$label" == Password ]]; then
       # Masked Flutter fields can select the whole value without exposing a
@@ -290,34 +339,46 @@ fill_field() {
       if jq -e 'any(.[]; .clickable and .enabled)' "$ARTIFACT_DIR/last-query.json" >/dev/null; then
         tap_control 'Show password'
         restore_hidden=true
-        find_element "$label" true true field
+        focus_field "$label"
       fi
     fi
     if [[ "$PLATFORM" == ios* ]]; then
       # Native tap may scroll the field while presenting the keyboard.
       find_element "$label" false true field
     fi
-    # Long-press the native field, then use its Select all editing action.
-    # Android mobile_type_keys rejects control characters, so do not send \b.
-    bounds="$(jq -c '.bounds' <<<"$FOUND_ELEMENT")"
-    call_tool mobile_swipe_on_screen "$(jq -cn --arg d "$DEVICE_ID" --argjson b "$bounds" '
-      {deviceId:$d,startX:($b.left+($b.right-$b.left)*0.25),startY:(($b.top+$b.bottom)/2),
-       endX:($b.left+($b.right-$b.left)*0.25),endY:(($b.top+$b.bottom)/2),durationMs:1000}')"
-    query_elements 'Select all'
-    if jq -e 'any(.[]; .clickable and .enabled)' "$ARTIFACT_DIR/last-query.json" >/dev/null; then
-      tap_control 'Select all'
+    if [[ "$PLATFORM" == windows ]]; then
+      # The bridge returns the editor bounds, excluding label/error/suffix.
+      # Typing replaces the native selection; verify the resulting value below.
+      bounds="$(jq -c '.bounds' <<<"$FOUND_ELEMENT")"
+      call_tool mobile_swipe_on_screen "$(jq -cn --arg d "$DEVICE_ID" --argjson b "$bounds" '
+        {deviceId:$d,startX:($b.right-2),startY:(($b.top+$b.bottom)/2),
+         endX:($b.left+2),endY:(($b.top+$b.bottom)/2),durationMs:450}')"
     else
-      # A single-word value can already be fully selected by the long press.
-      # Cut it and prove the native textbox is empty before typing a replacement.
-      # If only part was selected, fail rather than append to the remaining text.
-      tap_control 'Cut'
-      find_element "$label" false true field
-      if ! jq -e '.text==null or .text==""' <<<"$FOUND_ELEMENT" >/dev/null; then
-        printf 'FAIL: Native selection did not clear the entire %s field\n' "$label" >&2; return 1
+      # Long-press the native field, then use its Select all editing action.
+      # Android mobile_type_keys rejects control characters, so do not send \b.
+      bounds="$(jq -c '.bounds' <<<"$FOUND_ELEMENT")"
+      call_tool mobile_swipe_on_screen "$(jq -cn --arg d "$DEVICE_ID" --argjson b "$bounds" '
+        {deviceId:$d,startX:($b.left+($b.right-$b.left)*0.25),startY:(($b.top+$b.bottom)/2),
+         endX:($b.left+($b.right-$b.left)*0.25),endY:(($b.top+$b.bottom)/2),durationMs:1000}')"
+      query_elements 'Select all'
+      if jq -e 'any(.[]; .clickable and .enabled)' "$ARTIFACT_DIR/last-query.json" >/dev/null; then
+        tap_control 'Select all'
+      else
+        # A single-word value can already be fully selected by the long press.
+        # Cut it and prove the native textbox is empty before typing a replacement.
+        # If only part was selected, fail rather than append to the remaining text.
+        tap_control 'Cut'
+        find_element "$label" false true field
+        if ! jq -e '.text==null or .text==""' <<<"$FOUND_ELEMENT" >/dev/null; then
+          printf 'FAIL: Native selection did not clear the entire %s field\n' "$label" >&2; return 1
+        fi
       fi
     fi
   fi
   type_text "$value"
+  if [[ "$PLATFORM" == windows && ( "$label" != Password || "$restore_hidden" == true ) ]]; then
+    assert_field_value "$label" "$value"
+  fi
   if [[ "$label" == 'Email address' ]]; then email_value="$value"; else password_value="$value"; fi
   if [[ "$restore_hidden" == true ]]; then
     assert_field_value 'Password' "$value"
@@ -334,7 +395,7 @@ assert_field_value() {
   local label="$1" expected="$2"
   find_element "$label" false true field
   if ! jq -e --arg expected "$expected" '
-    [.text // "", .contentDescription // ""] |
+    [.value // "", .text // "", .contentDescription // ""] |
       any(. == $expected or (split("\n")|index($expected)!=null))
     ' <<<"$FOUND_ELEMENT" >/dev/null; then
     printf 'FAIL: Field %s does not expose the expected value\n' "$label" >&2; return 1
@@ -359,6 +420,8 @@ finish_flow() {
 cold_launch() {
   if [[ "$PLATFORM" == android ]]; then
     "$PLATFORM_COMMAND" -s "$DEVICE_ID" shell am force-stop "$APP_ID"
+  elif [[ "$PLATFORM" == windows ]]; then
+    windows_fixture start
   elif [[ "$PLATFORM" == ios-sim ]]; then
     if ! "$PLATFORM_COMMAND" simctl terminate "$DEVICE_ID" "$APP_ID" 2>"$ARTIFACT_DIR/terminate.log"; then
       if ! grep -qi 'found nothing to terminate' "$ARTIFACT_DIR/terminate.log"; then
@@ -382,7 +445,7 @@ receive 1
 printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}' >&3
 initialized=true
 # The server has no terminate tool; Android/Simulator cold-stop uses the CLI.
-if [[ -n "${APP_PATH:-${APK_PATH:-}}" ]]; then
+if [[ "$PLATFORM" != windows && -n "${APP_PATH:-${APK_PATH:-}}" ]]; then
   call_tool mobile_install_app "$(jq -cn --arg d "$DEVICE_ID" --arg p "${APP_PATH:-$APK_PATH}" '{deviceId:$d,apkPath:$p}')"
 fi
 cold_launch

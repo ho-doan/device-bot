@@ -763,6 +763,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "robot-report"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "uuid",
+]
+
+[[package]]
 name = "robot-windows"
 version = "0.1.0"
 dependencies = [

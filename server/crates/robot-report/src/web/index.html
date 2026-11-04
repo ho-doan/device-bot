@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light"><title>Device Bot · QA Reports</title>
+  <link rel="stylesheet" href="/assets/report.css"><script defer src="/assets/report.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Đến nội dung báo cáo</a>
+<header class="topbar"><a class="brand" href="/"><span class="brand-mark" aria-hidden="true">db</span><span>Device Bot <small>QA REPORTS</small></span></a><span class="top-note"><span class="live-dot" aria-hidden="true"></span>History & evidence</span></header>
+<div class="shell">
+  <aside class="sidebar" aria-label="Projects">
+    <div class="section-label">WORKSPACE</div><div class="sidebar-title">Projects <span id="project-count" class="count">0</span></div>
+    <nav id="projects" aria-label="Danh sách project"></nav>
+    <button id="add-project" class="button secondary full manage" hidden>+ Thêm project</button>
+    <div class="sidebar-foot"><strong>Mỗi lượt chạy, một bản lưu.</strong><p>Kết quả và evidence được giữ riêng trong history, kể cả khi nguồn test thay đổi.</p></div>
+  </aside>
+  <main id="main">
+    <div id="notice" class="notice" role="status" hidden></div>
+    <div class="page-header"><div><div class="eyebrow">TEST OPERATIONS / RESULTS</div><h1 id="project-title">Kết quả kiểm thử</h1><p id="project-subtitle" class="muted">Chọn project để xem lịch sử và evidence.</p></div><div class="header-actions"><button id="refresh" class="button secondary">Làm mới</button><button id="import-run" class="button primary manage" hidden>+ Nhập lượt chạy</button></div></div>
+    <div id="empty" class="empty-panel" hidden><div class="eyebrow">BẮT ĐẦU</div><h2>Một nơi để QA xem lại mọi lượt test.</h2><p>Thêm project, chọn thư mục evidence trên máy chủ, rồi nhập kết quả sau mỗi lượt chạy. History lưu cả ảnh, video, log và lỗi của từng bước.</p><button id="empty-add" class="button primary manage" hidden>Thêm project đầu tiên</button></div>
+    <section id="workspace" hidden>
+      <details class="history-panel" open><summary><span>Lịch sử chạy <span id="run-count" class="count">0</span></span><span class="muted small">Chọn một lượt để xem chi tiết</span></summary><div class="table-scroll"><table class="history-table"><thead><tr><th>Lượt chạy</th><th>Thời điểm kết quả</th><th>Đạt</th><th>Giới hạn</th><th>Lỗi</th><th>Chưa chạy</th></tr></thead><tbody id="history"></tbody></table></div><p id="no-runs" class="empty-inline" hidden>Project chưa có lượt chạy. Nhập thư mục chứa report.json để lưu history.</p></details>
+      <section id="run-content" hidden>
+        <div class="run-heading"><div><span class="eyebrow">ĐANG XEM</span><h2 id="run-title"></h2><div id="run-meta" class="muted small"></div></div><a id="download-run" class="button secondary" download="run-report.json">Tải báo cáo JSON</a></div>
+        <div id="stats" class="stats"></div>
+        <div class="legend"><strong>Đọc kết quả:</strong> PASS = đạt các kiểm tra đã khai báo. PARTIAL = còn giới hạn coverage. FAIL = có bước hoặc lỗi thực thi thất bại.</div>
+        <details id="run-warnings" class="warning-panel" hidden><summary>Evidence chưa đầy đủ</summary><ul id="warning-list"></ul></details>
+        <div class="cases-layout">
+          <section class="case-browser" aria-label="Test cases"><div class="case-browser-head"><h3>Test cases</h3><label class="sr-only" for="search">Tìm case</label><input id="search" type="search" placeholder="Tìm tên case hoặc lỗi…"><label class="sr-only" for="status-filter">Lọc trạng thái</label><select id="status-filter"><option value="all">Tất cả trạng thái</option><option value="FAIL">FAIL · Có lỗi</option><option value="PARTIAL">PARTIAL · Còn giới hạn</option><option value="PASS">PASS · Đạt</option><option value="DRY_RUN">Chưa chạy</option></select><div id="shown-count" class="muted small" aria-live="polite"></div></div><div id="case-list"></div></section>
+          <section id="case-detail" class="case-detail" aria-label="Chi tiết case"></section>
+        </div>
+      </section>
+    </section>
+    <footer>Device Bot QA Reports <span>·</span> Kết quả sơ bộ từ automation; xem giới hạn coverage của từng case.</footer>
+  </main>
+</div>
+<dialog id="project-dialog"><form id="project-form"><div class="dialog-heading"><div><div class="eyebrow">PROJECT MỚI</div><h2>Thêm project</h2></div><button type="button" class="close-button" data-close aria-label="Đóng">×</button></div><label for="project-name">Tên project</label><input id="project-name" name="name" required maxlength="160" placeholder="Orbit · iOS Simulator"><label for="project-source">Thư mục nguồn trên máy chủ</label><input id="project-source" name="sourceDir" required placeholder="/path/to/project/test-artifacts"><p class="muted small">Các lượt import của project phải nằm trong thư mục này. History được sao chép vào kho riêng.</p><p class="form-error" role="alert"></p><button class="button primary full" type="submit">Tạo project</button></form></dialog>
+<dialog id="run-dialog"><form id="run-form"><div class="dialog-heading"><div><div class="eyebrow">LƯU HISTORY</div><h2>Nhập lượt chạy</h2></div><button type="button" class="close-button" data-close aria-label="Đóng">×</button></div><label for="run-name">Tên lượt chạy</label><input id="run-name" name="name" required maxlength="160"><label for="run-source">Thư mục kết quả trên máy chủ</label><input id="run-source" name="sourceDir" required><p class="muted small">Chọn đúng một lượt chạy đã hoàn tất. Report JSON và evidence được chụp lại thành một bản history mới; các lần trước được giữ nguyên.</p><p class="form-error" role="alert"></p><button class="button primary full" type="submit">Lưu lượt chạy & evidence</button></form></dialog>
+<dialog id="image-dialog" class="image-dialog"><div class="dialog-heading"><h2 id="image-title">Ảnh evidence</h2><button type="button" class="close-button" data-close aria-label="Đóng ảnh">×</button></div><img id="image-preview" alt=""><a id="image-download" class="button primary" download>Tải ảnh gốc</a></dialog>
+<noscript><p class="notice">Bật JavaScript để xem và lọc báo cáo QA.</p></noscript>
+</body></html>

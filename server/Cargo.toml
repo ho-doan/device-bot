@@ -11,6 +11,7 @@ members = [
     "crates/robot-macos",
     "crates/robot-windows",
     "crates/robot-flow",
+    "crates/robot-report",
 ]
 resolver = "2"
 

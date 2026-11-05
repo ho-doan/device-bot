@@ -1,15 +1,25 @@
 # YAML scenarios through MCP
 
-`robot-flow` is a Rust MCP stdio client. It starts the configured `device-bot`
+`device-bot run` delegates to the bundled `robot-flow` Rust MCP stdio client.
+It starts the configured `device-bot mcp`
 binary, completes `initialize` / `notifications/initialized`, reads `tools/list`,
 then executes the scenario through `tools/call`. It has no platform-driver or
 `RobotRegistry` dependency. The MCP server and tool schemas are unchanged.
 
 ## Run
 
-Build the client once on a build machine and copy the native binary to the test
-host. The current device-bot release archive does not include this new client.
-The test host does not need Cargo when `robot-flow` and `device-bot` are installed.
+The native release bundle includes the runner. The test host does not need Cargo:
+
+```sh
+device-bot run scenario.yaml
+device-bot run --dry-run scenario.yaml
+```
+
+The default server is `device-bot mcp` (or `DEVICE_BOT_BIN` with argument `mcp`).
+An explicit `--server` override uses only the supplied `--server-arg` values;
+when overriding with a Device Bot path, add `--server-arg mcp`.
+
+To build the client from source:
 
 ```sh
 cargo build --manifest-path server/Cargo.toml --release -p robot-flow
@@ -35,7 +45,7 @@ not perform it or prove a cold start. Prepare the fixture again before each case
 DEVICE_BOT_FLUTTER_AUTOSTART=0 server/target/release/robot-flow \
   --profiles examples/flutter_app/automation_test/targets.yaml --target ios-sim \
   --device "$DEVICE_ID" --confirm fixture_ready \
-  --server /path/to/device-bot --artifacts artifacts/yaml \
+  --server /path/to/device-bot --server-arg mcp --artifacts artifacts/yaml \
   examples/flutter_app/automation_test/it-01.yaml
 ```
 

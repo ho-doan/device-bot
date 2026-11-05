@@ -14,6 +14,19 @@ The root Flutter controller remains a draft package. Production device
 automation is implemented by the Rust server under `server/`; applications
 are selected dynamically by bundle/package/executable identifier.
 
+The installed native suite uses `device-bot` as its entry point:
+
+```sh
+device-bot                       # Start the background web app and open localhost:8765
+device-bot start                 # Start the web app only when it is not running
+device-bot mcp                   # Run the MCP server over stdio
+device-bot run scenario.yaml     # Execute a YAML scenario
+```
+
+The web app keeps running after the terminal closes. Its history lives in
+`~/.device-bot/reports`. MCP clients must pass `mcp` as an argument.
+See [the server guide](server/README.md) for configuration and HTTP transport.
+
 ## Device-control flow
 
 ```mermaid
@@ -192,7 +205,7 @@ authenticated agent bridge on an address reachable by the iPhone:
 ```bash
 export MOBILE_MCP_IOS_AGENT_BIND=0.0.0.0:18787
 export MOBILE_MCP_IOS_AGENT_TOKEN=<long-random-token>
-cargo run -p device-bot --manifest-path server/Cargo.toml
+cargo run -p device-bot --manifest-path server/Cargo.toml -- mcp
 ```
 
 In another terminal, build the server-owned runner once and then start it for

@@ -151,6 +151,7 @@ dependencies = [
  "base64",
  "device-admin-api",
  "device-mcp-protocol",
+ "libc",
  "robot-android",
  "robot-chrome",
  "robot-core",

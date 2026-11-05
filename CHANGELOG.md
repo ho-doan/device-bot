@@ -1,3 +1,10 @@
+## Unreleased
+
+* Use `device-bot mcp` for the MCP server and `device-bot run <scenario.yaml>` for YAML execution.
+* Make bare `device-bot` start the background report web app and open the browser; `device-bot start` reuses the healthy service or starts it when absent.
+* Keep the web app running after the terminal closes, with history in `~/.device-bot/reports` and default port 8765.
+* MCP clients that previously launched bare `device-bot` must add the `mcp` argument.
+
 ## 0.1.4 — Native tools
 
 * Release device-bot, robot-flow and robot-report together for macOS arm64/x86_64 and Windows x86_64.

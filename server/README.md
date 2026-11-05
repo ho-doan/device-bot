@@ -31,8 +31,31 @@ a central "god file" are documented in [architecture.md](docs/architecture.md).
 
 ## Run
 
+The installed suite has one entry point:
+
+```sh
+device-bot                       # Start the web app if needed, then open the browser
+device-bot start                 # Ensure the background web app is running
+device-bot run scenario.yaml     # Run a YAML scenario
+device-bot mcp                   # MCP over stdio, for MCP clients
+device-bot mcp --listen 127.0.0.1:3337
+```
+
+The web app listens at `http://127.0.0.1:8765`. It runs independently of the
+terminal, so closing PowerShell does not stop it. Repeating `start` reuses a
+healthy report service; if it has stopped, `start` launches it again. Running
+`device-bot` always opens the browser, including when the service is already up.
+History is stored in `~/.device-bot/reports`, independent of the current working
+directory. Set `DEVICE_BOT_REPORT_DATA_DIR` to override it before starting the
+service. Startup diagnostics are written to `server.log` in that directory.
+Set `DEVICE_BOT_REPORT_PORT` before starting to use another loopback port;
+the default is 8765.
+
+From source, build all three bundled executables before using the launcher:
+
 ```bash
-cargo run -p device-bot
+cargo build -p device-bot -p robot-flow -p robot-report
+cargo run -p device-bot -- mcp
 ```
 
 The binary executes `adb` and `xcrun` from `PATH`. Set `ANDROID_ADB_PATH` or
@@ -87,17 +110,19 @@ and the owning session before taking recovery actions.
 
 ## QA report service
 
-`robot-report` is a separate, long-running HTML service for multiple projects,
+`device-bot start` launches the long-running HTML service for multiple projects,
 run history, failed-step details and image/video/log downloads:
 
 ```sh
-cargo run -p robot-report -- start
+device-bot start
 ```
 
 It serves `http://127.0.0.1:8765` and stores immutable result/evidence snapshots
-under `artifacts/qa-history`. Register projects and publish each completed run
-through the UI or `robot-report project-add` / `robot-report publish`.
-Use `--listen 0.0.0.0:8765` for QA read/download access over LAN.
+under `~/.device-bot/reports`. Register projects and publish each completed run
+through the UI. The bundled `robot-report` CLI is also available for direct
+management; pass `--data-dir ~/.device-bot/reports` to use the launcher's history.
+For a foreground service or QA access over LAN, use `robot-report start`
+with an explicit `--data-dir` and optionally `--listen 0.0.0.0:8765`.
 See [the report service guide](crates/robot-report/README.md) for commands,
 project boundaries, history persistence and supported artifacts.
 
@@ -156,8 +181,10 @@ Version 0.1.1 and later ship XCTest projects in
 the release builder's checkout. Run `device-bot --check-install` to validate the
 installed version and complete asset manifest before starting CI. An explicit
 `DEVICE_BOT_ASSET_DIR` can override the versioned asset root for development.
-After installation, configure the MCP client to launch `device-bot`
+After installation, configure the MCP client to launch `device-bot mcp`
 over stdio, or pass `--listen HOST:PORT` for the HTTP transport.
+For clients with separate command and argument fields, use `command: "device-bot"`
+and `args: ["mcp"]`. A bare `device-bot` opens the web app instead of serving MCP.
 
 ## Upgrade a released MCP server
 
@@ -186,7 +213,7 @@ Run an HTTP listener explicitly; prefer a loopback address unless a reverse
 proxy supplies the network boundary:
 
 ```bash
-cargo run -p device-bot -- --listen 127.0.0.1:3337
+cargo run -p device-bot -- mcp --listen 127.0.0.1:3337
 ```
 
 The server prints an auto-generated `DEVICE_BOT_AUTH` token to stderr and

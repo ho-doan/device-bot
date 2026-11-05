@@ -15,6 +15,7 @@ use robot_macos::MacosRobot;
 use robot_windows::WindowsRobot;
 
 mod assets;
+mod launcher;
 mod update;
 
 fn android_adb_path() -> String {
@@ -254,7 +255,32 @@ async fn install_chrome_recording_tools() -> std::io::Result<()> {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let mut arguments = std::env::args().skip(1);
-    let command = arguments.next();
+    let mut command = arguments.next();
+    match command.as_deref() {
+        None => return launcher::start(true),
+        Some("start") => {
+            if arguments.next().is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "start accepts no arguments",
+                ));
+            }
+            return launcher::start(false);
+        }
+        Some("run") => return launcher::run(arguments),
+        Some("--help" | "-h" | "help") => {
+            println!("{}", launcher::HELP);
+            return Ok(());
+        }
+        Some("mcp") => {
+            command = arguments.next();
+            if matches!(command.as_deref(), Some("--help" | "-h")) {
+                println!("device-bot mcp [--listen HOST:PORT]\nDefaults to JSON-RPC over stdio.");
+                return Ok(());
+            }
+        }
+        _ => {}
+    }
     if matches!(command.as_deref(), Some("--version")) {
         if arguments.next().is_some() {
             return Err(std::io::Error::new(
@@ -430,6 +456,35 @@ async fn main() -> std::io::Result<()> {
         println!("iOS XCTest runner provisioned for {device_id}");
         return Ok(());
     }
+    let listen_address: Option<SocketAddr> = match command.as_deref() {
+        None => None,
+        Some("--listen") => {
+            let address = arguments.next().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "--listen requires HOST:PORT",
+                )
+            })?;
+            if arguments.next().is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "unexpected command-line argument",
+                ));
+            }
+            Some(address.parse().map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("invalid listen address: {error}"),
+                )
+            })?)
+        }
+        Some(argument) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("unknown argument: {argument}; see device-bot --help"),
+            ));
+        }
+    };
     let adb_path = android_adb_path();
     let xcrun_path = std::env::var("XCRUN_PATH").unwrap_or_else(|_| "xcrun".into());
     let artifact_dir =
@@ -521,27 +576,9 @@ async fn main() -> std::io::Result<()> {
         Arc::new(WindowsRobot::from_env()),
     ];
     let robot = Arc::new(RobotRegistry::new(drivers));
-    match command.as_deref() {
+    match listen_address {
         None => device_bot::stdio::serve(Server::new(robot)).await,
-        Some("--listen") => {
-            let address = arguments.next().ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "--listen requires HOST:PORT",
-                )
-            })?;
-            if arguments.next().is_some() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "unexpected command-line argument",
-                ));
-            }
-            let address: SocketAddr = address.parse().map_err(|error| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("invalid listen address: {error}"),
-                )
-            })?;
+        Some(address) => {
             let listener = tokio::net::TcpListener::bind(address).await?;
             let listen_address = listener.local_addr()?;
             let bearer_token = resolve_bearer_token();
@@ -558,9 +595,5 @@ async fn main() -> std::io::Result<()> {
             }
             result
         }
-        Some(argument) => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("unknown argument: {argument}"),
-        )),
     }
 }

@@ -1,5 +1,16 @@
 # robot-report
 
+Với bản cài global, dùng `device-bot` để khởi động web và mở trình duyệt,
+hoặc `device-bot start` để chỉ khởi động nền nếu web chưa chạy.
+Web ở <http://127.0.0.1:8765> vẫn chạy khi đóng PowerShell; chạy lại lệnh
+sẽ dùng lại service hiện có. History mặc định của launcher nằm ở
+`~/.device-bot/reports`, log ở `server.log` trong cùng thư mục.
+Đặt `DEVICE_BOT_REPORT_DATA_DIR` trước khi khởi động để đổi nơi lưu.
+
+Các lệnh `robot-report` bên dưới vẫn dùng được trực tiếp. `robot-report start`
+chạy ở foreground; thêm `--data-dir ~/.device-bot/reports` để quản lý cùng kho
+history với `device-bot start`.
+
 Service HTML cho QA xem kết quả sơ bộ, quản lý nhiều project và giữ history
 của từng lượt chạy. Service độc lập với MCP server và các platform driver.
 Giao diện, CSS và JavaScript được nhúng trong binary; không cần Node, CDN hay

@@ -28,14 +28,14 @@ readonly ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/device-bot-${CASE_ID}.XXXXXX
 printf 'Artifacts: %s\n' "$ARTIFACT_DIR"
 if [[ "$PLATFORM" == windows ]]; then
   # Git Bash supports anonymous coprocess pipes; Windows has no POSIX FIFOs.
-  coproc MCP_PROCESS { exec "${DEVICE_BOT_BIN:-device-bot}" 2>"$ARTIFACT_DIR/server.log"; }
+  coproc MCP_PROCESS { exec "${DEVICE_BOT_BIN:-device-bot}" mcp 2>"$ARTIFACT_DIR/server.log"; }
   readonly MCP_PID=$MCP_PROCESS_PID
   exec 3>&"${MCP_PROCESS[1]}" 4<&"${MCP_PROCESS[0]}"
   input_fd=${MCP_PROCESS[1]}; output_fd=${MCP_PROCESS[0]}
   exec {input_fd}>&- {output_fd}<&-
 else
   mkfifo "$ARTIFACT_DIR/input" "$ARTIFACT_DIR/output"
-  "${DEVICE_BOT_BIN:-device-bot}" <"$ARTIFACT_DIR/input" >"$ARTIFACT_DIR/output" &
+  "${DEVICE_BOT_BIN:-device-bot}" mcp <"$ARTIFACT_DIR/input" >"$ARTIFACT_DIR/output" &
   readonly MCP_PID=$!
   exec 3>"$ARTIFACT_DIR/input"
   exec 4<"$ARTIFACT_DIR/output"

@@ -31,11 +31,12 @@ fn parse() -> Result<Options, String> {
         ..Options::default()
     };
     let mut args = env::args().skip(1);
+    let mut custom_server = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "robot-flow [--dry-run] [--profiles targets.yaml --target NAME] [--device ID] [--app-id ID]\n  [--server device-bot --server-arg ARG] [--artifacts DIR] [--confirm PRECONDITION]\n  [--rpc-timeout SECONDS] [--case-timeout SECONDS] <scenario.yaml> ..."
+                    "device-bot run [--dry-run] [--profiles targets.yaml --target NAME] [--device ID] [--app-id ID]\n  [--server PROGRAM --server-arg ARG] [--artifacts DIR] [--confirm PRECONDITION]\n  [--rpc-timeout SECONDS] [--case-timeout SECONDS] <scenario.yaml> ...\n\nDefault MCP command: device-bot mcp. Also available directly as robot-flow."
                 );
                 std::process::exit(0);
             }
@@ -48,7 +49,10 @@ fn parse() -> Result<Options, String> {
             "--target" => o.target = Some(args.next().ok_or("--target needs a name")?),
             "--device" => o.device = Some(args.next().ok_or("--device needs an ID")?),
             "--app-id" => o.app = Some(args.next().ok_or("--app-id needs an ID")?),
-            "--server" => o.server = args.next().ok_or("--server needs a program")?,
+            "--server" => {
+                o.server = args.next().ok_or("--server needs a program")?;
+                custom_server = true;
+            }
             "--server-arg" => o
                 .server_args
                 .push(args.next().ok_or("--server-arg needs an argument")?),
@@ -76,6 +80,9 @@ fn parse() -> Result<Options, String> {
     }
     if o.paths.is_empty() {
         return Err("provide at least one scenario YAML (see --help)".into());
+    }
+    if !custom_server {
+        o.server_args.insert(0, "mcp".into());
     }
     if o.profiles.is_some() != o.target.is_some() {
         return Err("--profiles and --target are required together".into());

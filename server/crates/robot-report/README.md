@@ -5,6 +5,14 @@ của từng lượt chạy. Service độc lập với MCP server và các plat
 Giao diện, CSS và JavaScript được nhúng trong binary; không cần Node, CDN hay
 build frontend riêng.
 
+## Cài từ release
+
+Từ native release `v0.1.4`, installer Device Bot cài đồng thời `device-bot`,
+`robot-flow` và `robot-report`. Kiểm tra bằng `robot-report --version`.
+Template production được cài cạnh binary trong
+`robot-report-assets/<version>/deploy/`. Reinstall cập nhật binary/template;
+kho history do `--data-dir` chỉ định được giữ riêng.
+
 ## Khởi động
 
 Từ root repository:

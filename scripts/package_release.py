@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a native release archive including all tracked XCTest source assets."""
+"""Create a native tools archive with the CLI suite and tracked XCTest assets."""
 import argparse
 import json
 from pathlib import Path
@@ -21,8 +21,22 @@ def package(binary, target, version, output):
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as temp:
         stage = Path(temp)
-        name = 'device-bot.exe' if 'windows' in target else 'device-bot'
-        shutil.copy2(binary, stage / name)
+        suffix = '.exe' if 'windows' in target else ''
+        binaries = ['device-bot', 'robot-flow', 'robot-report']
+        for tool, crate in [('device-bot', 'mcp-server'), ('robot-flow', 'robot-flow'), ('robot-report', 'robot-report')]:
+            tool_version = re.search(r'^version\s*=\s*"([^"]+)"',
+                                    (ROOT / f'server/crates/{crate}/Cargo.toml').read_text(), re.M)[1]
+            if tool_version != version:
+                raise ValueError(f'{tool} version {tool_version} does not match tag {version}')
+            source = binary if tool == 'device-bot' else binary.parent / (tool + suffix)
+            if not source.is_file():
+                raise ValueError(f'Missing release binary: {source}')
+            shutil.copy2(source, stage / (tool + suffix))
+        shutil.copytree(ROOT / 'server/crates/robot-report/deploy',
+                        stage / 'robot-report-assets' / version / 'deploy')
+        (stage / 'bundle.json').write_text(json.dumps({
+            'version': version, 'binaries': [name + suffix for name in binaries],
+        }, indent=2) + '\n')
         assets = stage / 'device-bot-assets' / version
         files = []
         for platform in ('ios-sim', 'ios-real'):
@@ -49,8 +63,8 @@ def package(binary, target, version, output):
         else:
             archive = output / (stem + '.tar.gz')
             with tarfile.open(archive, 'w:gz') as bundle:
-                bundle.add(stage / name, arcname=name)
-                bundle.add(stage / 'device-bot-assets', arcname='device-bot-assets')
+                for path in sorted(stage.iterdir()):
+                    bundle.add(path, arcname=path.name)
         print(archive)
         return archive
 

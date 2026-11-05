@@ -353,3 +353,21 @@ fn cli_rejects_unknown_commands_and_missing_required_flags() {
         assert!(!result.status.success());
     }
 }
+
+#[test]
+fn version_does_not_start_the_service_or_create_history() {
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_robot-report"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    assert_eq!(
+        String::from_utf8(result.stdout).unwrap().trim(),
+        env!("CARGO_PKG_VERSION")
+    );
+    let invalid = std::process::Command::new(env!("CARGO_BIN_EXE_robot-report"))
+        .args(["--version", "extra"])
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success());
+}

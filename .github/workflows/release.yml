@@ -1,4 +1,4 @@
-name: Release MCP server
+name: Release native tools
 
 on:
   push:
@@ -32,7 +32,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: cargo build --manifest-path server/Cargo.toml --release --locked -p device-bot --target ${{ matrix.target }}
+      - name: Validate Windows installer syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/scripts/install.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { $errors | Write-Error; exit 1 }
+      - run: python scripts/test_package_release.py
+      - run: cargo build --manifest-path server/Cargo.toml --release --locked -p device-bot -p robot-flow -p robot-report --target ${{ matrix.target }}
       - name: Package macOS binary
         if: runner.os != 'Windows'
         shell: bash
@@ -66,6 +75,7 @@ jobs:
           sha256sum device-bot-*.tar.gz device-bot-*.zip > checksums.txt
       - uses: softprops/action-gh-release@v2
         with:
+          generate_release_notes: true
           files: |
             dist/device-bot-*.tar.gz
             dist/device-bot-*.zip

@@ -120,8 +120,8 @@ cargo run --manifest-path server/Cargo.toml -p robot-flow -- --dry-run \
 For live execution, prepare the fixture outside the runner, pass an explicit
 device and confirm the profile's setup preconditions. The linked contract lists
 commands, current capability limits and migration from the old v1 browser flows.
-The released device-bot archive does not yet distribute the new robot-flow client;
-build/copy that binary separately. Neither the MCP server nor its tool schemas
+Release 0.1.4 and later bundles device-bot, robot-flow and robot-report; the
+installer installs all three CLIs together. Neither the MCP server nor its tool schemas
 are changed by this YAML client implementation.
 
 ## Install a released MCP server

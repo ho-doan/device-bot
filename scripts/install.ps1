@@ -128,7 +128,22 @@ try {
     if (-not (Test-Path -Path $binary -PathType Leaf)) { throw "The release archive does not contain $BinaryName." }
     $assets = Join-Path $TempDir "device-bot-assets\$Version"
     if (-not (Test-Path (Join-Path $assets "manifest.json"))) { throw "The release archive has no versioned assets." }
-    if ((& $binary --version).Trim() -ne $Version) { throw "Release binary version mismatch." }
+    $Binaries = @("device-bot.exe")
+    if ([version](($Version -split '-')[0]) -ge [version]"0.1.4") {
+        $Binaries += @("robot-flow.exe", "robot-report.exe")
+    }
+    foreach ($name in $Binaries) {
+        $tool = Join-Path $TempDir $name
+        if (-not (Test-Path -Path $tool -PathType Leaf)) { throw "The release archive does not contain $name." }
+        if ((& $tool --version).Trim() -ne $Version -or $LASTEXITCODE -ne 0) { throw "Release binary version mismatch: $name." }
+        $installed = Join-Path $InstallDir $name
+        if (Test-Path -Path $installed -PathType Leaf) {
+            try {
+                $handle = [System.IO.File]::Open($installed, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+                $handle.Dispose()
+            } catch { throw "Stop the running $name before reinstalling the native tools." }
+        }
+    }
 
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     $assetParent = Join-Path $InstallDir "device-bot-assets"
@@ -136,7 +151,15 @@ try {
     $assetDestination = Join-Path $assetParent $Version
     New-Item -ItemType Directory -Path $assetDestination -Force | Out-Null
     Copy-Item -Path (Join-Path $assets "*") -Destination $assetDestination -Recurse -Force
-    Copy-Item -Path $binary -Destination (Join-Path $InstallDir $BinaryName) -Force
+    $reportAssets = Join-Path $TempDir "robot-report-assets\$Version"
+    if (Test-Path $reportAssets) {
+        $reportDestination = Join-Path $InstallDir "robot-report-assets\$Version"
+        New-Item -ItemType Directory -Path $reportDestination -Force | Out-Null
+        Copy-Item -Path (Join-Path $reportAssets "*") -Destination $reportDestination -Recurse -Force
+    }
+    foreach ($name in $Binaries) {
+        Copy-Item -Path (Join-Path $TempDir $name) -Destination (Join-Path $InstallDir $name) -Force
+    }
     & (Join-Path $InstallDir $BinaryName) --check-install
     if ($LASTEXITCODE -ne 0) { throw "Installed Device Bot verification failed." }
 
@@ -146,7 +169,7 @@ try {
         [Environment]::SetEnvironmentVariable("Path", (($pathEntries + $InstallDir) | Where-Object { $_ }) -join ";", "User")
         Write-Host "Added $InstallDir to the user PATH. Open a new terminal to use device-bot."
     }
-    Write-Host "Installed device-bot $Version to $(Join-Path $InstallDir $BinaryName)"
+    Write-Host "Installed $($Binaries -join ", ") $Version to $InstallDir"
 } finally {
     if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
     if ($InstallerScriptPath -and (Test-Path $InstallerScriptPath)) {

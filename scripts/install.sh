@@ -131,20 +131,37 @@ if [ ! -f "${TEMP_DIR}/${ASSETS}/manifest.json" ]; then
   echo "The release archive does not contain versioned XCTest assets." >&2
   exit 1
 fi
-if [ "$("${TEMP_DIR}/${BINARY_NAME}" --version)" != "$VERSION" ]; then
-  echo "Release binary version does not match ${VERSION}." >&2
-  exit 1
+# Native CLI suite is part of release archives from 0.1.4 onward.
+BINARIES="device-bot"
+if printf '%s\n' "$VERSION" | awk -F. '{exit !(($1>0)||($2>1)||($2==1 && $3>=4))}'; then
+  BINARIES="device-bot robot-flow robot-report"
 fi
+for binary in $BINARIES; do
+  if [ ! -f "${TEMP_DIR}/${binary}" ]; then
+    echo "The release archive does not contain ${binary}." >&2
+    exit 1
+  fi
+  if [ "$("${TEMP_DIR}/${binary}" --version)" != "$VERSION" ]; then
+    echo "Release binary version mismatch: ${binary}." >&2
+    exit 1
+  fi
+done
 env -u DEVICE_BOT_ASSET_DIR "${TEMP_DIR}/${BINARY_NAME}" --check-install
 
 mkdir -p "$INSTALL_DIR"
 mkdir -p "${INSTALL_DIR}/device-bot-assets"
 cp -R "${TEMP_DIR}/${ASSETS}" "${INSTALL_DIR}/device-bot-assets/"
-install -m 0755 "${TEMP_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/.device-bot-install.$$"
-mv "${INSTALL_DIR}/.device-bot-install.$$" "${INSTALL_DIR}/${BINARY_NAME}"
+if [ -d "${TEMP_DIR}/robot-report-assets/${VERSION}" ]; then
+  mkdir -p "${INSTALL_DIR}/robot-report-assets"
+  cp -R "${TEMP_DIR}/robot-report-assets/${VERSION}" "${INSTALL_DIR}/robot-report-assets/"
+fi
+for binary in $BINARIES; do
+  install -m 0755 "${TEMP_DIR}/${binary}" "${INSTALL_DIR}/.${binary}-install.$$"
+  mv "${INSTALL_DIR}/.${binary}-install.$$" "${INSTALL_DIR}/${binary}"
+done
 env -u DEVICE_BOT_ASSET_DIR "${INSTALL_DIR}/${BINARY_NAME}" --check-install
 
-echo "Installed ${BINARY_NAME} ${VERSION} to ${INSTALL_DIR}/${BINARY_NAME}"
+echo "Installed ${BINARIES} ${VERSION} to ${INSTALL_DIR}"
 case ":${PATH:-}:" in
   *:"${INSTALL_DIR}":*)
     ;;

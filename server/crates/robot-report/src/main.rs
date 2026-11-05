@@ -7,6 +7,16 @@ const HELP: &str = "robot-report start [--listen 127.0.0.1:8765] [--data-dir art
 async fn main() -> io::Result<()> {
     let mut args = env::args().skip(1);
     let command = args.next().unwrap_or_else(|| "--help".into());
+    if command == "--version" {
+        if args.next().is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "--version accepts no arguments",
+            ));
+        }
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     if ["--help", "-h"].contains(&command.as_str()) {
         println!("{HELP}");
         return Ok(());

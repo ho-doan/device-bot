@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.devicebot.robot-report</string>
+  <key>UserName</key><string>REPLACE_WITH_SERVICE_USER</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/local/libexec/robot-report</string><string>start</string>
+    <string>--listen</string><string>0.0.0.0:8765</string>
+    <string>--data-dir</string><string>/usr/local/var/robot-report</string>
+  </array>
+  <key>WorkingDirectory</key><string>/usr/local/var/robot-report</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>/usr/local/var/robot-report/stdout.log</string>
+  <key>StandardErrorPath</key><string>/usr/local/var/robot-report/stderr.log</string>
+</dict></plist>

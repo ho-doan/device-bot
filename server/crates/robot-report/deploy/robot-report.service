@@ -1,0 +1,25 @@
+[Unit]
+Description=Device Bot QA reports and evidence history
+After=network.target
+
+[Service]
+Type=exec
+User=robot-report
+Group=robot-report
+StateDirectory=robot-report
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/robot-report
+ExecStart=/usr/local/bin/robot-report start --listen 0.0.0.0:8765 --data-dir /var/lib/robot-report
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=60
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/lib/robot-report
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

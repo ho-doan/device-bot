@@ -85,6 +85,22 @@ and whether that PID exists. This is a read-only observation, not a recorder
 reservation or permission to terminate a process. Inspect `recommendedActions`
 and the owning session before taking recovery actions.
 
+## QA report service
+
+`robot-report` is a separate, long-running HTML service for multiple projects,
+run history, failed-step details and image/video/log downloads:
+
+```sh
+cargo run -p robot-report -- start
+```
+
+It serves `http://127.0.0.1:8765` and stores immutable result/evidence snapshots
+under `artifacts/qa-history`. Register projects and publish each completed run
+through the UI or `robot-report project-add` / `robot-report publish`.
+Use `--listen 0.0.0.0:8765` for QA read/download access over LAN.
+See [the report service guide](crates/robot-report/README.md) for commands,
+project boundaries, history persistence and supported artifacts.
+
 ## YAML flows
 
 `robot-flow` is a declarative MCP stdio client. It completes the MCP lifecycle,

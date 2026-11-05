@@ -205,6 +205,16 @@ async fn http_exposes_history_failed_step_and_streams_original_video_ranges() {
         .find(|file| file.kind == "video")
         .unwrap();
     let app = robot_report::router(f.store.clone());
+    let health = app
+        .clone()
+        .oneshot(request("/health", false).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(health.status(), StatusCode::OK);
+    let health: Value =
+        serde_json::from_slice(&to_bytes(health.into_body(), 1000).await.unwrap()).unwrap();
+    assert_eq!(health["service"], "robot-report");
+    assert_eq!(health["status"], "ok");
     let path = format!("/api/projects/{}/runs/{}", project.id, run.id);
     let response = app
         .clone()

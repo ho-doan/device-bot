@@ -42,6 +42,10 @@ async fn blocking<T: Send + 'static>(
 
 pub fn router(store: Store) -> Router {
     Router::new()
+        .route(
+            "/health",
+            get(|| async { Json(json!({"status":"ok","service":"robot-report"})) }),
+        )
         .route("/", get(|| async { Html(include_str!("web/index.html")) }))
         .route(
             "/assets/report.css",

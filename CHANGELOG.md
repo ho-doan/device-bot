@@ -1,3 +1,9 @@
+## Unreleased
+
+* Remove the legacy root Flutter controller, its Windows Pigeon/C++ plugin,
+  vision sidecar, tests, and obsolete editor configuration. Native platform
+  drivers, the optional Flutter companion, and `packages/uia_windows` remain.
+
 ## 0.1.5 — 2026-11-06
 
 * Use `device-bot mcp` for the MCP server and `device-bot run <scenario.yaml>` for YAML execution.

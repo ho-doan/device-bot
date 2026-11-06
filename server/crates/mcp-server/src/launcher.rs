@@ -245,8 +245,14 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (mut connection, _) = listener.accept().unwrap();
-            let mut request = [0; 1024];
-            connection.read(&mut request).unwrap();
+            // A TCP read can return only part of write!'s HTTP request. Drain
+            // its headers before closing, or unread bytes can trigger a reset.
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                connection.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
             connection.write_all(response.as_bytes()).unwrap();
         });
         let result = report_ready(address);

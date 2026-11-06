@@ -53,6 +53,11 @@ Tests cover validation, incorrect credentials, password visibility, successful
 login, protected deep links, logout, reset navigation, unknown routes, and layout
 at phone/tablet/desktop sizes including large text and reduced motion.
 
+Example GitHub Actions and GitLab CI configurations are included for using this
+app as a standalone repository. They validate the app and run all shell scenarios
+in `automation_test/*.sh` with videos and JUnit, following `automation-test-mobile`.
+See [CI setup, runner requirements and evidence](ci/README.md).
+
 For native Android/iOS execution, see the [integration test scenarios and commands](integration_test/README.md).
 The suite in `integration_test/app_flows_test.dart` exercises the app UI, routing,
 demo authentication, reset, checklist, and session lifecycle on a selected device.

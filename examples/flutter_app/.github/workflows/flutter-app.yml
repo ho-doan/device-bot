@@ -1,0 +1,78 @@
+name: Flutter app CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      mobile_tests:
+        description: Run all automation_test/*.sh scenarios on the self-hosted mobile runner
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.41.3"
+          channel: stable
+          cache: true
+      - run: python3 ci/validate.py
+      - run: python3 -m unittest discover -s ci/tests -v
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  mobile:
+    needs: validate
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.mobile_tests) ||
+      (github.event_name == 'push' && vars.MOBILE_TESTS_ENABLED == 'true')
+    runs-on: [self-hosted, macOS, mobile-ios-sim]
+    timeout-minutes: 60
+    concurrency:
+      group: flutter-app-mobile-ios-sim
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+    env:
+      PLATFORM: ios-sim
+      DEVICE_ID: ${{ vars.DEVICE_ID }}
+      APP_ID: ${{ vars.APP_ID }}
+      DEVICE_BOT_VERSION: "0.1.3"
+      DEVICE_BOT_FLUTTER_AUTOSTART: "0"
+      DEVICE_BOT_IOS_AGENT_BIND: "127.0.0.1:19787"
+      DEVICE_BOT_IOS_SIM_AGENT_BIND: "127.0.0.1:19788"
+      SCENARIO_TIMEOUT: "600"
+      RPC_TIMEOUT: "180"
+      MCP_TIMEOUT: "180"
+      SCENARIO_RECORDS_VIDEO: "true"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, install and run device scenarios
+        run: |
+          mkdir -p artifacts
+          source ci/ensure_device_bot.sh > artifacts/device-bot-install.log 2>&1
+          cat artifacts/device-bot-install.log
+          bash ci/prepare_app.sh 2>&1 | tee artifacts/build.log
+          python3 ci/run_suite.py
+      - name: Upload videos, logs and JUnit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-app-mobile-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: error

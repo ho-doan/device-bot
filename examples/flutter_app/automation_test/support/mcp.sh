@@ -24,11 +24,14 @@ readonly RPC_TIMEOUT="${RPC_TIMEOUT:-180}"
 for dependency in jq "${DEVICE_BOT_BIN:-device-bot}" "$PLATFORM_COMMAND"; do
   command -v "$dependency" >/dev/null || { printf 'Missing: %s\n' "$dependency" >&2; exit 2; }
 done
-readonly ARTIFACT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/device-bot-${CASE_ID}.XXXXXX")"
+readonly ARTIFACT_DIR="${EVIDENCE_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/device-bot-${CASE_ID}.XXXXXX")}"
+mkdir -p "$ARTIFACT_DIR"
+export DEVICE_BOT_ARTIFACT_DIR="$ARTIFACT_DIR"
 printf 'Artifacts: %s\n' "$ARTIFACT_DIR"
 if [[ "$PLATFORM" == windows ]]; then
   # Git Bash supports anonymous coprocess pipes; Windows has no POSIX FIFOs.
-  coproc MCP_PROCESS { exec "${DEVICE_BOT_BIN:-device-bot}" mcp 2>"$ARTIFACT_DIR/server.log"; }
+  # Defer Bash 4 syntax so macOS Bash 3 can parse the non-Windows branches.
+  eval 'coproc MCP_PROCESS { exec "${DEVICE_BOT_BIN:-device-bot}" mcp 2>"$ARTIFACT_DIR/server.log"; }'
   readonly MCP_PID=$MCP_PROCESS_PID
   exec 3>&"${MCP_PROCESS[1]}" 4<&"${MCP_PROCESS[0]}"
   input_fd=${MCP_PROCESS[1]}; output_fd=${MCP_PROCESS[0]}
@@ -43,6 +46,7 @@ fi
 next_id=2
 last_response=''
 initialized=false
+recording_started=false
 limitations=0
 query_count=0
 email_value=''
@@ -91,6 +95,19 @@ cleanup() {
   local status=$?
   trap - EXIT
   if ((status != 0)) && [[ "$initialized" == true ]]; then screenshot failure || true; fi
+  if [[ "$recording_started" == true ]]; then
+    if call_tool mobile_stop_screen_recording "$DEVICE_ARGS"; then
+      recorded_path="$(jq -er '.result.content[] | select(.type=="text") | .text | select(startswith("Screen recording saved: ")) | ltrimstr("Screen recording saved: ")' <<<"$last_response")" || status=1
+      if [[ -n "${recorded_path:-}" && -s "$recorded_path" ]]; then
+        mv "$recorded_path" "$ARTIFACT_DIR/video.mp4" || status=1
+      else
+        printf 'FAIL: Recording did not produce a video artifact\n' >&2
+        status=1
+      fi
+    else
+      status=1
+    fi
+  fi
   exec 3>&- 4<&-
   kill "$MCP_PID" 2>/dev/null || true
   wait "$MCP_PID" 2>/dev/null || true
@@ -410,6 +427,11 @@ note_limitation() {
 
 finish_flow() {
   screenshot result
+  if [[ -n "${EVIDENCE_DIR:-}" ]]; then
+    jq -cn --argjson count "$limitations" --rawfile notes <(cat "$ARTIFACT_DIR/limitations.txt" 2>/dev/null || true) '
+      {status:(if $count>0 then "PARTIAL" else "PASS" end),
+       limitations:($notes | split("\n") | map(select(length>0)))}' >"$EVIDENCE_DIR/result.json"
+  fi
   if ((limitations > 0)); then
     printf 'PARTIAL: %s %s UI checks passed; %s coverage limitation(s).\n' "$CASE_ID" "$PLATFORM" "$limitations"
   else
@@ -447,5 +469,13 @@ initialized=true
 # The server has no terminate tool; Android/Simulator cold-stop uses the CLI.
 if [[ "$PLATFORM" != windows && -n "${APP_PATH:-${APK_PATH:-}}" ]]; then
   call_tool mobile_install_app "$(jq -cn --arg d "$DEVICE_ID" --arg p "${APP_PATH:-$APK_PATH}" '{deviceId:$d,apkPath:$p}')"
+fi
+if [[ "${SCENARIO_RECORDS_VIDEO:-false}" == true ]]; then
+  # Warm XCTest before recording: starting a UI test can reset the Simulator's
+  # video stream. The actual cold launch and scenario still happen on camera.
+  call_tool mobile_launch_app "$(jq -cn --arg d "$DEVICE_ID" --arg a "$APP_ID" '{deviceId:$d,appId:$a}')"
+  query_elements '' '' 1
+  call_tool mobile_start_screen_recording "$DEVICE_ARGS"
+  recording_started=true
 fi
 cold_launch

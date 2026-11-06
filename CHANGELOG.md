@@ -1,4 +1,4 @@
-## Unreleased
+## 0.1.5 — 2026-11-06
 
 * Use `device-bot mcp` for the MCP server and `device-bot run <scenario.yaml>` for YAML execution.
 * Make bare `device-bot` start the background report web app and open the browser; `device-bot start` reuses the healthy service or starts it when absent.

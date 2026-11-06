@@ -98,6 +98,9 @@ cleanup() {
   if [[ "$recording_started" == true ]]; then
     if call_tool mobile_stop_screen_recording "$DEVICE_ARGS"; then
       recorded_path="$(jq -er '.result.content[] | select(.type=="text") | .text | select(startswith("Screen recording saved: ")) | ltrimstr("Screen recording saved: ")' <<<"$last_response")" || status=1
+      if [[ "$PLATFORM" == windows && -n "${recorded_path:-}" ]]; then
+        recorded_path="$(cygpath -u "$recorded_path")" || status=1
+      fi
       if [[ -n "${recorded_path:-}" && -s "$recorded_path" ]]; then
         mv "$recorded_path" "$ARTIFACT_DIR/video.mp4" || status=1
       else
@@ -473,8 +476,10 @@ fi
 if [[ "${SCENARIO_RECORDS_VIDEO:-false}" == true ]]; then
   # Warm XCTest before recording: starting a UI test can reset the Simulator's
   # video stream. The actual cold launch and scenario still happen on camera.
-  call_tool mobile_launch_app "$(jq -cn --arg d "$DEVICE_ID" --arg a "$APP_ID" '{deviceId:$d,appId:$a}')"
-  query_elements '' '' 1
+  if [[ "$PLATFORM" != windows ]]; then
+    call_tool mobile_launch_app "$(jq -cn --arg d "$DEVICE_ID" --arg a "$APP_ID" '{deviceId:$d,appId:$a}')"
+    query_elements '' '' 1
+  fi
   call_tool mobile_start_screen_recording "$DEVICE_ARGS"
   recording_started=true
 fi

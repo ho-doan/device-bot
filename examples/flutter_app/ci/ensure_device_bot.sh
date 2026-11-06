@@ -2,6 +2,17 @@
 # Source this script so PATH and DEVICE_BOT_BIN reach subsequent CI commands.
 set -euo pipefail
 
+case "$(uname -s)" in
+  MINGW*|MSYS*)
+    # Desktop recording needs a build containing the Windows recorder.
+    # Use the runner's verified build rather than an older published release.
+    : "${DEVICE_BOT_BIN:?Set DEVICE_BOT_BIN to a Windows build with desktop recording}"
+    "$DEVICE_BOT_BIN" --version
+    "$DEVICE_BOT_BIN" --check-install
+    return 0
+    ;;
+esac
+
 export DEVICE_BOT_INSTALL_DIR="${DEVICE_BOT_INSTALL_DIR:-$HOME/.local/bin}"
 export PATH="$DEVICE_BOT_INSTALL_DIR:$PATH"
 

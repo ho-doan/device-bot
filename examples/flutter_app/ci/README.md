@@ -58,11 +58,49 @@ concurrency serialize jobs within their own project/repository; give each servic
 a separate device/runner when both services can run concurrently. A runner
 registered to the reference project is not automatically registered to this one.
 
+## Windows desktop and multiple apps
+
+Both example configurations include a separate Windows job. GitLab uses the
+`mobile-windows` runner tag; GitHub uses `self-hosted`, `Windows`, `mobile-windows`.
+Run the runner in an unlocked, interactive desktop session. Install Flutter,
+Visual Studio's desktop C++ build tools, Git Bash, Python 3.10+ (`python3` on
+PATH), jq, FFmpeg and ffprobe. A Windows service in session 0 cannot exercise
+the interactive desktop.
+
+Set `WINDOWS_DEVICE_BOT_BIN` to an absolute path to a device-bot Windows build
+containing `robot-windows` desktop recording. Build that binary from the updated
+device-bot source on Windows; the previously pinned `0.1.3` release is not
+assumed to contain this feature. The Windows bootstrap checks the configured
+binary and assets without downloading the older release. FFmpeg must be on
+the runner's PATH, or set `DEVICE_BOT_FFMPEG_PATH` in the runner environment.
+
+Use `WINDOWS_TESTS_ENABLED=true` for automatic Windows runs, or start the manual
+GitLab job / GitHub workflow with `windows_tests=true`. The job builds the
+example, sets `DEVICE_ID=windows-host` and `APP_ID` to the current build's
+executable, then discovers the shell scenarios in `automation_test/*.sh`.
+
+`mobile_start_screen_recording` captures the whole virtual Windows desktop,
+including the pointer, using FFmpeg's
+[`gdigrab` desktop input](https://ffmpeg.org/ffmpeg-devices.html#gdigrab).
+UIA provides element discovery and native actions; it does not encode video.
+The recorder is independent of the active process, so launching/selecting a
+different app with `mobile_launch_app` changes the UI target while the same
+video continues. It does not crop to the Flutter app or depend on its widget
+bridge. Existing Orbit scenarios exercise Orbit; add scenarios to exercise
+other apps or transitions between them.
+
+The recorder waits for its first encoded frame before returning from start,
+then sends FFmpeg `q` on stop to finalize the MP4. CI verifies the video stream
+and duration with ffprobe and uploads it with the case evidence. Timeouts or
+forced runner termination can leave incomplete video and are reported as errors.
+Windows desktop capture and cross-app interaction still require a live Windows
+verification run; process mocks only verify the recording lifecycle.
+
 ## Execution and evidence
 
 The bootstrap reuses a healthy device-bot installation or installs the pinned
 release and its assets using the reference project's pinned installer. An
-explicit `DEVICE_BOT_BIN` override must pass its version and asset checks.
+explicit `DEVICE_BOT_BIN` override on macOS/Linux must pass its version and asset checks.
 Build/install logs go into `artifacts/`. The preparation script rebuilds this
 checkout and installs it on the selected device. On iOS Simulator it restarts
 only the selected Simulator and builds using the host architecture, as in the

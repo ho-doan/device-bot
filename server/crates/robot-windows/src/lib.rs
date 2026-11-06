@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 use tokio::{process::Command, sync::Mutex};
 
 mod flutter_bridge;
+mod recording;
 
 const DEVICE_ID: &str = "windows-host";
 const MAX_UI_NODES: usize = 5_000;
@@ -34,6 +35,7 @@ pub struct WindowsRobot {
     artifact_dir: PathBuf,
     powershell_path: String,
     active_process_id: Arc<Mutex<Option<u32>>>,
+    recording: Arc<Mutex<recording::DesktopRecorder>>,
 }
 
 impl WindowsRobot {
@@ -43,6 +45,7 @@ impl WindowsRobot {
             powershell_path: std::env::var("DEVICE_BOT_POWERSHELL_PATH")
                 .unwrap_or_else(|_| "powershell.exe".into()),
             active_process_id: Arc::new(Mutex::new(None)),
+            recording: Arc::new(Mutex::new(recording::DesktopRecorder::default())),
         }
     }
 
@@ -561,6 +564,22 @@ if ($null -eq $apps) {
             "deviceId": device_id,
             "apps": apps,
         }))
+    }
+
+    async fn start_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
+        self.require_device(device_id)?;
+        let ffmpeg =
+            std::env::var("DEVICE_BOT_FFMPEG_PATH").unwrap_or_else(|_| "ffmpeg.exe".into());
+        self.recording
+            .lock()
+            .await
+            .start(&ffmpeg, &self.artifact_dir)
+            .await
+    }
+
+    async fn stop_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
+        self.require_device(device_id)?;
+        self.recording.lock().await.stop().await
     }
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {

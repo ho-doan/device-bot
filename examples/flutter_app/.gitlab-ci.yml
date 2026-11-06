@@ -14,6 +14,7 @@ variables:
   PLATFORM: "ios-sim"
   MOBILE_RUNNER_TAG: "mobile-ios-sim"
   MOBILE_TESTS_ENABLED: "true"
+  WINDOWS_TESTS_ENABLED: "false"
   SCENARIO_TIMEOUT: "600"
   RPC_TIMEOUT: "180"
   MCP_TIMEOUT: "180"
@@ -55,6 +56,33 @@ mobile:automation:
     - cat artifacts/device-bot-install.log
     - bash ci/prepare_app.sh 2>&1 | tee artifacts/build.log
     - python3 ci/run_suite.py
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - artifacts/
+    reports:
+      junit: artifacts/junit.xml
+
+windows:automation:
+  stage: automation
+  tags:
+    - mobile-windows
+  resource_group: windows-desktop
+  timeout: 1h
+  interruptible: false
+  variables:
+    PLATFORM: "windows"
+    DEVICE_ID: "windows-host"
+    DEVICE_BOT_BIN: "$WINDOWS_DEVICE_BOT_BIN"
+  rules:
+    - if: '$WINDOWS_TESTS_ENABLED == "true"'
+      when: on_success
+      allow_failure: false
+    - when: manual
+      allow_failure: true
+  script:
+    - bash ci/run_windows.sh
   artifacts:
     when: always
     expire_in: 14 days

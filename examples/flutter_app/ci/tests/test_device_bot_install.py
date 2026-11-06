@@ -72,6 +72,19 @@ class InstallTests(unittest.TestCase):
         self.assertNotEqual(self.run_bootstrap().returncode, 0)
         self.assertFalse(self.marker.exists())
 
+    def test_windows_uses_explicit_build_without_downloading(self):
+        self.write(self.bin / 'uname', '#!/bin/sh\necho MINGW64_NT\n')
+        custom = self.root / 'windows bot'
+        self.write(custom, BINARY)
+        self.env['DEVICE_BOT_BIN'] = str(custom)
+        self.assertEqual(self.run_bootstrap().returncode, 0)
+        self.assertFalse(self.marker.exists())
+
+    def test_windows_requires_build_with_desktop_recording(self):
+        self.write(self.bin / 'uname', '#!/bin/sh\necho MINGW64_NT\n')
+        self.assertNotEqual(self.run_bootstrap().returncode, 0)
+        self.assertFalse(self.marker.exists())
+
     def test_download_failure_stops_bootstrap(self):
         self.write(self.bin / 'curl', '#!/bin/sh\nexit 22\n')
         self.assertNotEqual(self.run_bootstrap().returncode, 0)

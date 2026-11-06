@@ -9,6 +9,10 @@ on:
         description: Run all automation_test/*.sh scenarios on the self-hosted mobile runner
         type: boolean
         default: true
+      windows_tests:
+        description: Run scenarios with full Windows desktop video
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -73,6 +77,41 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flutter-app-mobile-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: error
+
+  windows:
+    needs: validate
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.windows_tests) ||
+      (github.event_name == 'push' && vars.WINDOWS_TESTS_ENABLED == 'true')
+    runs-on: [self-hosted, Windows, mobile-windows]
+    timeout-minutes: 60
+    concurrency:
+      group: flutter-app-windows-desktop
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+    env:
+      PLATFORM: windows
+      DEVICE_ID: windows-host
+      DEVICE_BOT_BIN: ${{ vars.WINDOWS_DEVICE_BOT_BIN }}
+      DEVICE_BOT_FLUTTER_AUTOSTART: '0'
+      SCENARIO_TIMEOUT: '600'
+      RPC_TIMEOUT: '180'
+      SCENARIO_RECORDS_VIDEO: 'true'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run desktop scenarios
+        run: bash ci/run_windows.sh
+      - name: Upload desktop videos, logs and JUnit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-app-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/
           retention-days: 14
           if-no-files-found: error

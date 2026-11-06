@@ -135,6 +135,29 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaises(subprocess.TimeoutExpired):
             runner.run_shell(self.script, dict(os.environ), self.root, 0.05)
 
+    def test_windows_timeout_terminates_process_tree_without_posix_signals(self):
+        import subprocess
+        from unittest.mock import Mock
+        process = Mock(pid=123, **{'wait.side_effect': [subprocess.TimeoutExpired('bash', 1), 0],
+                                  'poll.return_value': None})
+        with patch.object(runner, 'IS_WINDOWS', True), \
+             patch.object(runner.subprocess, 'CREATE_NEW_PROCESS_GROUP', 512, create=True), \
+             patch.object(runner.subprocess, 'Popen', return_value=process), \
+             patch.object(runner.subprocess, 'run') as terminate:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                runner.run_shell(self.script, dict(os.environ), self.root, 1)
+        self.assertEqual(terminate.call_args.args[0], ['taskkill', '/PID', '123', '/T', '/F'])
+
+    def test_windows_platform_can_run_discovered_scenarios(self):
+        scenarios = self.root / 'automation_test'
+        scenarios.mkdir()
+        (scenarios / 'desktop-flow.sh').write_text('exit 0\n')
+        with patch.dict(os.environ, {'PLATFORM': 'windows'}), \
+             patch.object(runner.shutil, 'which', return_value='/test/tool'), \
+             patch.object(runner, 'run_case', return_value={'case': 'desktop-flow', 'status': 'PASS'}) as case:
+            self.assertEqual(runner.main(), 0)
+        case.assert_called_once()
+
     def test_cancellation_stops_suite_before_next_case(self):
         scenarios = self.root / 'automation_test'
         scenarios.mkdir(parents=True)

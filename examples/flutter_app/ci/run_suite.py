@@ -13,6 +13,7 @@ import time
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
+IS_WINDOWS = sys.platform == 'win32'
 
 
 class RunnerInterrupted(BaseException):
@@ -133,28 +134,37 @@ def verify_video(target):
 
 def run_shell(script, env, directory, timeout):
     with (directory / 'scenario.log').open('w') as log:
-        process = subprocess.Popen(['bash', str(script)], cwd=ROOT, env=env,
+        process = subprocess.Popen(['bash', script.as_posix()], cwd=ROOT, env=env,
                                    stdout=log, stderr=subprocess.STDOUT,
-                                   start_new_session=True)
+                                   **({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
+                                      if IS_WINDOWS else {'start_new_session': True}))
         try:
             return process.wait(timeout=timeout)
         finally:
-            # Stop descendants too: a timed-out shell may leave an MCP process.
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            if process.poll() is None:
-                try:
+            if IS_WINDOWS:
+                # Windows has no killpg; terminate the Bash/MCP process tree.
+                if process.poll() is None:
+                    subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   timeout=15, check=False)
                     process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
+            else:
+                # Stop descendants too: a timed-out shell may leave an MCP process.
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                if process.poll() is None:
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                # The shell may have exited while a descendant ignored SIGTERM.
+                try:
                     os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-            # The shell may have exited while a descendant ignored SIGTERM.
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+                except ProcessLookupError:
+                    pass
 
 
 def run_case(script, directory, timeout):
@@ -170,7 +180,7 @@ def run_case(script, directory, timeout):
             mcp = MCP(directory)
             recording = True
             mcp.tool('mobile_start_screen_recording', args)
-        env = dict(os.environ, EVIDENCE_DIR=str(directory), CASE_ID=script.stem)
+        env = dict(os.environ, EVIDENCE_DIR=directory.as_posix(), CASE_ID=script.stem)
         result['exit_code'] = run_shell(script, env, directory, timeout)
         if result['exit_code'] != 0:
             result['status'] = 'FAIL'
@@ -259,8 +269,8 @@ def main():
         for key in ('DEVICE_ID', 'APP_ID'):
             if not os.environ.get(key):
                 raise ValueError(f'Set {key} in CI variables')
-        if os.environ.get('PLATFORM') not in ('android', 'ios-sim'):
-            raise ValueError('PLATFORM must be android or ios-sim')
+        if os.environ.get('PLATFORM') not in ('android', 'ios-sim', 'windows'):
+            raise ValueError('PLATFORM must be android, ios-sim or windows')
         timeout = int(os.environ.get('SCENARIO_TIMEOUT', '120'))
         if timeout <= 0:
             raise ValueError('SCENARIO_TIMEOUT must be positive')

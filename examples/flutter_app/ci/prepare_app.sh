@@ -45,5 +45,8 @@ PY
     flutter build apk --debug --target lib/main.dart
     adb -s "$DEVICE_ID" install -r build/app/outputs/flutter-apk/app-debug.apk
     ;;
+  windows)
+    flutter build windows --debug --target lib/main.dart
+    ;;
   *) printf 'Unsupported PLATFORM: %s\n' "$PLATFORM" >&2; exit 2 ;;
 esac

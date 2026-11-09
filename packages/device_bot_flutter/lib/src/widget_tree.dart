@@ -74,6 +74,11 @@ class WidgetTreeSnapshot {
     bool insideTextField,
   ) {
     final widget = element.widget;
+    // A page-level keyboard dismiss gesture contains independent editors and
+    // controls. It must not become one button that suppresses its descendants.
+    if (widget is GestureDetector && _editableElement(element) != null) {
+      return null;
+    }
     String? role;
     String? label;
     String? value;

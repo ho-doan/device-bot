@@ -131,6 +131,95 @@ async fn lifecycle_and_tool_calls_use_one_session() {
 }
 
 #[tokio::test]
+async fn profile_selector_environment_is_resolved_before_querying() {
+    let label = std::env::var("PATH").unwrap();
+    let state = Arc::new(Mutex::new(State {
+        queries: VecDeque::from([json!([node(&label)])]),
+        ..State::default()
+    }));
+    let profile: Profile =
+        serde_yaml::from_str("selectors:\n  fixture: {label: '${env:PATH}'}\n").unwrap();
+    let report = run(
+        &flow("  - assert_element: {target: fixture, timeout_ms: 1}"),
+        &profile,
+        state.clone(),
+    )
+    .await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    let state = state.lock().unwrap();
+    let query = state
+        .calls
+        .iter()
+        .find(|c| c["params"]["name"] == "mobile_list_elements_on_screen")
+        .unwrap();
+    assert_eq!(query["params"]["arguments"]["filter"], label);
+}
+
+#[test]
+fn profile_selectors_resolve_variables_and_reject_missing_environment() {
+    let mut profile: Profile = serde_yaml::from_str(
+        "variables:\n  kind: button\nselectors:\n  fixture: {element_type: '${kind}'}\n",
+    )
+    .unwrap();
+    let f = flow("  - assert_element: {target: fixture}");
+    // Validation rejects an unresolved element type, so this proves resolution
+    // happens before validation rather than only at query time.
+    schema::compile(&f, &profile).unwrap();
+    profile.selectors.get_mut("fixture").unwrap().label =
+        Some("${env:ROBOT_FLOW_MISSING_SELECTOR_ENV_73DDE9}".into());
+    assert!(
+        schema::compile(&f, &profile)
+            .unwrap_err()
+            .contains("missing environment variable")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn polling_continues_past_twelve_attempts_until_declared_timeout() {
+    let mut queries = VecDeque::from(vec![json!([]); 13]);
+    queries.push_back(json!([node("Late fixture")]));
+    let state = Arc::new(Mutex::new(State {
+        queries,
+        ..State::default()
+    }));
+    let tmp = Temp::new();
+    let start = tokio::time::Instant::now();
+    let report = FlowRunner::new(Some(Box::new(Fake(state))), tmp.0.clone())
+        .run(
+            &flow("  - assert_element: {label: Late fixture, timeout_ms: 5000}"),
+            &Profile::default(),
+            &[],
+            Duration::from_secs(10),
+        )
+        .await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    assert_eq!(start.elapsed(), Duration::from_millis(3250));
+}
+
+#[tokio::test(start_paused = true)]
+async fn polling_honors_timeout_shorter_than_poll_interval() {
+    let state = Arc::new(Mutex::new(State::default()));
+    let start = tokio::time::Instant::now();
+    let report = run(
+        &flow("  - assert_element: {label: Missing, timeout_ms: 60}"),
+        &Profile::default(),
+        state,
+    )
+    .await;
+    assert_eq!(report.status, "FAIL");
+    assert!(
+        report
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("bounded wait expired"),
+        "{:?}",
+        report.error
+    );
+    assert_eq!(start.elapsed(), Duration::from_millis(60));
+}
+
+#[tokio::test]
 async fn dry_run_neither_connects_nor_creates_artifacts() {
     let tmp = Temp::new();
     let report = FlowRunner::new(None, tmp.0.clone())
@@ -688,7 +777,7 @@ fn nested_recipe_parameters_are_not_interpolated_twice() {
     std::fs::write(&scenario,
         "version: 2\nname: nested\nsteps:\n  - run:\n      recipe: edit\n      with:\n        text: '${env:ROBOT_FLOW_LITERAL_INPUT}'\n").unwrap();
     std::fs::write(&profiles,
-        "version: 1\nselectors:\n  field: {label: Email}\nrecipes:\n  edit:\n    - if_element:\n        target: field\n        then:\n          - type_text: {text: '${text}'}\ntargets:\n  test: {}\n").unwrap();
+        "version: 1\nselectors:\n  field: {label: '${env:ROBOT_FLOW_LITERAL_INPUT}'}\nrecipes:\n  edit:\n    - if_element:\n        target: field\n        then:\n          - type_text: {text: '${text}'}\ntargets:\n  test: {}\n").unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_robot-flow"))
         .args(["--dry-run", "--profiles"])
         .arg(profiles)

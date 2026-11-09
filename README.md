@@ -85,6 +85,7 @@ Run native tests and packaging checks from the repository root:
 
 ```sh
 cargo test --manifest-path server/Cargo.toml --workspace --locked
+node --test server/crates/robot-chrome/tests/dom-elements.test.cjs
 python3 scripts/test_package_release.py
 ```
 

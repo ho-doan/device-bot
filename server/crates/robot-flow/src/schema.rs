@@ -188,6 +188,13 @@ fn variable(key: &str, variables: &BTreeMap<String, Value>) -> Result<Value> {
 /// Expand declarative recipes before connecting to MCP. Recursive/unknown
 /// recipes and unresolved selectors fail before the first device action.
 pub fn compile(flow: &FlowDocument, profile: &Profile) -> Result<Vec<Step>> {
+    compile_with_profile(flow, profile).map(|(steps, _)| steps)
+}
+
+pub(crate) fn compile_with_profile(
+    flow: &FlowDocument,
+    profile: &Profile,
+) -> Result<(Vec<Step>, Profile)> {
     if profile
         .stable_samples
         .is_some_and(|n| !(1..=4).contains(&n))
@@ -207,6 +214,14 @@ pub fn compile(flow: &FlowDocument, profile: &Profile) -> Result<Vec<Step>> {
             resolve_definition(name, &definitions, &mut Vec::new())?,
         );
     }
+    // Resolve selector templates once with the same opaque variable values as
+    // step templates. Runtime lookups, including row/viewport relations, use
+    // this resolved profile rather than interpolating already resolved data.
+    let selector_source = serde_json::to_value(&profile.selectors).unwrap();
+    let mut resolved_profile = profile.clone();
+    resolved_profile.selectors = serde_json::from_value(resolve(&selector_source, &vars)?)
+        .map_err(|e| format!("invalid resolved selectors: {e}"))?;
+    let profile = &resolved_profile;
     let source = serde_json::to_string(&flow.steps).unwrap();
     let profile_source = serde_json::to_string(&profile.variables).unwrap();
     let recipe_source = serde_json::to_string(&profile.recipes).unwrap();
@@ -218,6 +233,7 @@ pub fn compile(flow: &FlowDocument, profile: &Profile) -> Result<Vec<Step>> {
                 || profile_source.contains("${env:")
                 || recipe_source.contains("${env:")
                 || recipe_source.contains("text_from_env")
+                || selector_source.to_string().contains("${env:")
         ),
     );
     for (name, selector) in &profile.selectors {
@@ -226,7 +242,8 @@ pub fn compile(flow: &FlowDocument, profile: &Profile) -> Result<Vec<Step>> {
     for name in profile.recipes.keys() {
         check_recipe_cycles(name, profile, &mut Vec::new())?;
     }
-    expand(&flow.steps, profile, &vars, &mut Vec::new(), "")
+    let steps = expand(&flow.steps, profile, &vars, &mut Vec::new(), "")?;
+    Ok((steps, resolved_profile))
 }
 
 fn resolve_definition(

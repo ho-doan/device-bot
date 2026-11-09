@@ -97,7 +97,8 @@ impl FlowRunner {
             .cloned()
             .collect::<Vec<_>>();
         let result = async {
-            let steps = schema::compile(flow, profile)?;
+            let (steps, resolved_profile) = schema::compile_with_profile(flow, profile)?;
+            self.profile = resolved_profile;
             collect_secrets(&serde_json::to_value(&steps).unwrap(), &mut self.secrets);
             if !dry_run {
                 for condition in &preconditions {
@@ -687,96 +688,97 @@ impl FlowRunner {
                     .and_then(Value::as_u64)
                     .unwrap_or(30_000),
             );
-        let mut previous = Value::Null;
-        let mut stable = 0;
-        let mut attempts = 0;
-        loop {
-            let mut found = self.query(&s).await?;
-            if tap {
-                let controls = found
-                    .iter()
-                    .filter(|e| e["clickable"] == true)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if !controls.is_empty() {
-                    found = controls;
-                }
-            }
-            if unique && found.len() > 1 {
-                return Err(format!(
-                    "ambiguous selector: {} matching elements",
-                    found.len()
-                ));
-            }
-            // Native trees can retain offscreen controls with an all-zero
-            // rectangle. Search the viewport for those controls; malformed
-            // geometry and ambiguity remain errors, not selector fallbacks.
-            found.retain(|e| {
-                !["left", "top", "right", "bottom"]
-                    .iter()
-                    .all(|key| e["bounds"][key].as_f64() == Some(0.))
-            });
-            if let Some(e) = found.first() {
-                let bounds = rectangle(e)?;
-                if !tap || (e["enabled"] == true && e["clickable"] == true) {
-                    // Unselected resource IDs may be snapshot-local handles.
-                    // Stability tracks the observed selector/geometry, not those
-                    // handles. Explicitly selected IDs remain part of the match.
-                    let selected_id = s
-                        .resource_id
-                        .as_ref()
-                        .or(s.prefer_resource_id.as_ref())
-                        .filter(|id| {
-                            e.get("resourceId").and_then(Value::as_str) == Some(id.as_str())
-                        });
-                    let identity = json!([
-                        bounds,
-                        selected_id,
-                        e.get("className"),
-                        e.get("text"),
-                        e.get("contentDescription")
-                    ]);
-                    if identity == previous {
-                        stable += 1;
-                    } else {
-                        stable = 1;
-                        previous = identity;
-                    }
-                    if stable
-                        >= s.stable_samples
-                            .or(self.profile.stable_samples)
-                            .unwrap_or(1)
-                    {
-                        return Ok(e.clone());
+        tokio::time::timeout_at(deadline, async {
+            let mut previous = Value::Null;
+            let mut stable = 0;
+            let mut attempts = 0;
+            loop {
+                let mut found = self.query(&s).await?;
+                if tap {
+                    let controls = found
+                        .iter()
+                        .filter(|e| e["clickable"] == true)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if !controls.is_empty() {
+                        found = controls;
                     }
                 }
-            } else {
-                stable = 0;
-                previous = Value::Null;
-                if (1..11).contains(&attempts) {
-                    if let Some(viewport) = self.profile.viewport.clone() {
-                        let viewport = self
-                            .profile
-                            .selectors
-                            .get(&viewport)
-                            .cloned()
-                            .ok_or("unknown viewport selector")?;
-                        // Match the native shell search: four down, then six up.
-                        // The return leg must cross the original position to
-                        // find content above it, rather than merely retrace it.
-                        self.scroll(&viewport, if attempts < 5 { "down" } else { "up" })
-                            .await?;
+                if unique && found.len() > 1 {
+                    return Err(format!(
+                        "ambiguous selector: {} matching elements",
+                        found.len()
+                    ));
+                }
+                // Native trees can retain offscreen controls with an all-zero
+                // rectangle. Search the viewport for those controls; malformed
+                // geometry and ambiguity remain errors, not selector fallbacks.
+                found.retain(|e| {
+                    !["left", "top", "right", "bottom"]
+                        .iter()
+                        .all(|key| e["bounds"][key].as_f64() == Some(0.))
+                });
+                if let Some(e) = found.first() {
+                    let bounds = rectangle(e)?;
+                    if !tap || (e["enabled"] == true && e["clickable"] == true) {
+                        // Unselected resource IDs may be snapshot-local handles.
+                        // Stability tracks the observed selector/geometry, not those
+                        // handles. Explicitly selected IDs remain part of the match.
+                        let selected_id = s
+                            .resource_id
+                            .as_ref()
+                            .or(s.prefer_resource_id.as_ref())
+                            .filter(|id| {
+                                e.get("resourceId").and_then(Value::as_str) == Some(id.as_str())
+                            });
+                        let identity = json!([
+                            bounds,
+                            selected_id,
+                            e.get("className"),
+                            e.get("text"),
+                            e.get("contentDescription")
+                        ]);
+                        if identity == previous {
+                            stable += 1;
+                        } else {
+                            stable = 1;
+                            previous = identity;
+                        }
+                        if stable
+                            >= s.stable_samples
+                                .or(self.profile.stable_samples)
+                                .unwrap_or(1)
+                        {
+                            return Ok(e.clone());
+                        }
+                    }
+                } else {
+                    stable = 0;
+                    previous = Value::Null;
+                    if (1..11).contains(&attempts) {
+                        if let Some(viewport) = self.profile.viewport.clone() {
+                            let viewport = self
+                                .profile
+                                .selectors
+                                .get(&viewport)
+                                .cloned()
+                                .ok_or("unknown viewport selector")?;
+                            // Match the native shell search: four down, then six up.
+                            // The return leg must cross the original position to
+                            // find content above it, rather than merely retrace it.
+                            self.scroll(&viewport, if attempts < 5 { "down" } else { "up" })
+                                .await?;
+                        }
                     }
                 }
+                attempts += 1;
+                sleep(Duration::from_millis(250)).await;
             }
-            attempts += 1;
-            if Instant::now() >= deadline || attempts >= 12 {
-                return Err(
-                    "element missing, disabled, or unstable before bounded wait expired".into(),
-                );
-            }
-            sleep(Duration::from_millis(250)).await;
-        }
+        })
+        .await
+        .map_err(|_| {
+            "element missing, disabled, or unstable before bounded wait expired".to_owned()
+        })?
     }
 
     fn query<'a>(

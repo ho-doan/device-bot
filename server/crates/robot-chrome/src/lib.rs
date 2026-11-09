@@ -23,7 +23,7 @@ use robot_core::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
     process::Command,
     sync::{Mutex, oneshot},
@@ -114,26 +114,54 @@ impl ChromeRobot {
                     "could not request Chrome DevTools targets: {error}"
                 ))
             })?;
-        let mut response = vec![];
-        stream.read_to_end(&mut response).await.map_err(|error| {
+        let read_error = |error| {
             RobotError::CommandFailed(format!("could not read Chrome DevTools response: {error}"))
-        })?;
-        let header_end = response
-            .windows(4)
-            .position(|window| window == b"\r\n\r\n")
-            .ok_or_else(|| {
-                RobotError::CommandFailed(
+        };
+        let mut stream = BufReader::new(stream);
+        let mut header = String::new();
+        loop {
+            if stream.read_line(&mut header).await.map_err(read_error)? == 0 {
+                return Err(RobotError::CommandFailed(
                     "Chrome DevTools returned an invalid HTTP response".into(),
-                )
-            })?;
-        let header = String::from_utf8_lossy(&response[..header_end]);
+                ));
+            }
+            if header.ends_with("\r\n\r\n") {
+                break;
+            }
+        }
         if !header.starts_with("HTTP/") || !header.contains(" 200 ") {
             return Err(RobotError::CommandFailed(format!(
                 "Chrome DevTools request failed: {}",
                 header.lines().next().unwrap_or("invalid response")
             )));
         }
-        Ok(response.split_off(header_end + 4))
+        let content_length = header
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+            .map(|(_, length)| length.trim().parse::<u64>())
+            .transpose()
+            .map_err(|error| {
+                RobotError::CommandFailed(format!(
+                    "Chrome DevTools returned an invalid Content-Length: {error}"
+                ))
+            })?;
+        let mut body = vec![];
+        if let Some(length) = content_length {
+            stream
+                .take(length)
+                .read_to_end(&mut body)
+                .await
+                .map_err(read_error)?;
+            if body.len() as u64 != length {
+                return Err(RobotError::CommandFailed(
+                    "Chrome DevTools returned a truncated HTTP body".into(),
+                ));
+            }
+        } else {
+            stream.read_to_end(&mut body).await.map_err(read_error)?;
+        }
+        Ok(body)
     }
 
     async fn targets(&self) -> Result<Vec<ChromeTarget>, RobotError> {
@@ -510,35 +538,7 @@ impl Robot for ChromeRobot {
 
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         let target = self.page(device_id).await?;
-        let expression = r#"Array.from(document.querySelectorAll('body *')).slice(0, 500).map((element) => {
-            const bounds = element.getBoundingClientRect();
-            const tag = element.tagName.toLowerCase();
-            const type = (element.getAttribute('type') || '').toLowerCase();
-            const role = (element.getAttribute('role') || '').toLowerCase();
-            let elementType = '';
-            if (role === 'checkbox' || type === 'checkbox') elementType = 'checkBox';
-            else if (role === 'switch') elementType = 'switch';
-            else if (role === 'radio' || type === 'radio') elementType = 'radio';
-            else if (role === 'slider' || type === 'range') elementType = 'slider';
-            else if (tag === 'textarea' || tag === 'input' || role === 'textbox' || role === 'searchbox') elementType = 'textField';
-            else if (tag === 'button' || role === 'button') elementType = 'button';
-            else if (tag === 'a' || role === 'link') elementType = 'link';
-            else if (tag === 'img' || role === 'img') elementType = 'image';
-            const selectable = type === 'checkbox' || type === 'radio' || role === 'checkbox' || role === 'radio' || role === 'switch';
-            return {
-              className: tag, resourceId: element.id || '',
-              text: (element.innerText || element.textContent || '').trim(),
-              contentDescription: element.getAttribute('aria-label') || element.getAttribute('title') || '',
-              value: typeof element.value === 'string' ? element.value : '',
-              elementType,
-              left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom,
-              clickable: typeof element.onclick === 'function' || ['a', 'button', 'input', 'select', 'textarea'].includes(tag),
-              enabled: !element.disabled,
-              focused: document.activeElement === element,
-              checked: selectable ? !!element.checked : null,
-              selected: element.getAttribute('aria-selected') === 'true' ? true : (element.getAttribute('aria-selected') === 'false' ? false : null)
-            };
-        })"#;
+        let expression = include_str!("dom-elements.js");
         let result = self
             .cdp(
                 &target,
@@ -579,7 +579,10 @@ impl Robot for ChromeRobot {
                 focused: value.get("focused").and_then(Value::as_bool),
                 checked: value.get("checked").and_then(Value::as_bool),
                 selected: value.get("selected").and_then(Value::as_bool),
-                value: value_string(value, "value"),
+                value: value
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
                 element_type: value
                     .get("elementType")
                     .and_then(Value::as_str)
@@ -592,6 +595,104 @@ impl Robot for ChromeRobot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn serve_http(response: Vec<u8>, keep_open: bool) -> (ChromeRobot, JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let robot = ChromeRobot::new(listener.local_addr().unwrap().to_string());
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = vec![];
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(stream.read_u8().await.unwrap());
+            }
+            // Fragment both headers and body to exercise TCP framing.
+            for chunk in response.chunks(7) {
+                stream.write_all(chunk).await.unwrap();
+                tokio::task::yield_now().await;
+            }
+            if keep_open {
+                std::future::pending::<()>().await;
+            }
+        });
+        (robot, task)
+    }
+
+    #[tokio::test]
+    async fn discovery_finishes_when_body_arrives_before_connection_closes() {
+        let body = br#"[{"id":"A1B2","type":"page","title":"fixture","url":"about:blank","webSocketDebuggerUrl":"ws://localhost/page/A1B2"}]"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncOnTeNt-LeNgTh: {}\r\n\r\n{}",
+            body.len(),
+            String::from_utf8_lossy(body)
+        );
+        let (robot, server) = serve_http(response.into_bytes(), true).await;
+        let result = tokio::time::timeout(Duration::from_secs(1), robot.list_devices()).await;
+        server.abort();
+        let devices = result.expect("discovery waited for EOF").unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].id, "chrome:A1B2");
+    }
+
+    #[tokio::test]
+    async fn http_rejects_truncated_body() {
+        let (robot, server) = serve_http(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\n[]".to_vec(),
+            false,
+        )
+        .await;
+        assert!(robot.http_get("/json/list").await.is_err());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn http_without_content_length_reads_until_close() {
+        let (robot, server) = serve_http(b"HTTP/1.0 200 OK\r\n\r\n[]".to_vec(), false).await;
+        assert_eq!(robot.http_get("/json/list").await.unwrap(), b"[]");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_elements_preserves_empty_field_value() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+        let body = json!([{"id":"A1B2","type":"page","webSocketDebuggerUrl":endpoint}]).to_string();
+        let (robot, http) = serve_http(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .into_bytes(),
+            false,
+        )
+        .await;
+        let ws = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let request: Value =
+                serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap())
+                    .unwrap();
+            assert_eq!(request["method"], "Runtime.evaluate");
+            socket
+                .send(Message::Text(
+                    json!({"id":request["id"],"result":{"result":{"value":[
+                        {"className":"input","value":"","elementType":"textField"},
+                        {"className":"input","value":"hello"},
+                        {"className":"div","value":null}
+                    ]}}})
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .unwrap();
+        });
+        let elements = robot.list_elements("chrome:A1B2").await.unwrap();
+        assert_eq!(elements[0].value.as_deref(), Some(""));
+        assert_eq!(elements[1].value.as_deref(), Some("hello"));
+        assert_eq!(elements[2].value, None);
+        assert_eq!(elements[0].resource_id, None);
+        ws.await.unwrap();
+        http.await.unwrap();
+    }
 
     #[test]
     fn chrome_target_becomes_a_device_id() {

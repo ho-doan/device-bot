@@ -1,5 +1,12 @@
 ## Unreleased
 
+## 0.1.6 — 2026-11-09
+
+* Finish Chrome target discovery after reading Content-Length bytes, recognize
+  Flutter semantics buttons as clickable, and preserve empty field values.
+* Resolve selector profile variables before YAML execution and poll until the
+  declared timeout instead of stopping after 12 attempts.
+
 * Remove the legacy root Flutter controller, its Windows Pigeon/C++ plugin,
   vision sidecar, tests, and obsolete editor configuration. Native platform
   drivers, the optional Flutter companion, and `packages/uia_windows` remain.

@@ -1,0 +1,21 @@
+# Template: adapt the Chrome target ID and labels to your notification test page.
+# The popup must be visible in the host accessibility tree; Chrome needs DevTools.
+version: 2
+name: chrome_windows_notifications
+steps:
+  - id: select_page
+    select_device:
+      id: "chrome:<target-id>"
+      platform: chrome
+  - id: request_notifications
+    tap_element:
+      label: Enable notifications
+  - id: allow_native_popup
+    platform: windows
+    tap_element:
+      label: Allow
+      timeout_ms: 10000
+  - id: verify_page
+    assert_element:
+      label: Notifications enabled
+      timeout_ms: 10000

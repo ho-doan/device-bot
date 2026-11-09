@@ -21,6 +21,8 @@ pub struct FlowDocument {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Step {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
     #[serde(default)]
     pub id: Option<String>,
     #[serde(flatten)]
@@ -432,7 +434,24 @@ fn expand(
         if step.action.len() != 1 {
             return Err(format!("{id}: exactly one action required"));
         }
+        let platform = step
+            .platform
+            .as_ref()
+            .map(|value| {
+                let resolved = resolve(&json!(value), vars)?;
+                let platform = resolved.as_str().ok_or("step platform must be a string")?;
+                if !["android", "ios", "macos", "windows", "chrome"].contains(&platform) {
+                    return Err(format!("{id}: unknown step platform {platform}"));
+                }
+                Ok(platform.to_owned())
+            })
+            .transpose()?;
         let (action, raw) = step.action.iter().next().unwrap();
+        if action == "select_device" && platform.is_some() {
+            return Err(format!(
+                "{id}: use select_device.platform for persistent device selection"
+            ));
+        }
         // Branch bodies are templates in the current recipe scope. Resolve each
         // leaf once during recursive expansion, never the already resolved data.
         let mut template = raw.clone();
@@ -468,7 +487,13 @@ fn expand(
                 local.extend(parameters.iter().map(|(k, v)| (k.clone(), v.clone())));
             }
             stack.push(name);
-            result.extend(expand(recipe, p, &local, stack, &format!("{id}."))?);
+            let mut expanded = expand(recipe, p, &local, stack, &format!("{id}."))?;
+            for child in &mut expanded {
+                if child.platform.is_none() {
+                    child.platform = platform.clone();
+                }
+            }
+            result.extend(expanded);
             stack.pop();
             continue;
         }
@@ -584,6 +609,7 @@ fn expand(
             }
         }
         result.push(Step {
+            platform,
             id: Some(id),
             action: BTreeMap::from([(action.clone(), args)]),
         });

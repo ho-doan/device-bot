@@ -48,6 +48,8 @@ pub struct FlowRunner {
     tools: BTreeMap<String, Value>,
     profile: Profile,
     device: Option<Value>,
+    step_device: Option<Value>,
+    recording_device: Option<String>,
     directory: PathBuf,
     values: BTreeMap<String, String>,
     secrets: Vec<String>,
@@ -67,6 +69,8 @@ impl FlowRunner {
             tools: BTreeMap::new(),
             profile: Profile::default(),
             device: None,
+            step_device: None,
+            recording_device: None,
             directory,
             values: BTreeMap::new(),
             secrets: Vec::new(),
@@ -205,9 +209,23 @@ impl FlowRunner {
     }
 
     fn preflight(&self, steps: &[Step]) -> Result<()> {
+        self.preflight_scoped(steps, false)
+    }
+
+    fn preflight_scoped(&self, steps: &[Step], inherited_platform: bool) -> Result<()> {
         for step in steps {
             let (action, args) = step.action.iter().next().ok_or("empty action")?;
             let mut calls = Vec::new();
+            let scoped = inherited_platform || step.platform.is_some();
+            if scoped && action == "select_device" {
+                return Err(
+                    "select_device cannot change the default device inside a platform-scoped step"
+                        .into(),
+                );
+            }
+            if step.platform.is_some() {
+                calls.push(("mobile_list_available_devices", json!({})));
+            }
             let d = json!({"deviceId":"<selected>"});
             match action.as_str() {
                 "select_device" => {
@@ -273,12 +291,14 @@ impl FlowRunner {
                     {
                         return Err("use dedicated recording steps so cleanup is tracked".into());
                     }
-                    calls.push((
-                        name,
-                        args.get("arguments")
-                            .cloned()
-                            .ok_or("call_tool.arguments missing")?,
-                    ));
+                    let mut arguments = args
+                        .get("arguments")
+                        .cloned()
+                        .ok_or("call_tool.arguments missing")?;
+                    if scoped {
+                        route_tool_arguments(&mut arguments, "<selected>")?;
+                    }
+                    calls.push((name, arguments));
                 }
                 "tap_element" | "focus_field" | "fill_field" | "assert_element"
                 | "assert_absent" | "assert_state" | "assert_value" | "assert_count"
@@ -335,9 +355,10 @@ impl FlowRunner {
                     }
                     for key in ["replacement", "verification"] {
                         if let Some(children) = args.get(key) {
-                            self.preflight(
+                            self.preflight_scoped(
                                 &serde_json::from_value::<Vec<Step>>(children.clone())
                                     .map_err(|e| e.to_string())?,
+                                scoped,
                             )?;
                         }
                     }
@@ -346,9 +367,10 @@ impl FlowRunner {
                     let s = schema::selector(&json!({"target":args["target"]}), &self.profile)?;
                     calls.push((QUERY, query_arguments(&s, "<selected>")));
                     for branch in ["then", "else"] {
-                        self.preflight(
+                        self.preflight_scoped(
                             &serde_json::from_value::<Vec<Step>>(args[branch].clone())
                                 .map_err(|e| e.to_string())?,
+                            scoped,
                         )?;
                     }
                 }
@@ -380,16 +402,25 @@ impl FlowRunner {
             for step in steps {
                 let (action, args) = step.action.iter().next().unwrap();
                 self.active_step = Some((step.id.clone().unwrap_or_default(), action.clone()));
+                let previous_device = self.step_device.clone();
                 let result = timeout(
                     Duration::from_millis(
                         args.get("timeout_ms")
                             .and_then(Value::as_u64)
                             .unwrap_or(120_000),
                     ),
-                    self.execute(action, args),
+                    async {
+                        if let Some(platform) = &step.platform {
+                            if self.client.is_some() {
+                                self.step_device = Some(self.device_for_platform(platform).await?);
+                            }
+                        }
+                        self.execute(action, args).await
+                    },
                 )
                 .await
                 .unwrap_or_else(|_| Err("step timeout".into()));
+                self.step_device = previous_device;
                 self.steps.push(StepReport {
                     id: step.id.clone().unwrap_or_default(),
                     action: action.clone(),
@@ -502,7 +533,9 @@ impl FlowRunner {
             }
             "call_tool" => {
                 let mut arguments = args["arguments"].clone();
-                if arguments.get("deviceId") == Some(&json!("<selected>")) {
+                if self.step_device.is_some() {
+                    route_tool_arguments(&mut arguments, self.device_id()?)?;
+                } else if arguments.get("deviceId") == Some(&json!("<selected>")) {
                     arguments["deviceId"] = json!(self.device_id()?);
                 }
                 self.call(required(args, "name")?, arguments).await?;
@@ -519,10 +552,19 @@ impl FlowRunner {
                     json!({"deviceId":self.device_id()?}),
                 )
                 .await?;
+                self.recording_device = Some(self.device_id()?.to_owned());
                 self.recording = true;
             }
             "stop_screen_recording" => {
                 if !self.visuals_blocked {
+                    if self.step_device.is_some()
+                        && self.recording_device.as_deref() != Some(self.device_id()?)
+                    {
+                        return Err(
+                            "stop_screen_recording platform does not match the recording device"
+                                .into(),
+                        );
+                    }
                     self.stop_recording().await?;
                 }
             }
@@ -944,10 +986,14 @@ impl FlowRunner {
             return Err("no active recording".into());
         }
         self.recording = false;
+        let recording_device = self
+            .recording_device
+            .take()
+            .ok_or("recording device missing")?;
         let result = self
             .call(
                 "mobile_stop_screen_recording",
-                json!({"deviceId":self.device_id()?}),
+                json!({"deviceId":recording_device}),
             )
             .await?;
         let path = result["content"]
@@ -978,9 +1024,42 @@ impl FlowRunner {
         Ok(())
     }
 
+    async fn device_for_platform(&mut self, platform: &str) -> Result<Value> {
+        // An explicitly selected tab/device disambiguates platforms with several targets.
+        if let Some(device) = self.step_device.as_ref().or(self.device.as_ref()) {
+            if device["platform"].as_str() == Some(platform) {
+                return Ok(device.clone());
+            }
+        }
+        if let Some(device) = &self.device {
+            if device["platform"].as_str() == Some(platform) {
+                return Ok(device.clone());
+            }
+        }
+        let result = self
+            .call("mobile_list_available_devices", json!({}))
+            .await?;
+        let devices = result
+            .pointer("/structuredContent/devices")
+            .and_then(Value::as_array)
+            .ok_or("MCP devices missing")?;
+        let matches = devices
+            .iter()
+            .filter(|d| d["platform"].as_str() == Some(platform))
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(format!(
+                "step platform {platform} matched {} devices; require exactly one (use select_device to disambiguate)",
+                matches.len()
+            ));
+        }
+        Ok(matches[0].clone())
+    }
+
     fn device_id(&self) -> Result<&str> {
-        self.device
+        self.step_device
             .as_ref()
+            .or(self.device.as_ref())
             .and_then(|d| d["id"].as_str())
             .ok_or("select a device before UI actions".into())
     }
@@ -1191,4 +1270,18 @@ fn collect_secrets(value: &Value, out: &mut Vec<String>) {
         }
         _ => {}
     }
+}
+
+// A scoped platform is authoritative; never silently call a tool on a different device.
+fn route_tool_arguments(arguments: &mut Value, device_id: &str) -> Result<()> {
+    let object = arguments
+        .as_object_mut()
+        .ok_or("call_tool.arguments must be a mapping")?;
+    if let Some(value) = object.get("deviceId") {
+        if value != "<selected>" && value != device_id {
+            return Err("call_tool.arguments.deviceId conflicts with step platform; use <selected> or omit deviceId".into());
+        }
+    }
+    object.insert("deviceId".into(), json!(device_id));
+    Ok(())
 }

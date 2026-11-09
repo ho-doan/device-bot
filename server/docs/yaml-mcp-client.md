@@ -94,6 +94,53 @@ Recipe and conditional branch parameters are resolved once; literal `${...}`
 inside environment-sourced data is preserved through nested branches.
 Recipes and `if_element` branches use the same primitives as scenarios.
 
+## Platform for one step
+
+An optional `platform` beside the action routes that step to `android`, `ios`,
+`macos`, `windows`, or `chrome`. Omitting it keeps the selected device (or the
+parent step's platform inside a branch/recipe). The override does not change
+`select_device` or the device used by subsequent steps.
+
+```yaml
+version: 2
+name: chrome_notification
+steps:
+  - select_device: {id: 'chrome:<target-id>'}
+  - tap_element: {label: Enable notifications}
+  - platform: macos
+    tap_element: {label: Allow}
+  - assert_element: {label: Notifications enabled}
+```
+
+For Chrome on Windows, use `platform: windows` on the popup step. Replace the
+example target ID and labels with those from your environment. Native browser
+popups must be exposed by macOS Accessibility or Windows UIA; this routing feature
+does not add them to the page DOM. Native input requires the host's existing
+permissions and an interactive desktop.
+
+Routing uses the same MCP session and advertised `mobile_*` tools, passing the
+chosen `deviceId` so the server dispatches to the appropriate driver. A matching
+explicitly selected device or parent scope is reused; otherwise the runner calls
+`mobile_list_available_devices` and requires exactly one device for the platform.
+Zero/multiple matches fail before the action. With multiple Chrome tabs, first
+use `select_device` with the exact `chrome:<target-id>`.
+
+`platform` also supports profile/recipe variables. A platform on `run` supplies
+the default for its expanded recipe steps; a platform on `if_element` covers the
+condition and its branch. Child steps may override it. Use `select_device` outside
+these scopes to change the persistent selection. `call_tool` still names the
+exact MCP tool; with a platform scope, omit `arguments.deviceId` or use
+`"<selected>"` to let routing supply it. A literal device ID is rejected during
+preflight to prevent conflicting routes. The tool must accept `deviceId`.
+
+Recording cleanup always uses the device that started recording, even after a
+platform override or an error. An explicitly scoped `stop_screen_recording` must
+match that recording device.
+
+See the Chrome + macOS and Chrome + Windows notification templates in
+[`../examples/chrome_macos_notifications.yaml`](../examples/chrome_macos_notifications.yaml)
+and [`../examples/chrome_windows_notifications.yaml`](../examples/chrome_windows_notifications.yaml).
+
 Selectors support exact case-insensitive native `label`/`labels`, MCP `filter`,
 `element_type`, `resource_id`, `class_contains`, `row_with`/`exclude_row_with`,
 and explicit `prefer_resource_id`. `largest` selects a geometry viewport.

@@ -113,7 +113,9 @@ steps:
 ```
 
 For Chrome on Windows, use `platform: windows` on the popup step. Replace the
-example target ID and labels with those from your environment. Native browser
+example target ID and labels with those from your environment. Chrome clicks
+activate the selected tab before dispatching input, so the next desktop step can
+read its native permission popup even if another app was in front. Native browser
 popups must be exposed by macOS Accessibility or Windows UIA; this routing feature
 does not add them to the page DOM. Native input requires the host's existing
 permissions and an interactive desktop.

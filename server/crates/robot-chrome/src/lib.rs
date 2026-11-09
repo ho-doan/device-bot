@@ -463,6 +463,9 @@ impl Robot for ChromeRobot {
 
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
         let target = self.page(device_id).await?;
+        // CDP can dispatch clicks into a background tab. Activate it first so
+        // native browser prompts are visible to the following desktop step.
+        self.cdp(&target, "Page.bringToFront", json!({})).await?;
         self.dispatch_mouse(&target, "mousePressed", point, Some("left"))
             .await?;
         self.dispatch_mouse(&target, "mouseReleased", point, Some("left"))
@@ -712,6 +715,84 @@ mod tests {
         assert_eq!(elements[0].resource_id, None);
         ws.await.unwrap();
         http.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tap_activates_target_before_mouse_input_and_propagates_activation_failure() {
+        for activation_fails in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+            let body =
+                json!([{"id":"A1B2","type":"page","webSocketDebuggerUrl":endpoint}]).to_string();
+            let (robot, http) = serve_http(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                )
+                .into_bytes(),
+                false,
+            )
+            .await;
+            let ws = tokio::spawn(async move {
+                let expected = if activation_fails {
+                    vec!["Page.bringToFront"]
+                } else {
+                    vec![
+                        "Page.bringToFront",
+                        "Input.dispatchMouseEvent",
+                        "Input.dispatchMouseEvent",
+                    ]
+                };
+                for (index, method) in expected.iter().enumerate() {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    let request: Value = serde_json::from_str(
+                        &socket.next().await.unwrap().unwrap().into_text().unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(request["method"], *method);
+                    if index > 0 {
+                        assert_eq!(
+                            request["params"]["type"],
+                            if index == 1 {
+                                "mousePressed"
+                            } else {
+                                "mouseReleased"
+                            }
+                        );
+                        assert_eq!(request["params"]["x"].as_f64(), Some(10.0));
+                        assert_eq!(request["params"]["y"].as_f64(), Some(20.0));
+                    }
+                    let response = if activation_fails {
+                        json!({"id":request["id"],"error":{"code":-32000,"message":"activation failed"}})
+                    } else {
+                        json!({"id":request["id"],"result":{}})
+                    };
+                    socket
+                        .send(Message::Text(response.to_string().into()))
+                        .await
+                        .unwrap();
+                }
+            });
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                robot.tap("chrome:A1B2", Point { x: 10.0, y: 20.0 }),
+            )
+            .await
+            .unwrap();
+            if activation_fails {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("activation failed")
+                );
+            } else {
+                result.unwrap();
+            }
+            ws.await.unwrap();
+            http.await.unwrap();
+        }
     }
 
     #[test]

@@ -4,6 +4,7 @@ members = [
     "crates/mcp-server",
     "crates/admin-api",
     "crates/robot-core",
+    "crates/robot-flutter-bridge",
     "crates/robot-android",
     "crates/robot-chrome",
     "crates/robot-ios-real",

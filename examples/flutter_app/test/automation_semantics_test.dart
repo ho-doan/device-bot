@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/main.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:uia_windows/src/widget_tree.dart';
+import 'package:device_bot_flutter/src/widget_tree.dart';
 
 void main() {
   for (final platform in [

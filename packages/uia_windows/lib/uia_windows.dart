@@ -1,4 +1,6 @@
-/// Temporary Flutter widget-tree discovery for device-bot's Windows robot.
+/// Compatibility API. Prefer package:device_bot_flutter/device_bot_flutter.dart.
 library;
-
-export 'src/bridge_stub.dart' if (dart.library.io) 'src/bridge.dart';
+import 'package:device_bot_flutter/device_bot_flutter.dart';
+export 'package:device_bot_flutter/device_bot_flutter.dart';
+@Deprecated('Use DeviceBotFlutter from device_bot_flutter')
+typedef UiaWindows = DeviceBotFlutter;

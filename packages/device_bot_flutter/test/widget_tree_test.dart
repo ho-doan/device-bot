@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:uia_windows/src/widget_tree.dart';
+import 'package:device_bot_flutter/src/widget_tree.dart';
 
 List<Map<String, Object?>> snapshot({
   Offset origin = Offset.zero,

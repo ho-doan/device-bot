@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:uia_windows/src/widget_actions.dart';
+import 'package:device_bot_flutter/src/widget_actions.dart';
 
 void main() {
   testWidgets(

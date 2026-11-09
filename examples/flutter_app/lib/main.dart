@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:uia_windows/uia_windows.dart';
+import 'package:device_bot_flutter/device_bot_flutter.dart';
 
 import 'screens/auth_screen.dart';
 import 'screens/workspace_screen.dart';
@@ -8,7 +8,7 @@ import 'session.dart';
 import 'theme.dart';
 
 Future<void> main() async {
-  await UiaWindows.start();
+  await DeviceBotFlutter.start();
   runApp(const OrbitApp());
 }
 

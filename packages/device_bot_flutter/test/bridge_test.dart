@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:uia_windows/src/bridge.dart';
+import 'package:device_bot_flutter/src/bridge.dart';
 
 void main() {
   test(

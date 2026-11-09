@@ -9,6 +9,7 @@ rust-version.workspace = true
 async-trait.workspace = true
 libc.workspace = true
 robot-core = { path = "../robot-core" }
+robot-flutter-bridge = { path = "../robot-flutter-bridge" }
 robot-ios-real = { path = "../robot-ios-real" }
 serde.workspace = true
 serde_json.workspace = true

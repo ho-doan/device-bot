@@ -10,6 +10,7 @@ async-trait.workspace = true
 axum.workspace = true
 base64 = "0.22.1"
 robot-core = { path = "../robot-core" }
+robot-flutter-bridge = { path = "../robot-flutter-bridge" }
 quick-xml = "0.39.1"
 serde.workspace = true
 serde_json.workspace = true

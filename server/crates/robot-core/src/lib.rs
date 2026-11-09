@@ -333,6 +333,11 @@ pub trait Robot: Send + Sync {
         )))
     }
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError>;
+    /// Optional Flutter discovery. Native queries remain independent, so a
+    /// successful or ambiguous native result never causes a bridge request.
+    async fn list_flutter_elements(&self, _device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        Ok(vec![])
+    }
     /// Lists elements whose visible accessibility fields contain `filter`.
     ///
     /// Drivers with native query support should override this so the platform can
@@ -570,6 +575,10 @@ impl Robot for RobotRegistry {
     }
     async fn list_elements(&self, id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.driver_for(id).await?.list_elements(id).await
+    }
+
+    async fn list_flutter_elements(&self, id: &str) -> Result<Vec<UiElement>, RobotError> {
+        self.driver_for(id).await?.list_flutter_elements(id).await
     }
 
     async fn list_elements_filtered(

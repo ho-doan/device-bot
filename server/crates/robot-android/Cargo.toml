@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 async-trait.workspace = true
 robot-core = { path = "../robot-core" }
+robot-flutter-bridge = { path = "../robot-flutter-bridge" }
 quick-xml = "0.39.1"
 serde_json.workspace = true
 tokio.workspace = true

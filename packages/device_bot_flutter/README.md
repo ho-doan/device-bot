@@ -29,6 +29,11 @@ and Semantics identifiers become resource IDs; widget types are included in
 className so `class_contains: GestureDetector` can locate an unlabeled control.
 No label is invented for an icon. Use a key, widget type, or row relationship;
 multiple matches still require a more specific selector.
+Text-field `suffixIcon`, `prefixIcon`, `suffix`, and `prefix` actions are exposed
+as independent controls, including custom GestureDetector/InkWell buttons.
+Supply a tooltip, semantic label, or stable key to locate a Clear action.
+Changes to this bridge require rebuilding the Flutter app; updating the global
+Device Bot CLI alone does not update the bridge embedded in an app.
 Password values are omitted, explicit empty values are preserved, and offstage,
 transparent, clipped, and center-occluded controls are excluded.
 

@@ -21,6 +21,9 @@ class WidgetTreeSnapshot {
         return;
       }
 
+      // Decoration actions have their own control scope. Export the first
+      // action, then suppress its nested gesture/semantic implementation nodes.
+      if (insideTextField && _isFieldAffix(element)) insideControl = false;
       final node = _describe(element, insideControl, insideTextField);
       if (node != null) {
         // Decorated fields include helper/error text and suffix buttons.
@@ -97,7 +100,8 @@ class WidgetTreeSnapshot {
       focused = widget.focusNode.hasFocus;
       value = widget.obscureText ? null : widget.controller.text;
       clickable = true;
-    } else if (widget is ButtonStyleButton) {
+    } else if (widget is ButtonStyleButton &&
+        !(insideControl && _hasAncestor<IconButton>(element))) {
       role = 'button';
       label = _widgetText(widget.child);
       enabled = widget.onPressed != null || widget.onLongPress != null;
@@ -284,6 +288,27 @@ class WidgetTreeSnapshot {
       return !found;
     });
     return found;
+  }
+
+  static bool _isFieldAffix(Element element) {
+    var affix = false;
+    element.visitAncestorElements((ancestor) {
+      final widget = ancestor.widget;
+      if (widget is TextField) {
+        final decoration = widget.decoration;
+        affix =
+            decoration != null &&
+            [
+              decoration.prefixIcon,
+              decoration.suffixIcon,
+              decoration.prefix,
+              decoration.suffix,
+            ].any((widget) => identical(widget, element.widget));
+        return false;
+      }
+      return true;
+    });
+    return affix;
   }
 
   static bool _isFieldMessage(Element element, Text text) {

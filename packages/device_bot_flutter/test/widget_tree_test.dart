@@ -9,6 +9,92 @@ List<Map<String, Object?>> snapshot({
 }) => WidgetTreeSnapshot.capture(screenOrigin: origin, pixelRatio: ratio);
 
 void main() {
+  for (final kind in [
+    'gesture',
+    'unlabeledGesture',
+    'inkwell',
+    'semantics',
+    'iconButton',
+  ]) {
+    testWidgets('exports and taps $kind Clear action in TextField suffixIcon', (
+      tester,
+    ) async {
+      final controller = TextEditingController(text: 'search query');
+      addTearDown(controller.dispose);
+      const key = ValueKey('clear-search');
+      const icon = Icon(Icons.clear);
+      final Widget suffix = switch (kind) {
+        'gesture' => Tooltip(
+          message: 'Clear',
+          child: GestureDetector(
+            key: key,
+            onTap: controller.clear,
+            child: const SizedBox(width: 48, height: 48, child: icon),
+          ),
+        ),
+        'unlabeledGesture' => GestureDetector(
+          key: key,
+          onTap: controller.clear,
+          child: const SizedBox(width: 48, height: 48, child: icon),
+        ),
+        'inkwell' => Tooltip(
+          message: 'Clear',
+          child: InkWell(key: key, onTap: controller.clear, child: icon),
+        ),
+        'semantics' => Semantics(
+          key: key,
+          label: 'Clear',
+          button: true,
+          child: GestureDetector(onTap: controller.clear, child: icon),
+        ),
+        _ => IconButton(
+          key: key,
+          tooltip: 'Clear',
+          onPressed: controller.clear,
+          icon: icon,
+        ),
+      };
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TextField(
+              controller: controller,
+              decoration: InputDecoration(
+                labelText: 'Search',
+                suffixIcon: suffix,
+              ),
+            ),
+          ),
+        ),
+      );
+      final nodes = snapshot();
+      expect(
+        nodes.where((node) => node['className'] == 'textField'),
+        hasLength(1),
+      );
+      expect(
+        nodes.where((node) => node['className'] == 'button'),
+        hasLength(1),
+      );
+      final clear = nodes
+          .where((node) => node['resourceId'] == 'clear-search')
+          .toList();
+      expect(clear, hasLength(1));
+      final node = clear.single;
+      expect(node['className'], 'button');
+      expect(node['text'], kind == 'unlabeledGesture' ? isNull : 'Clear');
+      expect(node['clickable'], true);
+      await tester.tapAt(
+        Offset(
+          ((node['left'] as int) + (node['right'] as int)) / 2,
+          ((node['top'] as int) + (node['bottom'] as int)) / 2,
+        ),
+      );
+      await tester.pump();
+      expect(controller.text, isEmpty);
+    });
+  }
+
   testWidgets('unlabeled icon gesture retains its key and widget type', (
     tester,
   ) async {

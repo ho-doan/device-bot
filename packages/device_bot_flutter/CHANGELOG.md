@@ -1,3 +1,9 @@
+## Unreleased
+
+* Export custom suffix/prefix actions in decorated text fields, including
+  GestureDetector, InkWell, and semantic buttons, without duplicating nested
+  gesture nodes or changing editor hit bounds.
+
 ## 1.1.0
 
 * Rename to device_bot_flutter and retain the uia_windows compatibility export.

@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use device_mcp_protocol::{ToolDefinition, ToolResult};
-use robot_core::{ElementQuery, ElementType, Robot, prepare_elements};
+use robot_core::{ElementQuery, ElementType, Robot, apply_element_query, prepare_elements};
 use serde_json::{Value, json};
 
 use super::arguments::{optional_u64, required_string};
@@ -12,7 +12,7 @@ pub(super) fn definition() -> ToolDefinition {
     ToolDefinition {
         name: LIST_ELEMENTS_NAME.into(),
         title: Some("List accessibility elements on screen".into()),
-        description: "Return normalized accessibility elements. Optional `filter` and `elementType` are combined with AND and applied before `maxResults`. `elementType` is one of textField, button, link, staticText, checkBox, switch, image, radio, or slider. textField includes password, search, and multiline editors. An unknown type is an error, not an empty element list. `focused`, `checked`, and `selected` are omitted when the driver cannot observe them; omission means unknown, not false. `value` is the native editor value when the platform exposes one.".into(),
+        description: "Return normalized accessibility elements. source=auto queries native first and uses an opt-in Flutter bridge only when native has no matches. source=native or flutter selects one tree; native errors and ambiguous matches are never hidden. Optional `filter` and `elementType` are combined with AND and applied before `maxResults`. `elementType` is one of textField, button, link, staticText, checkBox, switch, image, radio, or slider. textField includes password, search, and multiline editors. An unknown type is an error, not an empty element list. `focused`, `checked`, and `selected` are omitted when the driver cannot observe them; omission means unknown, not false. `value` is the native editor value when the platform exposes one.".into(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -22,6 +22,7 @@ pub(super) fn definition() -> ToolDefinition {
                     "type": "string",
                     "enum": ["textField", "button", "link", "staticText", "checkBox", "switch", "image", "radio", "slider"]
                 },
+                "source": { "type": "string", "enum": ["auto", "native", "flutter"], "default": "auto" },
                 "maxResults": { "type": "integer", "minimum": 1, "maximum": 100 },
                 "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 60000 }
             },
@@ -66,14 +67,33 @@ pub(super) async fn list_elements(robot: &Arc<dyn Robot>, arguments: &Value) -> 
         Ok(None) => None,
         Err(error) => return error,
     };
-    let list = robot.list_elements_query(
-        &device_id,
-        ElementQuery {
-            filter,
-            element_type,
-            max_results,
-        },
-    );
+    let source = arguments
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or("auto");
+    if !["auto", "native", "flutter"].contains(&source)
+        || arguments
+            .get("source")
+            .is_some_and(|value| !value.is_string())
+    {
+        return ToolResult::execution_error("source must be auto, native, or flutter");
+    }
+    let query = ElementQuery {
+        filter,
+        element_type,
+        max_results,
+    };
+    let list = async {
+        if source != "flutter" {
+            let elements = robot.list_elements_query(&device_id, query.clone()).await?;
+            if source == "native" || !elements.is_empty() {
+                return Ok::<_, robot_core::RobotError>((elements, "native"));
+            }
+        }
+        let mut elements = robot.list_flutter_elements(&device_id).await?;
+        prepare_elements(&mut elements);
+        Ok((apply_element_query(elements, &query), "flutter"))
+    };
     let result = match timeout {
         Some(timeout) => match tokio::time::timeout(timeout, list).await {
             Ok(result) => result,
@@ -87,9 +107,9 @@ pub(super) async fn list_elements(robot: &Arc<dyn Robot>, arguments: &Value) -> 
         None => list.await,
     };
     match result {
-        Ok(mut elements) => {
+        Ok((mut elements, source)) => {
             prepare_elements(&mut elements);
-            ToolResult::structured(json!({ "elements": elements }))
+            ToolResult::structured(json!({ "elements": elements, "source": source }))
         }
         Err(error) => ToolResult::execution_error(error.to_string()),
     }

@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 /// Captures the live Element tree without depending on debug-only APIs or UIA.
-/// Coordinates are physical desktop pixels, matching the Windows robot input.
+/// Coordinates use the platform driver units: physical pixels on Windows/Android,
+/// desktop points on macOS, UIKit points on iOS, and CSS pixels on web.
 class WidgetTreeSnapshot {
   static List<Map<String, Object?>> capture({
     required Offset screenOrigin,
@@ -39,6 +40,7 @@ class WidgetTreeSnapshot {
           );
           nodes.add({
             ...node,
+            'widgetType': widget.runtimeType.toString(),
             'resourceId': _identifier(element),
             'left': rect.left.round(),
             'top': rect.top.round(),
@@ -360,7 +362,14 @@ class WidgetTreeSnapshot {
   static String? _descendantText(Element element) {
     final labels = <String>[];
     void visit(Element child) {
-      final text = _widgetText(child.widget);
+      // Icon renders a private font glyph as RichText. It is not a label.
+      final widget = child.widget;
+      if (widget is Icon) {
+        final label = widget.semanticLabel;
+        if (label != null && label.isNotEmpty) labels.add(label);
+        return;
+      }
+      final text = _widgetText(widget);
       if (text != null) {
         labels.add(text);
       } else {

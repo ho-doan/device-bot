@@ -3,7 +3,9 @@
 
 use std::time::Duration;
 
-use robot_core::{RobotError, UiElement};
+use robot_core::RobotError;
+#[cfg(test)]
+use robot_core::UiElement;
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -14,16 +16,6 @@ const MAX_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
 
 pub(super) fn directory() -> std::path::PathBuf {
     std::env::temp_dir().join("device-bot-flutter")
-}
-
-pub(super) async fn elements(process_id: u32) -> Option<Vec<UiElement>> {
-    tokio::time::timeout(Duration::from_secs(1), async {
-        let manifest = read_manifest(process_id).await?;
-        query(&manifest, process_id).await
-    })
-    .await
-    .ok()
-    .flatten()
 }
 
 async fn read_manifest(process_id: u32) -> Option<Value> {
@@ -64,6 +56,7 @@ pub(super) async fn action(process_id: u32, command: Value) -> Result<bool, Robo
     Ok(true)
 }
 
+#[cfg(test)]
 async fn query(manifest: &Value, process_id: u32) -> Option<Vec<UiElement>> {
     let response = request(manifest, process_id, json!({})).await?;
     if !response.get("elements")?.is_array() {

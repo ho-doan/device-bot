@@ -5,7 +5,7 @@ Pod::Spec.new do |s|
   s.description = s.summary
   s.homepage = 'https://github.com/ho-doan/device-bot'
   s.license = { :type => 'MIT' }
-  s.author = { 'Device Bot' => 'device-bot@example.invalid' }
+  s.author = 'Device Bot contributors'
   s.source = { :path => '.' }
   s.source_files = 'Classes/**/*'
   s.dependency 'FlutterMacOS'

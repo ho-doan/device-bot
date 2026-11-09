@@ -86,6 +86,7 @@ unsafe extern "C" {
     fn AXIsProcessTrusted() -> bool;
     fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
     fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
+    fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> i32;
     fn AXUIElementCopyAttributeValue(
         element: AXUIElementRef,
         attribute: CFStringRef,
@@ -838,7 +839,7 @@ impl MacosRobot {
         #[cfg(target_os = "macos")]
         {
             let application = self.active_application.lock().await.clone();
-            return native_accessibility_tap(point, application.as_deref());
+            native_accessibility_tap(point, application.as_deref())
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -1206,6 +1207,30 @@ impl Robot for MacosRobot {
         Err(RobotError::Unsupported(
             "app removal is not supported by the macOS robot".into(),
         ))
+    }
+
+    async fn list_flutter_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        self.require_device(device_id)?;
+        if let Some(elements) = robot_flutter_bridge::configured(device_id).await {
+            return Ok(elements);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let pid = {
+                let application = native_frontmost_application(None)?;
+                let mut pid: i32 = 0;
+                let status = unsafe { AXUIElementGetPid(application.0, &mut pid) };
+                if status != 0 || pid <= 0 {
+                    return Ok(vec![]);
+                }
+                pid as u32
+            };
+            return Ok(robot_flutter_bridge::for_process(pid)
+                .await
+                .unwrap_or_default());
+        }
+        #[cfg(not(target_os = "macos"))]
+        Ok(vec![])
     }
 
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {

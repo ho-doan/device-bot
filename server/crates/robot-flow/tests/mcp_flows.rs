@@ -39,6 +39,7 @@ struct State {
     queries: VecDeque<Value>,
     fail: Option<String>,
     schemas: Option<Vec<Value>>,
+    source_selection: bool,
 }
 struct Fake(Arc<Mutex<State>>);
 #[async_trait]
@@ -49,7 +50,7 @@ impl Mcp for Fake {
         match method {
             "initialize" => Ok(json!({"protocolVersion":"2025-11-25"})),
             "tools/list" => Ok(
-                json!({"tools":s.schemas.clone().unwrap_or_else(||["mobile_list_available_devices","mobile_launch_app","mobile_list_elements_on_screen","mobile_click_on_screen_at_coordinates","mobile_swipe_on_screen","mobile_type_keys","mobile_execute_ui_actions","mobile_press_ime_action","mobile_start_screen_recording","mobile_stop_screen_recording","mobile_take_screenshot"].iter().map(|n|json!({"name":n,"inputSchema":{}})).collect())}),
+                json!({"tools":s.schemas.clone().unwrap_or_else(||["mobile_list_available_devices","mobile_launch_app","mobile_list_elements_on_screen","mobile_click_on_screen_at_coordinates","mobile_swipe_on_screen","mobile_type_keys","mobile_execute_ui_actions","mobile_press_ime_action","mobile_start_screen_recording","mobile_stop_screen_recording","mobile_take_screenshot"].iter().map(|n|json!({"name":n,"inputSchema":if s.source_selection && *n == "mobile_list_elements_on_screen" {json!({"properties":{"source":{"enum":["auto","native","flutter"]}}})} else {json!({})}})).collect())}),
             ),
             "tools/call" => {
                 let name = params["name"].as_str().unwrap();
@@ -1053,4 +1054,74 @@ async fn viewport_search_reaches_above_its_starting_position() {
     )
     .await;
     assert_eq!(report.status, "PASS", "{:?}", report.error);
+}
+
+#[tokio::test]
+async fn missing_native_id_uses_flutter_after_applying_the_full_selector() {
+    let native = node("");
+    let mut flutter = node("");
+    flutter["resourceId"] = json!("clear-search");
+    flutter["className"] = json!("button GestureDetector");
+    let state = Arc::new(Mutex::new(State {
+        source_selection: true,
+        queries: VecDeque::from([json!([native]), json!([flutter])]),
+        ..State::default()
+    }));
+    let report = run(
+        &flow("  - tap_element: {resource_id: clear-search, class_contains: GestureDetector}"),
+        &Profile::default(),
+        state.clone(),
+    )
+    .await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    let state = state.lock().unwrap();
+    let sources: Vec<_> = state
+        .calls
+        .iter()
+        .filter(|call| call["params"]["name"] == "mobile_list_elements_on_screen")
+        .map(|call| call["params"]["arguments"]["source"].clone())
+        .collect();
+    assert_eq!(sources, [json!("native"), json!("flutter")]);
+    assert!(
+        state
+            .calls
+            .iter()
+            .any(|call| call["params"]["name"] == "mobile_click_on_screen_at_coordinates")
+    );
+}
+
+#[tokio::test]
+async fn valid_or_ambiguous_native_selector_never_queries_flutter() {
+    for count in [1, 2] {
+        let state = Arc::new(Mutex::new(State {
+            source_selection: true,
+            queries: VecDeque::from([json!(vec![node("Clear"); count])]),
+            ..State::default()
+        }));
+        let report = run(
+            &flow("  - tap_element: {label: Clear}"),
+            &Profile::default(),
+            state.clone(),
+        )
+        .await;
+        assert_eq!(report.status, if count == 1 { "PASS" } else { "FAIL" });
+        if count == 2 {
+            assert!(report.error.unwrap().contains("ambiguous"));
+        }
+        let state = state.lock().unwrap();
+        assert_eq!(
+            state
+                .calls
+                .iter()
+                .filter(|call| call["params"]["name"] == "mobile_list_elements_on_screen")
+                .count(),
+            1
+        );
+        assert!(
+            !state
+                .calls
+                .iter()
+                .any(|call| call["params"]["arguments"]["source"] == "flutter")
+        );
+    }
 }

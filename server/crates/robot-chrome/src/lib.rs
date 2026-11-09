@@ -536,6 +536,26 @@ impl Robot for ChromeRobot {
         ))
     }
 
+    async fn list_flutter_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        let target = self.page(device_id).await?;
+        let result = self.cdp(&target, "Runtime.evaluate", json!({
+            "expression": "typeof globalThis.__deviceBotFlutterSnapshot === 'function' ? globalThis.__deviceBotFlutterSnapshot() : null",
+            "awaitPromise": true, "returnByValue": true,
+        })).await?;
+        let Some(snapshot) = result.pointer("/result/value").and_then(Value::as_str) else {
+            return Ok(vec![]);
+        };
+        let snapshot: Value = serde_json::from_str(snapshot)
+            .map_err(|_| RobotError::CommandFailed("Invalid Flutter web snapshot".into()))?;
+        if snapshot["version"] != 1 {
+            return Err(RobotError::CommandFailed(
+                "Unsupported Flutter web bridge version".into(),
+            ));
+        }
+        robot_flutter_bridge::parse_elements(&snapshot["elements"])
+            .ok_or_else(|| RobotError::CommandFailed("Invalid Flutter web elements".into()))
+    }
+
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         let target = self.page(device_id).await?;
         let expression = include_str!("dom-elements.js");

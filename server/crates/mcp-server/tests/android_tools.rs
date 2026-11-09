@@ -135,7 +135,22 @@ impl Robot for RecordingRobot {
         Ok(())
     }
 
-    async fn list_elements(&self, _device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+    async fn list_flutter_elements(&self, _device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        self.actions
+            .lock()
+            .unwrap()
+            .push("flutter-discovery".into());
+        let mut node = self.list_elements("emulator-5554").await?.remove(0);
+        node.resource_id = Some("flutter-only-key".into());
+        node.text = Some("Flutter clear".into());
+        node.value = Some(String::new());
+        Ok(vec![node])
+    }
+
+    async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        if device_id == "native-error" {
+            return Err(RobotError::CommandFailed("native discovery failed".into()));
+        }
         Ok(vec![
             UiElement {
                 class_name: "android.widget.Button".into(),
@@ -624,4 +639,69 @@ async fn invalid_tool_arguments_are_tool_execution_errors() {
         result["result"]["content"][0]["text"],
         "Missing or invalid argument: deviceId"
     );
+}
+
+#[tokio::test]
+async fn flutter_discovery_only_runs_for_missing_native_matches() {
+    let robot = Arc::new(RecordingRobot::default());
+    let mut server = Server::new(robot.clone());
+    ready(&mut server).await;
+    for (index, (arguments, source, flutter_calls, count)) in [
+        (
+            json!({"deviceId":"emulator-5554","filter":"Submit"}),
+            "native",
+            0,
+            1,
+        ),
+        // All native nodes are returned, so ambiguity remains the caller's decision.
+        (json!({"deviceId":"emulator-5554"}), "native", 0, 3),
+        (
+            json!({"deviceId":"emulator-5554","filter":"Flutter clear"}),
+            "flutter",
+            1,
+            1,
+        ),
+        (
+            json!({"deviceId":"emulator-5554","filter":"Flutter clear","source":"native"}),
+            "native",
+            1,
+            0,
+        ),
+        (
+            json!({"deviceId":"emulator-5554","source":"flutter"}),
+            "flutter",
+            2,
+            1,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let response = server
+            .handle(request(
+                100 + index as u64,
+                "tools/call",
+                json!({
+                    "name":"mobile_list_elements_on_screen", "arguments": arguments,
+                }),
+            ))
+            .await
+            .unwrap();
+        let result = &response["result"]["structuredContent"];
+        assert_eq!(result["source"], source);
+        assert_eq!(result["elements"].as_array().unwrap().len(), count);
+        assert_eq!(robot.actions.lock().unwrap().len(), flutter_calls);
+    }
+    let response = server
+        .handle(request(
+            200,
+            "tools/call",
+            json!({
+                "name":"mobile_list_elements_on_screen", "arguments":{"deviceId":"native-error"},
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response["result"]["isError"], true);
+    assert_eq!(robot.actions.lock().unwrap().len(), 2);
 }

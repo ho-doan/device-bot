@@ -93,4 +93,53 @@ void main() {
       expect(await bridge.manifest.exists(), false);
     },
   );
+  test('configured mobile port and token serve a discovery snapshot', () async {
+    const token = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    final directory = await Directory.systemTemp.createTemp(
+      'device-bot-mobile-',
+    );
+    final reservation = await ServerSocket.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+    );
+    final port = reservation.port;
+    await reservation.close();
+    final bridge = WidgetTreeBridge(
+      directory: directory,
+      port: port,
+      token: token,
+      snapshot: () => [
+        {'className': 'textField', 'value': ''},
+      ],
+    );
+    addTearDown(() async {
+      await bridge.stop();
+      await directory.delete(recursive: true);
+    });
+    await bridge.start();
+    final manifest = jsonDecode(await bridge.manifest.readAsString()) as Map;
+    expect(manifest['port'], port);
+    expect(manifest['token'], token);
+    final socket = await Socket.connect(InternetAddress.loopbackIPv4, port);
+    addTearDown(socket.destroy);
+    socket.writeln(jsonEncode({'version': 1, 'token': token}));
+    await socket.flush();
+    final response =
+        jsonDecode(
+              await socket
+                  .cast<List<int>>()
+                  .transform(utf8.decoder)
+                  .transform(const LineSplitter())
+                  .first,
+            )
+            as Map;
+    expect(response['elements'], [
+      {'className': 'textField', 'value': ''},
+    ]);
+  });
+
+  test('short configured token is rejected before binding', () async {
+    final bridge = WidgetTreeBridge(token: 'short', snapshot: () => []);
+    await expectLater(bridge.start(), throwsArgumentError);
+  });
 }

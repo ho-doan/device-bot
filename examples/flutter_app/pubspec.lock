@@ -49,6 +49,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.9"
+  device_bot_flutter:
+    dependency: "direct main"
+    description:
+      path: "../../packages/device_bot_flutter"
+      relative: true
+    source: path
+    version: "1.1.0"
   fake_async:
     dependency: transitive
     description:
@@ -268,13 +275,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.9"
-  uia_windows:
-    dependency: "direct main"
-    description:
-      path: "../../packages/uia_windows"
-      relative: true
-    source: path
-    version: "1.0.0"
   vector_math:
     dependency: transitive
     description:

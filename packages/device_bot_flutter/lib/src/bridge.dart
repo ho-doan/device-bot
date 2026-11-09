@@ -23,15 +23,14 @@ class DeviceBotFlutter {
   static Future<void> _start({int? port, String? token}) async {
     final mobile = Platform.isAndroid || Platform.isIOS;
     const configuredToken = String.fromEnvironment('DEVICE_BOT_FLUTTER_TOKEN');
-    final bridgeToken = token ?? (configuredToken.isEmpty ? null : configuredToken);
-    if (mobile && bridgeToken == null) {
-      throw ArgumentError('Mobile discovery requires a token of 32..128 characters');
-    }
+    final bridgeToken =
+        token ?? (configuredToken.isEmpty ? null : configuredToken);
     Future<Offset> origin() async {
       if (Platform.isWindows) return flutterScreenOrigin();
       if (Platform.isMacOS) {
-        final point = await const MethodChannel('device_bot_flutter/geometry')
-            .invokeListMethod<num>('screenOrigin');
+        final point = await const MethodChannel(
+          'device_bot_flutter/geometry',
+        ).invokeListMethod<num>('screenOrigin');
         if (point == null || point.length != 2) {
           throw StateError('Flutter macOS view origin unavailable');
         }
@@ -39,10 +38,16 @@ class DeviceBotFlutter {
       }
       return Offset.zero;
     }
+
     final bridge = WidgetTreeBridge(
       port: port ?? (mobile ? 39787 : 0),
       token: bridgeToken,
       action: (request) async {
+        if (!Platform.isWindows) {
+          throw UnsupportedError(
+            'Widget actions are Windows-only; use native input',
+          );
+        }
         await WidgetsBinding.instance.endOfFrame.timeout(
           const Duration(milliseconds: 800),
         );
@@ -97,10 +102,15 @@ class DeviceBotFlutter {
 
 /// Private protocol implementation; separated from Win32 for transport tests.
 class WidgetTreeBridge {
-  WidgetTreeBridge({required this.snapshot, this.action, Directory? directory, this.port = 0, this.token})
-    : directory =
-          directory ??
-          Directory('${Directory.systemTemp.path}/device-bot-flutter');
+  WidgetTreeBridge({
+    required this.snapshot,
+    this.action,
+    Directory? directory,
+    this.port = 0,
+    this.token,
+  }) : directory =
+           directory ??
+           Directory('${Directory.systemTemp.path}/device-bot-flutter');
 
   final FutureOr<List<Map<String, Object?>>> Function() snapshot;
   final FutureOr<void> Function(Map<String, dynamic>)? action;
@@ -119,7 +129,9 @@ class WidgetTreeBridge {
     if (token != null && (token!.length < 32 || token!.length > 128)) {
       throw ArgumentError('Bridge token must contain 32..128 characters');
     }
-    _token = token ?? base64Url.encode(List.generate(32, (_) => random.nextInt(256)));
+    _token =
+        token ??
+        base64Url.encode(List.generate(32, (_) => random.nextInt(256)));
     final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
     _server = server;
     server.listen((socket) => unawaited(_handle(socket)));

@@ -437,10 +437,12 @@ operating systems. `mobile_launch_app` opens an installed native application;
 Windows also supports drag gestures. macOS requires Accessibility permission
 for pointer/keyboard input. Neither desktop driver currently installs apps.
 Windows also lacks recording and the planned OmniParser coordinate fallback.
-For Flutter Windows apps, call `await UiaWindows.start()` from
-[`packages/uia_windows`](../packages/uia_windows/README.md) before `runApp`.
-The Windows robot automatically prefers that process's live widget tree and
-falls back to native UIA if discovery is unavailable. Configured IME actions
+For Flutter Windows apps, call `await DeviceBotFlutter.start()` from
+[`packages/device_bot_flutter`](../packages/device_bot_flutter/README.md) before `runApp`.
+Native accessibility is queried first. The Flutter widget tree is consulted
+only when the selector has no native matches; ambiguity and native errors remain
+visible. The bridge also supports macOS, Android/iOS device endpoints, and web;
+see the package guide for platform setup. Configured IME actions
 and vertical touch swipes are available through the Flutter bridge. Literal
 text uses Win32 Unicode input, and the target foreground PID is verified before
 input. The sample in

@@ -458,6 +458,12 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
         Ok(())
     }
 
+    async fn list_flutter_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        Ok(robot_flutter_bridge::configured(device_id)
+            .await
+            .unwrap_or_default())
+    }
+
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         ensure_device_id(device_id)?;
         let sequence = TREE_DUMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -1000,10 +1006,11 @@ mod tests {
             .press_ime_action("emulator-5554", ImeAction::Next)
             .await
             .unwrap();
-        let calls = robot.runner.calls.lock().unwrap();
-        assert_eq!(calls[0].1[2..], ["shell", "dumpsys", "input_method"]);
-        assert_eq!(calls[1].1[2..], ["shell", "input", "keyevent", "66"]);
-        drop(calls);
+        {
+            let calls = robot.runner.calls.lock().unwrap();
+            assert_eq!(calls[0].1[2..], ["shell", "dumpsys", "input_method"]);
+            assert_eq!(calls[1].1[2..], ["shell", "input", "keyevent", "66"]);
+        }
 
         let mismatch = FakeRunner::new([successful(
             "mServedView=android.widget.EditText\nimeOptions=5\n",

@@ -356,6 +356,12 @@ impl<R: CommandRunner> Robot for IosRealRobot<R> {
         ))
     }
 
+    async fn list_flutter_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        Ok(robot_flutter_bridge::configured(device_id)
+            .await
+            .unwrap_or_default())
+    }
+
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         let output = self
             .go_ios(Self::device_args(&["ui", "source"], device_id)?)

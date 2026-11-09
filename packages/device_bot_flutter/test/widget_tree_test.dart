@@ -9,6 +9,31 @@ List<Map<String, Object?>> snapshot({
 }) => WidgetTreeSnapshot.capture(screenOrigin: origin, pixelRatio: ratio);
 
 void main() {
+  testWidgets('unlabeled icon gesture retains its key and widget type', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: GestureDetector(
+              key: const ValueKey('clear-search'),
+              onTap: () {},
+              child: const Icon(Icons.cancel),
+            ),
+          ),
+        ),
+      ),
+    );
+    final node = snapshot().singleWhere(
+      (node) => node['resourceId'] == 'clear-search',
+    );
+    expect(node['className'], 'button');
+    expect(node['widgetType'], 'GestureDetector');
+    expect(node['clickable'], true);
+    expect(node['text'], isNull);
+  });
+
   testWidgets(
     'decorated editor bounds support focus and full mouse selection after validation',
     (tester) async {

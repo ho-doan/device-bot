@@ -81,7 +81,7 @@ Dependencies: Bash, jq, base64 and the platform CLI (`adb`, `xcrun`, or Windows 
 ## Windows through Git Bash
 
 The same `it-01.sh` through `it-09.sh` run on Windows with Git Bash. Build the
-current MCP server and the Windows sample first; the sample's `UiaWindows.start()`
+current MCP server and the Windows sample first; the sample's `DeviceBotFlutter.start()`
 provides its widget tree, configured IME actions, and Flutter touch swipes.
 
 ```sh

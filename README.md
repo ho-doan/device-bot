@@ -40,7 +40,7 @@ failed steps, and evidence downloads.
 | --- | --- |
 | `server/crates/` | Native MCP server, platform drivers, YAML runner, report service |
 | `server/flutter_app/` | Optional Flutter MCP client for manual control and flow authoring |
-| `packages/uia_windows/` | Flutter widget-tree bridge used by the native Windows driver |
+| `packages/device_bot_flutter/` | Optional Flutter discovery fallback for native drivers and web |
 | `examples/flutter_app/` | Orbit fixture app, integration tests, and automation scenarios |
 | `scripts/` | Native release packaging and installers |
 
@@ -60,7 +60,7 @@ flowchart TD
     registry --> windows["robot-windows"]
     windows -->|"Launch, tap, text, horizontal drag, screenshot"| native["Native Windows input and desktop capture"]
     windows -->|"Element discovery fallback"| uia["Windows UI Automation"]
-    windows <-->|"PID-scoped loopback TCP"| flutter["Flutter target app: packages/uia_windows"]
+    windows <-->|"PID-scoped loopback TCP"| flutter["Flutter target app: packages/device_bot_flutter"]
 ```
 
 The Rust server owns sessions and tool dispatch. `RobotRegistry` routes
@@ -69,9 +69,9 @@ to the YAML runner or MCP client. Driver ownership and dependency rules are
 documented in [architecture.md](server/docs/architecture.md).
 
 On Windows, `mobile_launch_app` records the target PID. A Flutter target can
-call `await UiaWindows.start()` to expose its widget tree through
-[`packages/uia_windows`](packages/uia_windows/README.md). The native driver
-prefers that process's bridge and falls back to Windows UIA. The bridge also
+call `await DeviceBotFlutter.start()` to expose its widget tree through
+[`packages/device_bot_flutter`](packages/device_bot_flutter/README.md). The native driver
+queries native accessibility first and uses that process's bridge only when no elements match. The bridge also
 supports configured IME actions and vertical touch swipes; desktop input and
 capture remain in `robot-windows`.
 
@@ -92,7 +92,7 @@ python3 scripts/test_package_release.py
 Run Flutter checks from the package being tested:
 
 ```sh
-cd packages/uia_windows
+cd packages/device_bot_flutter
 flutter pub get
 flutter analyze --no-pub
 flutter test --no-pub

@@ -786,9 +786,36 @@ impl FlowRunner {
         s: &'a Selector,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<Value>>> + Send + 'a>> {
         Box::pin(async move {
-            let result = self
-                .call(QUERY, query_arguments(s, self.device_id()?))
-                .await?;
+            let supports_source = self
+                .tools
+                .get(QUERY)
+                .and_then(|schema| schema.pointer("/properties/source/enum"))
+                .and_then(Value::as_array)
+                .is_some_and(|values| {
+                    values.contains(&json!("native")) && values.contains(&json!("flutter"))
+                });
+            if !supports_source {
+                return self.query_source(s, None).await;
+            }
+            let native = self.query_source(s, Some("native")).await?;
+            if !native.is_empty() {
+                return Ok(native);
+            }
+            self.query_source(s, Some("flutter")).await
+        })
+    }
+
+    fn query_source<'a>(
+        &'a mut self,
+        s: &'a Selector,
+        source: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Value>>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut args = query_arguments(s, self.device_id()?);
+            if let Some(source) = source {
+                args["source"] = json!(source);
+            }
+            let result = self.call(QUERY, args).await?;
             let raw = result
                 .pointer("/structuredContent/elements")
                 .and_then(Value::as_array)
@@ -806,6 +833,9 @@ impl FlowRunner {
                 serde_json::to_string_pretty(&trace).unwrap().as_bytes(),
             )?;
             let mut found = filter_elements(s, raw);
+            if found.is_empty() {
+                return Ok(found);
+            }
             for (relation, exclude) in [(&s.row_with, false), (&s.exclude_row_with, true)] {
                 if let Some(name) = relation {
                     let anchor = self
@@ -814,9 +844,12 @@ impl FlowRunner {
                         .get(name)
                         .cloned()
                         .ok_or("unknown row anchor")?;
-                    let anchors = self.query(&anchor).await?;
+                    let anchors = self.query_source(&anchor, source).await?;
                     if anchors.is_empty() && s.allow_missing_row_anchor {
                         continue;
+                    }
+                    if anchors.is_empty() && source == Some("native") {
+                        return Ok(vec![]);
                     }
                     if anchors.len() != 1 {
                         return Err("row anchor must match exactly one element".into());

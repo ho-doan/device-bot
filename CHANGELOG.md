@@ -1,5 +1,13 @@
 ## Unreleased
 
+## 0.1.7 — 2026-11-09
+
+* Rename the Flutter bridge to device_bot_flutter, retaining the uia_windows
+  compatibility API. Add web/CDP, macOS geometry, and authenticated device
+  endpoints for Android/iOS widget discovery.
+* Keep native accessibility first and query Flutter only for a missing selector;
+  preserve native ambiguity/errors and perform taps and typing via native input.
+
 ## 0.1.6 — 2026-11-09
 
 * Finish Chrome target discovery after reading Content-Length bytes, recognize

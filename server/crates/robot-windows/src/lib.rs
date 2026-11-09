@@ -15,8 +15,7 @@ use std::{
 
 use async_trait::async_trait;
 use robot_core::{
-    Bounds, DeviceState, ElementQuery, ImeAction, Platform, Point, Robot, RobotDevice, RobotError,
-    UiElement, apply_element_query,
+    Bounds, DeviceState, ImeAction, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
 };
 use serde_json::{Value, json};
 use tokio::{process::Command, sync::Mutex};
@@ -103,23 +102,6 @@ impl WindowsRobot {
 
         self.activate_target().await?;
         let process_id = *self.active_process_id.lock().await;
-        let bridge_process = match process_id {
-            Some(id) => Some(id),
-            None if flutter_bridge::directory().is_dir() => self.foreground_process_id().await.ok(),
-            None => None,
-        };
-        if let Some(id) = bridge_process {
-            if let Some(elements) = flutter_bridge::elements(id).await {
-                return Ok(apply_element_query(
-                    elements,
-                    &ElementQuery {
-                        element_type: None,
-                        filter: filter.map(str::to_owned),
-                        max_results,
-                    },
-                ));
-            }
-        }
         let script = build_uia_script(process_id, filter, max_results);
         let output = tokio::time::timeout(UIA_QUERY_TIMEOUT, self.powershell(script))
             .await
@@ -775,6 +757,17 @@ public static class DeviceBotKeyboard {
         ))
     }
 
+    async fn list_flutter_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
+        self.require_device(device_id)?;
+        if let Some(elements) = robot_flutter_bridge::configured(device_id).await {
+            return Ok(elements);
+        }
+        let id = self.target_process_id().await?;
+        Ok(robot_flutter_bridge::for_process(id)
+            .await
+            .unwrap_or_default())
+    }
+
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.require_device(device_id)?;
         self.uia_elements(None, None).await
@@ -872,15 +865,15 @@ mod tests {
             .unwrap();
         let robot = WindowsRobot::new("artifacts");
         *robot.active_process_id.lock().await = Some(process_id);
-        let query = ElementQuery {
+        let query = robot_core::ElementQuery {
             element_type: Some(robot_core::ElementType::TextField),
             filter: Some("email-field".into()),
             max_results: Some(1),
         };
-        let elements = robot
-            .list_elements_query(DEVICE_ID, query.clone())
-            .await
-            .unwrap();
+        let elements = robot_core::apply_element_query(
+            robot.list_flutter_elements(DEVICE_ID).await.unwrap(),
+            &query,
+        );
         assert_eq!(elements.len(), 1);
         let email = &elements[0];
         assert_eq!(email.resource_id.as_deref(), Some("email-field"));
@@ -896,10 +889,13 @@ mod tests {
             .unwrap();
         let literal = "+rust Ỏbit123! ^%{}[]  ";
         robot.type_text(DEVICE_ID, literal).await.unwrap();
-        let updated = robot.list_elements_query(DEVICE_ID, query).await.unwrap();
+        let updated = robot_core::apply_element_query(
+            robot.list_flutter_elements(DEVICE_ID).await.unwrap(),
+            &query,
+        );
         assert_eq!(updated[0].focused, Some(true));
         assert!(updated[0].value.as_deref().unwrap().contains(literal));
-        // An absent bridge must leave native UIA usable for this same target.
+        // Native UIA remains independent of the optional Flutter bridge.
         let manifest = flutter_bridge::directory().join(format!("{process_id}.json"));
         let saved = manifest.with_extension("smoke-backup");
         tokio::fs::rename(&manifest, &saved).await.unwrap();

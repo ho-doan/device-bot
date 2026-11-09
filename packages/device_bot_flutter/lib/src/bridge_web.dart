@@ -18,10 +18,15 @@ class DeviceBotFlutter {
   }
 
   static Future<JSString> _capture() async {
-    await WidgetsBinding.instance.endOfFrame.timeout(const Duration(milliseconds: 800));
+    await WidgetsBinding.instance.endOfFrame.timeout(
+      const Duration(milliseconds: 800),
+    );
     return jsonEncode({
       'version': 1,
-      'elements': WidgetTreeSnapshot.capture(screenOrigin: Offset.zero, pixelRatio: 1),
+      'elements': WidgetTreeSnapshot.capture(
+        screenOrigin: Offset.zero,
+        pixelRatio: 1,
+      ),
     }).toJS;
   }
 

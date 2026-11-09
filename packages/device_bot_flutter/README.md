@@ -1,100 +1,110 @@
-# uia_windows
+# device_bot_flutter
 
-Temporary widget-tree discovery for Flutter Windows apps while native Windows
-UI Automation does not expose their controls reliably. All Flutter traversal,
-transport, registration and Win32 coordinate conversion live in `lib/`.
-
-Add a path dependency and call start before runApp:
+Opt-in Flutter widget-tree discovery for Device Bot on Windows, macOS, Android,
+iOS Simulator, physical iOS devices, and web. Native accessibility (DOM on web)
+remains the primary source. The bridge is queried only when the selector has no
+native matches, including controls whose native name/label/ID is empty.
+Native errors, ambiguous matches, disabled controls, and truncated snapshots do
+not silently switch to Flutter. Tap and text input still use platform drivers.
+Existing Windows-only touch scrolling and IME actions remain unchanged.
 
 ```yaml
 dependencies:
-  uia_windows:
-    path: ../../packages/uia_windows
+  device_bot_flutter:
+    path: ../../packages/device_bot_flutter
 ```
 
 ```dart
-import 'package:flutter/material.dart';
-import 'package:uia_windows/uia_windows.dart';
+import 'package:device_bot_flutter/device_bot_flutter.dart';
 
 Future<void> main() async {
-  await UiaWindows.start();
+  await DeviceBotFlutter.start();
   runApp(const MyApp());
 }
 ```
 
-`start()` initializes the binding and is idempotent. It is a no-op on other
-platforms, including web. `await UiaWindows.stop()` closes the bridge and removes
-its registration; a later start registers it again. Startup errors propagate to
-the caller. No app wrapper, debug service, native plugin, or fixed port is needed.
+Start is idempotent; `await DeviceBotFlutter.stop()` unregisters the bridge.
+Snapshots use release-compatible Flutter Element/render APIs. ValueKey<String>
+and Semantics identifiers become resource IDs; widget types are included in
+className so `class_contains: GestureDetector` can locate an unlabeled control.
+No label is invented for an icon. Use a key, widget type, or row relationship;
+multiple matches still require a more specific selector.
+Password values are omitted, explicit empty values are preserved, and offstage,
+transparent, clipped, and center-occluded controls are excluded.
 
-The package inspects the live Element/render tree using release-compatible
-Flutter APIs. It exports common Material buttons, text fields, checkboxes,
-switches, sliders, list tiles, text, images, scroll views, tappable gesture/ink
-widgets, and controls with explicit button/checked/toggled Semantics (including
-radio controls). ValueKey<String> and Semantics identifiers become resource IDs;
-TextFormField keys are retained on their editors. Labels, enabled/focus/selection
-and checked state are included where available. Obscured editor values are omitted.
+## Desktop and web
 
-Offstage, transparent, clipped and center-occluded controls are excluded. Each
-query waits for layout and captures current widget state. Bounds use physical
-desktop pixels with the Flutter client origin and current view DPI, including
-negative monitor coordinates. The existing Windows robot still performs native
-tap, typing and horizontal drag operations. Vertical MCP swipes use touch events
-through Flutter's normal gesture arena because desktop scroll views exclude
-mouse dragging by default. Named IME actions invoke the focused editor's
-configured action and reject mismatches.
+Windows/macOS register an ephemeral loopback endpoint under
+`<system temp>/device-bot-flutter/<pid>.json`, with a random per-start token.
+The robot reads only the selected/foreground application's registration. macOS
+uses a small native plugin to obtain the Flutter view's current desktop origin;
+Windows uses Win32. macOS bounds are desktop points, Windows bounds are physical
+pixels. The standard single-window/single-view runner is supported. Sandboxed
+macOS apps need the network-server entitlement. If app and host temp directories
+differ, configure an explicit port/token endpoint under `macos-host`, using the
+same endpoint setup as mobile instead of relying on manifest discovery.
 
-The supported target is the standard **single-window, single-view** Flutter
-Windows runner. Platform views, CustomPainter contents and custom controls
-without inspectable widgets/Semantics require native UIA or additional adapters.
-Hit testing checks the element center; a partly covered control whose center is
-covered is excluded. Elements outside the viewport appear after scrolling.
+Web exposes a page-local `__deviceBotFlutterSnapshot()` function, consumed by the
+Chrome driver through CDP with `awaitPromise`. No TCP listener or VM service is
+needed. Bounds are CSS viewport pixels and remain independent of device DPR.
+Custom embedding that scales, translates, or offsets the Flutter host is not
+currently supported; use the standard full-page Flutter bootstrap.
 
-## Server discovery
+## Android and iOS
 
-The bridge binds an ephemeral IPv4 loopback TCP port. It writes a versioned
-manifest to `%TEMP%/device-bot-flutter/<pid>.json`, containing that port, PID and
-a random per-start token. No LAN listener is opened. The Rust Windows robot reads
-only the launched target's PID (or foreground PID when no app was launched).
-Both processes must use the same user/temp directory and interactive session.
+Apps on devices cannot share the host's temp directory. Configure a token in
+the app, and a device-specific endpoint on the host. Each endpoint must belong
+to the app under test; use a different token for each app/session.
 
-The wire protocol is one newline-delimited JSON request/response per connection:
-
-```text
-request:  {"version":1,"token":"<manifest token>"}
-response: {"version":1,"processId":1234,"elements":[...]}
-
-request:  {"version":1,"token":"...","command":"imeAction","action":"next"}
-request:  {"version":1,"token":"...","command":"swipe","startX":400,"startY":600,"endX":400,"endY":300,"durationMs":350}
-response: {"version":1,"processId":1234,"ok":true}
+```dart
+await DeviceBotFlutter.start(
+  port: 39787,
+  token: const String.fromEnvironment('DEVICE_BOT_FLUTTER_TOKEN'),
+);
 ```
 
-Elements use the existing Windows adapter's flat schema: className, resourceId,
-text, contentDescription, left/top/right/bottom, clickable, enabled, focused,
-checked, selected, value. The server applies existing element-type/text filters
-before maxResults. Snapshots are capped at 5,000 output nodes and 50,000 visited
-widgets; the client caps responses at 4 MiB with a one-second discovery deadline.
-Missing, stale or failed discovery bridges fall back to native UIA. A valid
-empty snapshot stays empty. Crashed apps may leave manifests; unavailable
-discovery endpoints are ignored. Widget actions have a three-second deadline;
-failures are reported without replaying an action that may already have run.
+Pass a 32..128 character token through `--dart-define=DEVICE_BOT_FLUTTER_TOKEN=...`.
+The default mobile port is 39787; override it when running multiple Simulator
+apps, whose loopback ports share the host. A missing token generates a random
+per-start token, as on desktop; configure one explicitly for host discovery.
+Android release builds need the INTERNET permission. No LAN listener is opened.
 
-## Validate
+For Android, forward a host loopback port to the app's port:
 
-```text
+```sh
+adb -s emulator-5554 forward tcp:39788 tcp:39787
+export DEVICE_BOT_FLUTTER_ENDPOINTS='{"emulator-5554":{"version":1,"port":39788,"token":"<same app token>"}}'
+```
+
+For iOS Simulator, use its device ID as the JSON key and the app's listening
+port directly. For a physical iPhone, first establish a USB loopback port tunnel
+(e.g. using your existing device forwarding tool), then configure its host port
+under that iPhone's exact Device Bot ID. The bridge does not create or own USB
+tunnels. Never map a device to another application's endpoint.
+Android bounds use physical pixels; iOS bounds use UIKit points.
+
+## Query behavior
+
+`mobile_list_elements_on_screen` accepts `source: auto|native|flutter` and returns
+the source with its elements. `auto` uses Flutter only after native type/text
+filtering returns no matches. The YAML runner applies its full selector,
+including resource IDs and row relations, before deciding to query Flutter.
+It negotiates source support, preserving compatibility with older MCP servers.
+Trees are queried independently; native and Flutter nodes are never merged.
+
+The protocol remains version 1: one authenticated newline-delimited JSON
+request/response per connection. Discovery has a one-second host deadline,
+4 MiB response limit, 5,000 output nodes and 50,000 visited widgets. Invalid or
+stale desktop registrations are unavailable, rather than replacing native data.
+Platform views and custom drawing without inspectable widgets are not exposed.
+
+## Migration and validation
+
+`packages/uia_windows` is a compatibility package exporting the deprecated
+`UiaWindows` alias. New code should use `DeviceBotFlutter` and the new package.
+
+```sh
 flutter pub get
 flutter analyze --no-pub
 flutter test --no-pub
 ```
-
-An opt-in Rust smoke test also exercises discovery, typed/key filtering, native
-click/typing and UIA fallback against the running Windows sample. After building
-and launching that sample in the interactive desktop, run from `server/`:
-
-```powershell
-$env:DEVICE_BOT_FLUTTER_SMOKE_PID = '<sample process ID>'
-cargo test -p robot-windows flutter_live -- --ignored
-```
-
-Use a disposable sample session: this check inserts a Unicode string with spaces
-and keyboard metacharacters into its email field.

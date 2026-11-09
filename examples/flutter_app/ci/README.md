@@ -13,10 +13,10 @@ These are example configurations for a repository with the contents of
 relative to that app root. The nested workflow is a template here; copy it to
 the app repository's `.github/workflows/flutter-app.yml` to activate it.
 
-When exporting this example, also provide its local `uia_windows` dependency:
-copy `packages/uia_windows` from this repository into the app repository (for
-example, at `packages/uia_windows`) and update `pubspec.yaml`'s dependency path
-to match. The current `../../packages/uia_windows` path is for this monorepo.
+When exporting this example, also provide its local `device_bot_flutter` dependency:
+copy `packages/device_bot_flutter` from this repository into the app repository (for
+example, at `packages/device_bot_flutter`) and update `pubspec.yaml`'s dependency path
+to match. The current `../../packages/device_bot_flutter` path is for this monorepo.
 
 ## GitLab
 

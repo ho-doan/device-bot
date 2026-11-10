@@ -3,7 +3,7 @@
 A clone of [`examples/flutter_app`](../flutter_app) with the same demo
 authentication, routing, checklist, and responsive workspace.
 
-Hash URLs match Flutter web, for example `/#/account`.
+Routes use normal paths, for example `/account`.
 
 ## Run
 

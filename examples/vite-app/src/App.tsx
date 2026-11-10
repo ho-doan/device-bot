@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useState } from 'react'
 import {
-  createHashRouter,
+  createBrowserRouter,
   createMemoryRouter,
   Navigate,
   Outlet,
@@ -54,7 +54,7 @@ export const orbitRoutes: RouteObject[] = [
 export function OrbitApp({
   router,
 }: {
-  router: ReturnType<typeof createHashRouter> | ReturnType<typeof createMemoryRouter>
+  router: ReturnType<typeof createBrowserRouter> | ReturnType<typeof createMemoryRouter>
 }) {
   return (
     <SessionProvider>
@@ -68,6 +68,6 @@ export function createOrbitMemoryRouter(initialEntries: string[] = ['/']) {
 }
 
 export default function App() {
-  const [router] = useState(() => createHashRouter(orbitRoutes))
+  const [router] = useState(() => createBrowserRouter(orbitRoutes))
   return <OrbitApp router={router} />
 }

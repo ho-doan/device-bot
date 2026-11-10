@@ -1,4 +1,4 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
+import { createRouter, createWebHistory } from 'vue-router'
 import { watch } from 'vue'
 import { destinationFrom, loginRedirect } from './session'
 import { session } from './session-state'
@@ -13,7 +13,7 @@ function queryFrom(value: unknown): string | null {
 }
 
 const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(),
   routes: [
     {
       path: '/login',

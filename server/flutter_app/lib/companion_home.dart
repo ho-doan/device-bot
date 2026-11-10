@@ -245,7 +245,14 @@ class _CompanionHomeState extends State<CompanionHome> {
         context: context,
         builder: (context) => AlertDialog(
           title: Text('${device.name}: ${status.label}'),
-          content: SingleChildScrollView(child: SelectableText(status.report)),
+          content: SingleChildScrollView(
+            child: SizedBox(
+              width: 480,
+              child: status.state == 'trust_required'
+                  ? DeviceTrustWarning(detail: status.detail, showRetry: false)
+                  : SelectableText(status.report),
+            ),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),

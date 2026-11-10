@@ -35,6 +35,56 @@ impl DeviceConnectionReport {
     }
 }
 
+/// A paired Wi-Fi device can have an idle tunnel in `list devices`. Requesting
+/// details opens that tunnel, but a successful command may still return cached
+/// details: only a connected, paired result for this exact UDID is live evidence.
+pub async fn coredevice_connected(xcrun: &str, device: &str) -> Result<bool, String> {
+    let path = std::env::temp_dir().join(format!("device-bot-live-{}.json", uuid::Uuid::new_v4()));
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        let output = Command::new(xcrun)
+            .args([
+                "devicectl",
+                "device",
+                "info",
+                "details",
+                "--device",
+                device,
+                "--timeout",
+                "3",
+                "--json-output",
+            ])
+            .arg(&path)
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await
+            .map_err(|_| "CoreDevice live connection probe could not start".to_owned())?;
+        if !output.status.success() {
+            return Err("CoreDevice could not establish a live USB or network connection".into());
+        }
+        let bytes = tokio::fs::read(&path)
+            .await
+            .map_err(|_| "CoreDevice live connection JSON is unavailable".to_owned())?;
+        details_confirm_connection(&bytes, device)
+    })
+    .await
+    .map_err(|_| "CoreDevice live connection probe timed out after 3s".to_owned());
+    let _ = tokio::fs::remove_file(path).await;
+    result?
+}
+
+fn details_confirm_connection(bytes: &[u8], device: &str) -> Result<bool, String> {
+    let details: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|_| "CoreDevice live connection JSON is invalid".to_owned())?;
+    let result = &details["result"];
+    Ok(details["info"]["outcome"] == "success"
+        && result["hardwareProperties"]["udid"]
+            .as_str()
+            .is_some_and(|id| id.eq_ignore_ascii_case(device))
+        && result["connectionProperties"]["pairingState"] == "paired"
+        && result["connectionProperties"]["tunnelState"] == "connected")
+}
+
 pub async fn usb_attached(device: &str) -> Result<bool, String> {
     tokio::time::timeout(Duration::from_secs(4), async {
         let output = Command::new("/usr/sbin/ioreg")
@@ -147,6 +197,52 @@ pub fn destination_is_eligible(output: &str, device: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cached_success_does_not_prove_a_live_connection() {
+        let device = "00008130-000959E43EDA001C";
+        let live = serde_json::json!({"info":{"outcome":"success"},"result":{
+            "hardwareProperties":{"udid":device},
+            "connectionProperties":{"tunnelState":"connected","pairingState":"paired"}
+        }});
+        assert!(details_confirm_connection(&serde_json::to_vec(&live).unwrap(), device).unwrap());
+        for (path, value) in [
+            (
+                vec!["result", "connectionProperties", "tunnelState"],
+                "disconnected",
+            ),
+            (
+                vec!["result", "connectionProperties", "tunnelState"],
+                "unavailable",
+            ),
+            (
+                vec!["result", "connectionProperties", "tunnelState"],
+                "connecting",
+            ),
+            (
+                vec!["result", "connectionProperties", "pairingState"],
+                "unpaired",
+            ),
+            (
+                vec!["result", "hardwareProperties", "udid"],
+                "another-device",
+            ),
+            (vec!["info", "outcome"], "failure"),
+        ] {
+            let mut cached = live.clone();
+            let mut field = &mut cached;
+            for key in path {
+                field = &mut field[key];
+            }
+            *field = serde_json::json!(value);
+            assert!(
+                !details_confirm_connection(&serde_json::to_vec(&cached).unwrap(), device).unwrap(),
+                "{cached}"
+            );
+        }
+        assert!(!details_confirm_connection(b"{}", device).unwrap());
+        assert!(details_confirm_connection(b"invalid json", device).is_err());
+    }
+
     #[test]
     fn usb_match_uses_exact_udid_and_accepts_binary_data_fields() {
         let xml = r#"<?xml version="1.0"?><plist><array><dict><key>IORegistryEntryChildren</key><array><dict><key>USB Product Name</key><string>iPhone</string><key>descriptor</key><data>AQID</data><key>USB Serial Number</key><string>00008130000959E43EDA001C</string></dict></array></dict></array></plist>"#;

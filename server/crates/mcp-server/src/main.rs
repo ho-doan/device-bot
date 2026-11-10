@@ -434,6 +434,25 @@ async fn main() -> std::io::Result<()> {
         println!("{team}");
         return Ok(());
     }
+    if matches!(command.as_deref(), Some("--configure-ios-signing")) {
+        if arguments.next().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "--configure-ios-signing accepts no arguments; use DEVICE_BOT_IOS_TEAM to select a team",
+            ));
+        }
+        let team = std::env::var("DEVICE_BOT_IOS_TEAM").ok();
+        let identity = std::env::var("DEVICE_BOT_IOS_SIGNING_IDENTITY").ok();
+        let project = assets::xctest_project("ios-real");
+        let selected = robot_ios_real::configure_xctest_signing(&project, team.as_deref(), identity.as_deref())
+            .await.map_err(|error| std::io::Error::other(error.to_string()))?
+            .ok_or_else(|| std::io::Error::other("Signing script is missing from XCTest assets; reinstall the complete Device Bot bundle"))?;
+        println!(
+            "{}",
+            serde_json::json!({"configured": true, "teamId": selected, "project": project})
+        );
+        return Ok(());
+    }
     if matches!(command.as_deref(), Some("--provision-ios-xctest")) {
         let device_id = arguments.next().ok_or_else(|| {
             std::io::Error::new(

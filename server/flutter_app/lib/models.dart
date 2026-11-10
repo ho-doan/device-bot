@@ -89,6 +89,7 @@ class DeviceReadiness {
   String get label => ready
       ? 'Ready'
       : switch (state) {
+          'trust_required' => 'Trust required',
           'needs_target' => 'Select app',
           'target_not_running' => 'Launch app',
           'unconfigured' => 'Setup needed',

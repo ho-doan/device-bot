@@ -1,9 +1,6 @@
 //! Read-only physical-device and live XCTest helper health probes.
 use crate::{xctest_agent::XCTestAgentBridge, xctest_robot::IosXCTestRobot};
-use robot_core::{
-    DeviceState, Robot,
-    health::{CheckStatus, HealthCheck, HealthReport},
-};
+use robot_core::health::{CheckStatus, HealthCheck, HealthReport};
 use serde_json::Value;
 use std::{
     net::SocketAddr,
@@ -30,16 +27,14 @@ pub async fn physical_health_with_project(
     let robot = IosXCTestRobot::with_artifact_dir(xcrun, XCTestAgentBridge::new(None), "artifacts")
         .with_runner_project(project.to_path_buf());
     let mut checks = Vec::new();
-    match timeout(Duration::from_secs(8), robot.list_devices()).await {
-        Ok(Ok(devices)) => {
+    match robot.connection_report(device, true).await {
+        Ok(report) => {
             checks.push(item(
                 "coredevice",
                 CheckStatus::Pass,
                 "CoreDevice responded",
             ));
-            let connected = devices
-                .iter()
-                .any(|d| d.id.eq_ignore_ascii_case(device) && d.state == DeviceState::Available);
+            let connected = report.connected;
             checks.push(item(
                 "device_connection",
                 if connected {
@@ -53,6 +48,20 @@ pub async fn physical_health_with_project(
                     "Device is absent, offline or not ready; check pairing/trust/connection"
                 },
             ));
+            for probe in report.checks {
+                let name = match probe.name {
+                    "USB" => "usb_connection",
+                    "Xcode destination" | "Xcode" => "xcode_destination",
+                    _ => continue,
+                };
+                let status = match probe.status {
+                    "pass" => CheckStatus::Pass,
+                    "fail" => CheckStatus::Fail,
+                    "warn" => CheckStatus::Warn,
+                    _ => CheckStatus::Unknown,
+                };
+                checks.push(item(name, status, probe.detail));
+            }
             if connected {
                 let derived = project.parent().unwrap().join("build");
                 let cache = crate::runner_cache::RunnerCache {
@@ -68,28 +77,7 @@ pub async fn physical_health_with_project(
                 }
             }
         }
-        Ok(Err(e)) => checks.push(item("coredevice", CheckStatus::Fail, e.to_string())),
-        Err(_) => checks.push(item(
-            "coredevice",
-            CheckStatus::Fail,
-            "CoreDevice did not respond within 8 seconds",
-        )),
-    }
-    if let Ok(report) = robot.connection_report(device, true).await {
-        for probe in report.checks {
-            let name = match probe.name {
-                "USB" => "usb_connection",
-                "Xcode destination" | "Xcode" => "xcode_destination",
-                _ => continue,
-            };
-            let status = match probe.status {
-                "pass" => CheckStatus::Pass,
-                "fail" => CheckStatus::Fail,
-                "warn" => CheckStatus::Warn,
-                _ => CheckStatus::Unknown,
-            };
-            checks.push(item(name, status, probe.detail));
-        }
+        Err(e) => checks.push(item("coredevice", CheckStatus::Fail, e.to_string())),
     }
     HealthReport::from_checks(
         "ios_physical",

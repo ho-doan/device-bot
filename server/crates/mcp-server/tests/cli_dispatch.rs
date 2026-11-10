@@ -77,3 +77,35 @@ fn help_and_invalid_start_do_not_start_services() {
     assert!(!invalid.status.success());
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("invalid listen address"));
 }
+
+#[test]
+fn signing_command_runs_the_shared_script_without_starting_services() {
+    let root = std::env::temp_dir().join(format!("signing-cli-{}", uuid::Uuid::new_v4()));
+    let runner = root.join("ios-real/xctest-runner");
+    let project = runner.join("MobileMcpRealRunner.xcodeproj");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join("project.pbxproj"), "OLDTEAM123").unwrap();
+    std::fs::write(runner.join("configure_ios_signing.sh"),
+        "#!/bin/sh\nprintf '%s' 'TEAM123456' > \"$2/project.pbxproj\"\nprintf '%s\\n' 'TEAM123456'\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_device-bot"))
+        .arg("--configure-ios-signing")
+        .env("DEVICE_BOT_ASSET_DIR", &root)
+        .env("DEVICE_BOT_IOS_AGENT_BIND", "invalid-if-service-started")
+        .env_remove("DEVICE_BOT_IOS_TEAM")
+        .env_remove("DEVICE_BOT_IOS_SIGNING_IDENTITY")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["teamId"], "TEAM123456");
+    assert_eq!(result["configured"], true);
+    assert_eq!(
+        std::fs::read_to_string(project.join("project.pbxproj")).unwrap(),
+        "TEAM123456"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

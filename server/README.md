@@ -379,6 +379,30 @@ DEVICE_BOT_IOS_AGENT_TOKEN="$DEVICE_BOT_IOS_AGENT_TOKEN" \
 server/examples/example_safari.sh ios-real
 ```
 
+Real-device helper builds automatically run `configure_signing.py` before
+computing the build cache identity, including Prepare / Install in the QC app.
+The script uses valid development certificates in Keychain, reads the Team ID
+from the certificate's `OU`, and replaces every `DEVELOPMENT_TEAM` setting in
+the helper project. It requires `python3`, `security`, and `openssl`.
+
+Run `server/tool/configure_ios_signing.sh` to synchronize signing separately;
+add `--print-only` to inspect the team, or `--project path/to/App.xcodeproj` to
+update another project. With multiple installed teams, a matching project team
+is kept; otherwise select `DEVICE_BOT_IOS_TEAM`. Missing or ambiguous identities
+leave the project unchanged, and matching settings are not rewritten.
+
+The Rust entry point is `device-bot --configure-ios-signing`; it runs the same
+shell script and returns the selected Team ID as JSON without starting a
+server. Prepare / Install in QC invokes this signing setup automatically before
+building. If iOS installs the helper but refuses to launch it until its developer
+certificate is trusted, QC shows a persistent Trust warning with the iPhone
+Settings path and a Retry after Trust action.
+
+During helper startup, Install activates the XCTest runner itself and waits for
+it to enter the foreground before making the first local-network request. On
+first use, allow the iOS Local Network dialog on the iPhone. The runner waits for
+that choice and only enters its command loop after network access is available.
+
 The example binds the bridge to `0.0.0.0:18787` by default, records the real
 iPhone through QuickTime when `RECORD_SCREEN=auto` or `1`, and uses the
 real-device XCTest driver's native filtered accessibility queries for Safari

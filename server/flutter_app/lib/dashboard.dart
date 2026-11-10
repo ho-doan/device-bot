@@ -101,39 +101,50 @@ class _DevicesPanel extends StatelessWidget {
                       ),
                       title: Text(device.name),
                       subtitle: SelectableText(device.id),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _StatusChip(
-                            status: device.state,
-                            readiness: device.readiness,
-                            busy: busyDevices.contains(device.id),
-                          ),
-                          IconButton(
-                            tooltip: 'Boot device',
-                            onPressed: busyDevices.contains(device.id)
-                                ? null
-                                : () => onBootDevice(device),
-                            icon: const Icon(Icons.power_settings_new),
-                          ),
-                          IconButton(
-                            tooltip: 'Launch app',
-                            onPressed: busyDevices.contains(device.id)
-                                ? null
-                                : () => onLaunchApp(device),
-                            icon: const Icon(Icons.rocket_launch_outlined),
-                          ),
-                          IconButton(
-                            tooltip: 'Screenshot',
-                            onPressed: busyDevices.contains(device.id)
-                                ? null
-                                : () => onViewScreenshot(device),
-                            icon: const Icon(Icons.screenshot_monitor),
-                          ),
-                        ],
-                      ),
                     ),
-                    if (device.readiness != null)
+                    Wrap(
+                      spacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        _StatusChip(
+                          status: device.state,
+                          readiness: device.readiness,
+                          busy: busyDevices.contains(device.id),
+                        ),
+                        IconButton(
+                          tooltip: 'Boot device',
+                          onPressed: busyDevices.contains(device.id)
+                              ? null
+                              : () => onBootDevice(device),
+                          icon: const Icon(Icons.power_settings_new),
+                        ),
+                        IconButton(
+                          tooltip: 'Launch app',
+                          onPressed: busyDevices.contains(device.id)
+                              ? null
+                              : () => onLaunchApp(device),
+                          icon: const Icon(Icons.rocket_launch_outlined),
+                        ),
+                        IconButton(
+                          tooltip: 'Screenshot',
+                          onPressed: busyDevices.contains(device.id)
+                              ? null
+                              : () => onViewScreenshot(device),
+                          icon: const Icon(Icons.screenshot_monitor),
+                        ),
+                      ],
+                    ),
+                    if (device.readiness?.state == 'trust_required')
+                      DeviceTrustWarning(
+                        detail: device.readiness!.detail,
+                        onRetry:
+                            busyDevices.contains(device.id) ||
+                                onRunnerAction == null
+                            ? null
+                            : () =>
+                                  onRunnerAction!(device, RunnerAction.prepare),
+                      )
+                    else if (device.readiness != null)
                       Tooltip(
                         message: device.readiness!.report,
                         child: Text(
@@ -175,6 +186,76 @@ class _DevicesPanel extends StatelessWidget {
                   ],
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class DeviceTrustWarning extends StatelessWidget {
+  const DeviceTrustWarning({
+    super.key,
+    required this.detail,
+    this.onRetry,
+    this.showRetry = true,
+  });
+
+  final String detail;
+  final VoidCallback? onRetry;
+  final bool showRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: colors.tertiaryContainer,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ExcludeSemantics(
+              child: Icon(
+                Icons.warning_amber_rounded,
+                color: colors.onTertiaryContainer,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Trust the developer certificate on your iPhone',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: colors.onTertiaryContainer,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SelectableText(
+                    detail,
+                    style: TextStyle(color: colors.onTertiaryContainer),
+                  ),
+                  if (showRetry) ...[
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: onRetry,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: colors.onTertiaryContainer,
+                        minimumSize: const Size(48, 48),
+                      ),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry after Trust'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ],
         ),
       ),

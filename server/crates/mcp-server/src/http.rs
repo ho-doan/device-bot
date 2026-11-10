@@ -107,7 +107,8 @@ async fn handle_health(
     {
         let robot = state.robot.clone();
         probes.spawn(async move {
-            let status = tokio::time::timeout(std::time::Duration::from_secs(5), robot.check_device_health(&device.id)).await;
+            // Real-iOS health may open an idle Wi-Fi tunnel after device discovery.
+            let status = tokio::time::timeout(std::time::Duration::from_secs(10), robot.check_device_health(&device.id)).await;
             let mut value = match status {
                 Ok(Ok(status)) => json!(status),
                 Ok(Err(error)) => json!({"ready":false,"state":"unverified","detail":error.to_string()}),

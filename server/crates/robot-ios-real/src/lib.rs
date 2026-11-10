@@ -59,9 +59,63 @@ pub async fn apple_development_team(identity_hint: Option<&str>) -> Result<Strin
     }
 }
 
-/// Builds and provisions the server-owned XCTest runner for a connected iPhone.
+/// Synchronizes the project team with an installed development certificate.
 /// When the only failure is Apple-account provisioning, opens Xcode so the user
 /// can select or reauthenticate the intended account rather than guessing one.
+pub async fn configure_xctest_signing(
+    project: &std::path::Path,
+    development_team: Option<&str>,
+    identity_hint: Option<&str>,
+) -> Result<Option<String>, RobotError> {
+    let script = project
+        .parent()
+        .unwrap_or(project)
+        .join("configure_ios_signing.sh");
+    // Custom/older runner asset bundles retain their existing signing setup.
+    if !script.is_file() {
+        return Ok(None);
+    }
+    let mut command = Command::new("bash");
+    command.arg(script).arg("--project").arg(project);
+    if let Some(team) = development_team.filter(|team| !team.is_empty()) {
+        command.arg("--team-id").arg(team);
+    }
+    if let Some(identity) = identity_hint.filter(|identity| !identity.is_empty()) {
+        command.arg("--identity").arg(identity);
+    }
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        command
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| RobotError::CommandFailed("iOS signing setup timed out after 20s".into()))?
+    .map_err(|error| {
+        RobotError::CommandFailed(format!(
+            "could not run iOS signing setup (requires python3): {error}"
+        ))
+    })?;
+    if !output.status.success() {
+        return Err(RobotError::CommandFailed(
+            String::from_utf8_lossy(&output.stderr).trim().into(),
+        ));
+    }
+    let team = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if team.len() != 10
+        || !team
+            .bytes()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    {
+        return Err(RobotError::CommandFailed(
+            "iOS signing setup returned an invalid Team ID".into(),
+        ));
+    }
+    Ok(Some(team))
+}
+
+/// Builds and provisions the server-owned XCTest runner for a connected iPhone.
 pub async fn provision_xctest_runner(
     project: &std::path::Path,
     device_id: &str,
@@ -74,13 +128,15 @@ pub async fn provision_xctest_runner(
             project.display()
         )));
     }
+    let configured_team =
+        configure_xctest_signing(project, development_team, identity_hint).await?;
     let project_team = tokio::fs::read_to_string(project.join("project.pbxproj"))
         .await
         .ok()
         .and_then(|contents| parse_xcode_project_team(&contents));
     let team = match development_team.filter(|team| !team.is_empty()) {
         Some(team) => team.to_owned(),
-        None => match project_team {
+        None => match configured_team.or(project_team) {
             Some(team) => team,
             None => apple_development_team(identity_hint).await?,
         },

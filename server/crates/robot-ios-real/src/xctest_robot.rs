@@ -309,6 +309,10 @@ impl IosXCTestRobot {
                 let _ = child.wait().await;
             }
         }
+        // Synchronize signing before calculating the build identity: changing the
+        // project team must invalidate cached products and the helper version.
+        crate::configure_xctest_signing(&launcher.project, None, None).await?;
+        let version = launcher.cache().version()?;
         // Serialize preparation, but never infer readiness from a host PID alone.
         let mut agents = self.persistent_agents.lock().await;
         let running = agents
@@ -379,12 +383,42 @@ impl IosXCTestRobot {
         let devices = devices.map_err(|_| {
             RobotError::CommandFailed("CoreDevice preflight timed out after 4s".into())
         })??;
-        let connected = devices
+        let device = devices
             .iter()
-            .any(|d| d.id == device_id && d.state == DeviceState::Available);
-        let mut checks = vec![ConnectionCheck {name:"CoreDevice", status:if connected {"pass"} else {"fail"}, detail:if connected {"Device connection is live"} else {"Device is offline/unavailable or not trusted; reconnect USB, unlock and trust this Mac"}.into()}];
+            .find(|d| d.id.eq_ignore_ascii_case(device_id));
+        let mut connected = device.is_some_and(|d| d.state == DeviceState::Available);
+        let mut probe_error = None;
+        if !connected && device.is_some_and(|d| d.state != DeviceState::Unauthorized) {
+            match crate::connection::coredevice_connected(&self.xcrun_path, device_id).await {
+                Ok(live) => connected = live,
+                Err(error) => probe_error = Some(error),
+            }
+        }
+        let mut checks = vec![ConnectionCheck {
+            name: "CoreDevice",
+            status: if connected { "pass" } else { "fail" },
+            detail: if connected {
+                "Device connection is live over USB or network".into()
+            } else {
+                probe_error.unwrap_or_else(|| "Device is offline/unavailable or not trusted; unlock the iPhone and check its trusted USB or Wi-Fi connection".into())
+            },
+        }];
         let usb_attached = usb.as_ref().ok().copied();
-        checks.push(ConnectionCheck {name:"USB", status:match usb_attached {Some(true)=>"pass",Some(false) if !connected=>"fail",Some(false)=>"warn",None=>"unknown"}, detail:match usb {Ok(true)=>"Matching iPhone detected on USB".into(),Ok(false)=>"Matching iPhone not found in macOS USB registry; check cable/port or use a live network connection".into(),Err(error)=>error}});
+        checks.push(ConnectionCheck {
+            name: "USB",
+            status: match usb_attached {
+                Some(true) => "pass",
+                _ if connected => "pass",
+                Some(false) => "fail",
+                None => "unknown",
+            },
+            detail: match usb {
+                Ok(true) => "Matching iPhone detected on USB".into(),
+                _ if connected => "USB is not required; live CoreDevice network connection confirmed".into(),
+                Ok(false) => "Matching iPhone not found in macOS USB registry; check cable/port or use a live network connection".into(),
+                Err(error) => error,
+            },
+        });
         let destination = if !connected {
             Some(false)
         } else if check_xcode {
@@ -430,7 +464,10 @@ impl IosXCTestRobot {
             });
         }
         let recommended_actions = if !connected {
-            vec!["reconnect_data_usb_cable_and_unlock", "trust_this_mac"]
+            vec![
+                "check_trusted_usb_or_wifi_connection_and_unlock",
+                "trust_this_mac",
+            ]
         } else if check_xcode && destination != Some(true) {
             vec!["check_xcode_device_support_and_developer_mode"]
         } else {
@@ -469,6 +506,26 @@ impl IosXCTestRobot {
             cache.is_current(&expected),
             health,
         );
+        if status.state == "disconnected" {
+            use tokio::io::{AsyncReadExt, AsyncSeekExt};
+            let log_path = cache
+                .derived_data
+                .join("Logs/Agent")
+                .join(format!("{device_id}-xcodebuild.log"));
+            if let Ok(mut file) = tokio::fs::File::open(log_path).await {
+                if let Ok(metadata) = file.metadata().await {
+                    let _ = file
+                        .seek(std::io::SeekFrom::Start(
+                            metadata.len().saturating_sub(65536),
+                        ))
+                        .await;
+                    let mut log = Vec::new();
+                    if file.take(65536).read_to_end(&mut log).await.is_ok() {
+                        apply_trust_warning(&mut status, &String::from_utf8_lossy(&log));
+                    }
+                }
+            }
+        }
         if self.agent_launcher.is_none() && status.state == "disconnected" {
             status.state = "unconfigured".into();
             status.detail = "Configure a signed real-iOS helper and a LAN-reachable agent bridge on the Mac before Prepare / Install".into();
@@ -996,7 +1053,15 @@ impl Robot for IosXCTestRobot {
                 let _ = child.wait().await;
             }
         }
-        self.ensure_agent_started(device_id).await?;
+        if let Err(error) = self.ensure_agent_started(device_id).await {
+            if error.to_string().contains("iOS XCTest helper exited with") {
+                let status = self.check_device_health(device_id).await?;
+                if status.state == "trust_required" {
+                    return Ok(status);
+                }
+            }
+            return Err(error);
+        }
         if let Some(app_id) = target {
             self.launch_app(device_id, &app_id).await?;
         }
@@ -1166,6 +1231,24 @@ struct CoreConnectionProperties {
     pairing_state: Option<String>,
 }
 
+fn apply_trust_warning(status: &mut UiRunnerStatus, log: &str) {
+    // Logs are appended across launches; an old trust failure must not hide a
+    // different error from the latest attempt or override a live heartbeat.
+    let latest = log.rsplit("Command line invocation:").next().unwrap_or(log);
+    if status.state == "disconnected"
+        && [
+            "Verify that the Developer App certificate for your account is trusted on your device",
+            "profile has not been explicitly trusted by the user",
+        ]
+        .iter()
+        .any(|message| latest.contains(message))
+    {
+        status.ready = false;
+        status.state = "trust_required".into();
+        status.detail = "The helper is installed, but iOS blocked its launch. On the iPhone, open Settings > General > VPN & Device Management, select the Developer App certificate and tap Trust. Then return to QC and choose Retry after Trust.".into();
+    }
+}
+
 fn parse_devicectl_devices(output: &str) -> Result<Vec<RobotDevice>, RobotError> {
     let devices: DeviceList = serde_json::from_str(output).map_err(|error| {
         RobotError::CommandFailed(format!("invalid CoreDevice device JSON: {error}"))
@@ -1213,6 +1296,76 @@ fn parse_devicectl_devices(output: &str) -> Result<Vec<RobotDevice>, RobotError>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trust_warning_uses_the_latest_launch_and_never_overrides_a_live_helper() {
+        let trust = "Command line invocation:\nxcodebuild test-without-building\nVerify that the Developer App certificate for your account is trusted on your device";
+        let mut status = UiRunnerStatus {
+            state: "disconnected".into(),
+            ..Default::default()
+        };
+        apply_trust_warning(&mut status, trust);
+        assert_eq!(status.state, "trust_required");
+        assert!(!status.ready);
+        assert!(status.detail.contains("VPN & Device Management"));
+        assert!(status.detail.contains("Retry after Trust"));
+        let mut ready = UiRunnerStatus {
+            ready: true,
+            state: "ready".into(),
+            ..Default::default()
+        };
+        apply_trust_warning(&mut ready, trust);
+        assert!(ready.ready);
+        assert_eq!(ready.state, "ready");
+        for log in [
+            "Unable to install: device locked".to_owned(),
+            format!("{trust}\nCommand line invocation:\nxcodebuild\nerror: device offline"),
+        ] {
+            let mut status = UiRunnerStatus {
+                state: "disconnected".into(),
+                ..Default::default()
+            };
+            apply_trust_warning(&mut status, &log);
+            assert_eq!(status.state, "disconnected");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn public_health_exposes_installed_but_untrusted_helper_for_qc() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("ios-trust-{}", Uuid::new_v4()));
+        let project = root.join("Phone.xcodeproj");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("project.pbxproj"),
+            "DEVELOPMENT_TEAM = TEAM123456;",
+        )
+        .unwrap();
+        let xcrun = root.join("xcrun");
+        let device = "00008130-000959E43EDA001C";
+        let devices = json!({"result":{"devices":[{"identifier":"CORE-ID",
+            "deviceProperties":{"name":"Phone"},"connectionProperties":{
+                "tunnelState":"connected","pairingState":"paired",
+                "potentialHostnames":[format!("{device}.coredevice.local")]}}]}});
+        std::fs::write(&xcrun, format!("#!/bin/sh\nfor argument in \"$@\"; do last=\"$argument\"; done\nprintf '%s' '{}' > \"$last\"\n", devices)).unwrap();
+        std::fs::set_permissions(&xcrun, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let logdir = root.join("build/Logs/Agent");
+        std::fs::create_dir_all(&logdir).unwrap();
+        std::fs::write(logdir.join(format!("{device}-xcodebuild.log")),
+            "Command line invocation:\nxcodebuild\nprofile has not been explicitly trusted by the user").unwrap();
+        let robot = IosXCTestRobot::with_artifact_dir(
+            xcrun.to_string_lossy(),
+            XCTestAgentBridge::new(None),
+            root.join("artifacts"),
+        )
+        .with_runner_project(project);
+        let status = robot.check_device_health(device).await.unwrap();
+        assert_eq!(status.state, "trust_required");
+        assert!(!status.ready);
+        assert_eq!(status.diagnostics.unwrap()["connected"], true);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn parses_coredevice_json_to_xcode_udids() {
@@ -1428,6 +1581,98 @@ mod tests {
             assert!(robot.persistent_agents.lock().await.is_empty());
             assert!(!root.join("build").exists());
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn wifi_preflight_checks_live_device_before_declaring_it_offline() {
+        use std::os::unix::fs::PermissionsExt;
+        let device = "00008130-000959E43EDA001C";
+        let root = std::env::temp_dir().join(format!("ios-wifi-preflight-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let xcrun = root.join("xcrun");
+        let cached = json!({"result":{"devices":[{
+            "identifier":"CORE-ID", "deviceProperties":{"name":"Phone"},
+            "connectionProperties":{"tunnelState":"disconnected","pairingState":"paired",
+                "transportType":"localNetwork",
+                "potentialHostnames":[format!("{device}.coredevice.local")]}
+        }]}});
+        let live = json!({"info":{"outcome":"success"},"result":{
+            "hardwareProperties":{"udid":device},
+            "connectionProperties":{"tunnelState":"connected","pairingState":"paired"}
+        }});
+        let script = format!(
+            "#!/bin/sh\nfor argument in \"$@\"; do last=\"$argument\"; done\ncase \"$*\" in\n  'devicectl list devices '*) printf '%s' '{}' > \"$last\" ;;\n  'devicectl device info details '*) printf '%s' '{}' > \"$last\" ;;\n  *) exit 1 ;;\nesac\n",
+            cached, live
+        );
+        std::fs::write(&xcrun, script).unwrap();
+        std::fs::set_permissions(&xcrun, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let xcodebuild = root.join("xcodebuild");
+        std::fs::write(&xcodebuild, format!(
+            "#!/bin/sh\nif [ \"$1\" = '-showdestinations' ]; then\n  printf '%s\\n' 'Available destinations for scheme X:' '{{ platform:iOS, id:{device}, name:Phone }}'\nelse\n  echo 'wifi-helper-build-reached' >&2\n  exit 1\nfi\n"
+        )).unwrap();
+        std::fs::set_permissions(&xcodebuild, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let project = root.join("runner/MobileMcpRealRunner.xcodeproj");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("project.pbxproj"),
+            "DEVELOPMENT_TEAM = OLDTEAM123;",
+        )
+        .unwrap();
+        std::fs::write(root.join("runner/configure_signing.py"),
+            "import pathlib,sys\np=pathlib.Path(sys.argv[2])/'project.pbxproj'\np.write_text(p.read_text().replace('OLDTEAM123','NEWTEAM123'))\nprint('NEWTEAM123')\n"
+        ).unwrap();
+        std::fs::write(
+            root.join("runner/configure_ios_signing.sh"),
+            "#!/bin/sh\nexec python3 \"$(dirname \"$0\")/configure_signing.py\" \"$@\"\n",
+        )
+        .unwrap();
+        let launcher = XCTestAgentLauncher::new(
+            xcodebuild.to_string_lossy(),
+            project,
+            root.join("build"),
+            "192.168.1.2",
+            18787,
+            Some("test-token".into()),
+        )
+        .unwrap();
+        let robot = IosXCTestRobot::with_artifact_dir(
+            xcrun.to_string_lossy(),
+            XCTestAgentBridge::new(None),
+            root.join("artifacts"),
+        )
+        .with_agent_launcher(launcher);
+        let report = robot.connection_report(device, true).await.unwrap();
+        assert!(
+            report.connected,
+            "reachable Wi-Fi device was rejected: {}",
+            report.summary()
+        );
+        assert!(report.can_install(), "{}", report.summary());
+        assert!(
+            !report
+                .checks
+                .iter()
+                .any(|c| c.name == "USB" && c.status != "pass")
+        );
+        let status = robot.check_device_health(device).await.unwrap();
+        assert_ne!(status.state, "offline");
+        assert_eq!(status.diagnostics.unwrap()["connected"], true);
+        // A fake build failure proves Install passed connection preflight without touching a phone.
+        let error = robot
+            .prepare_helper(device, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("wifi-helper-build-reached"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(
+                root.join("runner/MobileMcpRealRunner.xcodeproj/project.pbxproj")
+            )
+            .unwrap(),
+            "DEVELOPMENT_TEAM = NEWTEAM123;"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

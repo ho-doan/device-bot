@@ -85,34 +85,49 @@ final class MobileMcpRealRunnerUITests: XCTestCase {
       .filter { !$0.isEmpty }
     let port = Int(environment["DEVICE_BOT_PORT"] ?? "18787") ?? 18787
     let token = environment["DEVICE_BOT_TOKEN"]
-    requestLocalNetworkPermission(host: hosts.first, port: port)
+    guard requestLocalNetworkPermission(host: hosts.first, port: port) else { return }
     MobileMcpRealHostAgent(hosts: hosts, port: port, token: token).run()
   }
 
   /// Ask iOS for Local Network access before the command loop. A first run
   /// shows the system sheet; a previous denial does not, so this opens
   /// Settings on the Local Network page and enables Device Bot there.
-  private func requestLocalNetworkPermission(host: String?, port: Int) {
-    guard let host, let url = bridgeUrl(host: host, port: port, path: "/next") else { return }
+  private func requestLocalNetworkPermission(host: String?, port: Int) -> Bool {
+    guard let host, let url = bridgeUrl(host: host, port: port, path: "/next") else {
+      XCTFail("A reachable Mac bridge address is required for Local Network permission")
+      return false
+    }
+    // XCTest may run its runner in the background. iOS will reject the first
+    // LAN request without showing a permission alert unless the runner itself
+    // is in the foreground (activating the host/target app is not sufficient).
+    guard let runnerBundleId = Bundle.main.bundleIdentifier,
+          runnerBundleId.hasSuffix(".xctrunner") else {
+      XCTFail("Cannot identify the XCTest runner for Local Network permission")
+      return false
+    }
+    let runner = XCUIApplication(bundleIdentifier: runnerBundleId)
+    runner.activate()
+    guard runner.wait(for: .runningForeground, timeout: 10) else {
+      XCTFail("XCTest runner did not enter the foreground before Local Network access")
+      return false
+    }
+    print("Device Bot XCTest runner is in the foreground; requesting Local Network access")
     triggerLocalNetworkAccess(url: url)
-    if acceptLocalNetworkPrompt(timeout: 12) || !localNetworkProhibited(url) {
+    if waitForLocalNetworkPermission(url: url, timeout: 12) {
       print("Device Bot Local Network permission allowed")
-      return
+      return true
     }
 
     print("Device Bot opening Settings → Privacy & Security → Local Network")
     let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
     let opened = openLocalNetworkSettings(settings)
-    if opened {
-      _ = enableDeviceBotLocalNetworkSwitch(in: settings)
-    }
 
     let deadline = Date().addingTimeInterval(90)
     while Date() < deadline {
-      if acceptLocalNetworkPrompt(timeout: 1) || !localNetworkProhibited(url) {
+      if waitForLocalNetworkPermission(url: url, timeout: 1) {
         print("Device Bot Local Network permission allowed")
         XCUIDevice.shared.press(.home)
-        return
+        return true
       }
       RunLoop.current.run(until: Date().addingTimeInterval(1))
     }
@@ -121,6 +136,8 @@ final class MobileMcpRealRunnerUITests: XCTestCase {
     } else {
       print("Device Bot could not open Local Network settings. Turn on Device Bot under Settings → Privacy & Security → Local Network.")
     }
+    XCTFail("Local Network permission is required before starting the Device Bot command loop")
+    return false
   }
 
   private func triggerLocalNetworkAccess(url: URL) {
@@ -130,21 +147,12 @@ final class MobileMcpRealRunnerUITests: XCTestCase {
     browser.start(queue: .main)
   }
 
-  private func acceptLocalNetworkPrompt(timeout: TimeInterval) -> Bool {
-    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-    let allow = NSPredicate(format: "label == 'Allow' OR label == 'Cho phép'")
-    let button = springboard.buttons.matching(allow).firstMatch
-    let alertButton = springboard.alerts.buttons.matching(allow).firstMatch
+  private func waitForLocalNetworkPermission(url: URL, timeout: TimeInterval) -> Bool {
+    // The system dialog belongs to the user. Wait for their choice rather than
+    // tapping a generic Allow button or changing a privacy switch for them.
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
-      if button.exists && button.isHittable {
-        button.tap()
-        return true
-      }
-      if alertButton.exists && alertButton.isHittable {
-        alertButton.tap()
-        return true
-      }
+      if !localNetworkProhibited(url) { return true }
       RunLoop.current.run(until: Date().addingTimeInterval(0.4))
     }
     return false
@@ -359,7 +367,7 @@ private final class MobileMcpRealHostAgent {
         fromY: number(command.params["fromY"]) ?? 0,
         toX: number(command.params["toX"]) ?? 0,
         toY: number(command.params["toY"]) ?? 0,
-        duration: (number(command.params["durationMs"]) ?? 100) / 1000
+        duration: TimeInterval(number(command.params["durationMs"]) ?? 100) / 1000
       )
       return ["ok": ok, "message": ok ? "swipe" : "swipe_failed"]
     case "text":

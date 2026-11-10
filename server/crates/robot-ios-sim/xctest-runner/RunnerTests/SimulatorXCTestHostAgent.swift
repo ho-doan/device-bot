@@ -30,7 +30,10 @@ final class DeviceKitXCTestHostAgent {
   private func execute(_ command: Command) -> [String: Any] {
     switch command.method {
     case "health":
-      return ["ok": true, "bundleId": currentBundleId ?? ""]
+      return ["ok": true, "bundleId": currentBundleId ?? "",
+        "appForeground": currentBundleId.map { XCUIApplication(bundleIdentifier: $0).state == .runningForeground } ?? false,
+        "deviceId": ProcessInfo.processInfo.environment["DEVICE_BOT_DEVICE_ID"] ?? ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? "",
+        "agentVersion": Bundle(for: MobileMcpSimulatorRunnerUITests.self).object(forInfoDictionaryKey: "DeviceBotBuildId") as? String ?? "unknown"]
     case "launch":
       guard let bundleId = string(command.params["bundleId"]), !bundleId.isEmpty else {
         return ["ok": false, "message": "bundleId is required"]
@@ -95,7 +98,6 @@ final class DeviceKitXCTestHostAgent {
         "message": ok ? "ime_action" : "IME action \(action) is not available on the keyboard",
       ]
     case "stop":
-      driver.terminate()
       return ["ok": true, "message": "stopped"]
     default:
       return ["ok": false, "message": "unknown_method"]
@@ -111,7 +113,7 @@ final class DeviceKitXCTestHostAgent {
 
   private func nextCommand() -> Command? {
     for host in hosts {
-      if let command = getCommand(url: "http://\(host):\(port)/next") { return command }
+      if let command = getCommand(url: "http://\(host):\(port)/next?deviceId=\(ProcessInfo.processInfo.environment["DEVICE_BOT_DEVICE_ID"] ?? ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? "")") { return command }
     }
     return nil
   }

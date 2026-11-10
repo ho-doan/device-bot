@@ -239,7 +239,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = N7D3XWS9S5;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = RunnerTests/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Device Bot";
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
 				INFOPLIST_KEY_NSBonjourServices = (
@@ -261,7 +261,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = N7D3XWS9S5;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = RunnerTests/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Device Bot";
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsArbitraryLoads = YES;
 				INFOPLIST_KEY_NSBonjourServices = (

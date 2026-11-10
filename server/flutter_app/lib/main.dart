@@ -26,6 +26,12 @@ class MobileMcpCompanion extends StatelessWidget {
         colorScheme: colors,
         scaffoldBackgroundColor: const Color(0xFF020617),
         useMaterial3: true,
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(foregroundColor: colors.onSurface),
+        ),
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(foregroundColor: colors.onSurface),
+        ),
         cardTheme: const CardThemeData(
           color: Color(0xFF0E1223),
           margin: EdgeInsets.zero,

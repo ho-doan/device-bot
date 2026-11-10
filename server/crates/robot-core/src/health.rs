@@ -68,6 +68,10 @@ impl HealthReport {
                 "recording_session" => "inspect_recording_permissions_and_owner",
                 "device_booted" => "boot_target_simulator",
                 "device_connection" => "check_pairing_trust_usb_or_network",
+                "usb_connection" => "reconnect_data_usb_cable_unlock_and_trust_device",
+                "xcode_destination" => "check_xcode_device_support_and_developer_mode",
+                "agent_version" => "prepare_or_reinstall_xctest_helper",
+                "agent_target" => "select_and_launch_target_app",
                 "device_heartbeat" | "display_response" => {
                     "recheck_device_services; reboot_target_only_if_explicitly_requested"
                 }

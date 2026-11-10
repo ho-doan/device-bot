@@ -19,7 +19,11 @@ use tokio::{
 use url::Url;
 use uuid::Uuid;
 
-use crate::{quicktime_recording::QuickTimeRecording, xctest_agent::XCTestAgentBridge};
+use crate::{
+    quicktime_recording::QuickTimeRecording,
+    runner_cache::{RunnerCache, compatible, live_status},
+    xctest_agent::XCTestAgentBridge,
+};
 
 const ACTION_TIMEOUT: Duration = Duration::from_secs(45);
 const AGENT_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -73,8 +77,56 @@ impl XCTestAgentLauncher {
         })
     }
 
+    fn cache(&self) -> RunnerCache<'_> {
+        RunnerCache {
+            project: &self.project,
+            derived_data: &self.derived_data,
+            simulator: false,
+        }
+    }
+
+    async fn ensure_build(&self) -> Result<(), RobotError> {
+        let cache = self.cache();
+        let version = cache.version()?;
+        if cache.is_current(&version) {
+            return Ok(());
+        }
+        let output = tokio::time::timeout(
+            Duration::from_secs(180),
+            Command::new(&self.xcodebuild_path)
+                .args(["build-for-testing", "-allowProvisioningUpdates", "-project"])
+                .arg(&self.project)
+                .args([
+                    "-scheme",
+                    "MobileMcpRealRunner",
+                    "-destination",
+                    "generic/platform=iOS",
+                    "-derivedDataPath",
+                ])
+                .arg(&self.derived_data)
+                .arg(format!("DEVICE_BOT_BUILD_ID={version}"))
+                .env_remove("SDKROOT")
+                .stdin(Stdio::null())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| RobotError::CommandFailed("iOS XCTest build timed out after 180s".into()))?
+        .map_err(|e| {
+            RobotError::CommandFailed(format!("could not build iOS XCTest helper: {e}"))
+        })?;
+        if !output.status.success() {
+            return Err(RobotError::CommandFailed(format!(
+                "iOS XCTest build/signing failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        cache.mark_current(&version)
+    }
+
     async fn start(&self, device_id: &str) -> Result<Child, RobotError> {
         validate_device_id(device_id)?;
+        self.ensure_build().await?;
         let project = self.project.to_string_lossy().into_owned();
         let derived_data = self.derived_data.to_string_lossy().into_owned();
         let destination = format!("platform=iOS,id={device_id}");
@@ -94,7 +146,9 @@ impl XCTestAgentLauncher {
             ])
             .env_remove("SDKROOT")
             .stdin(Stdio::null())
-            .kill_on_drop(true);
+            .env("TEST_RUNNER_DEVICE_BOT_DEVICE_ID", device_id);
+        #[cfg(unix)]
+        command.process_group(0);
         // Xcode strips TEST_RUNNER_ and injects the remainder into the
         // on-device XCTest process. The runner reads DEVICE_BOT_*.
         for (key, value) in self.test_environment() {
@@ -179,6 +233,7 @@ pub struct IosXCTestRobot {
     recording: Arc<Mutex<Option<QuickTimeRecording>>>,
     agent_launcher: Option<XCTestAgentLauncher>,
     persistent_agents: Arc<Mutex<HashMap<String, Child>>>,
+    runner_project: PathBuf,
 }
 
 impl IosXCTestRobot {
@@ -198,11 +253,19 @@ impl IosXCTestRobot {
             recording: Arc::default(),
             agent_launcher: None,
             persistent_agents: Arc::default(),
+            runner_project: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("xctest-runner/MobileMcpRealRunner.xcodeproj"),
         }
     }
 
     pub fn with_agent_launcher(mut self, launcher: XCTestAgentLauncher) -> Self {
+        self.runner_project = launcher.project.clone();
         self.agent_launcher = Some(launcher);
+        self
+    }
+
+    pub fn with_runner_project(mut self, project: PathBuf) -> Self {
+        self.runner_project = project;
         self
     }
 
@@ -228,24 +291,65 @@ impl IosXCTestRobot {
         let Some(launcher) = &self.agent_launcher else {
             return Ok(());
         };
-        let mut agents = self.persistent_agents.lock().await;
-        if let Some(agent) = agents.get_mut(device_id) {
-            if agent
-                .try_wait()
-                .map_err(|error| {
-                    RobotError::CommandFailed(format!(
-                        "could not inspect the real-iOS XCTest agent process: {error}"
-                    ))
-                })?
-                .is_none()
-            {
+        let version = launcher.cache().version()?;
+        if let Ok(health) = self
+            .agent
+            .dispatch_for(device_id, "health", json!({}), AGENT_PROBE_TIMEOUT)
+            .await
+        {
+            if compatible(&health, device_id, &version) {
                 return Ok(());
             }
-            agents.remove(device_id);
+            let _ = self
+                .agent
+                .dispatch_for(device_id, "stop", json!({}), AGENT_PROBE_TIMEOUT)
+                .await;
+            if let Some(mut child) = self.persistent_agents.lock().await.remove(device_id) {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
         }
-        let agent = launcher.start(device_id).await?;
-        agents.insert(device_id.to_owned(), agent);
-        Ok(())
+        // Serialize preparation, but never infer readiness from a host PID alone.
+        let mut agents = self.persistent_agents.lock().await;
+        let running = agents
+            .get_mut(device_id)
+            .is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+        if !running {
+            agents.remove(device_id);
+            agents.insert(device_id.into(), launcher.start(device_id).await?);
+        }
+        let deadline = tokio::time::Instant::now() + AGENT_START_TIMEOUT;
+        loop {
+            if let Ok(health) = self
+                .agent
+                .dispatch_for(device_id, "health", json!({}), AGENT_PROBE_TIMEOUT)
+                .await
+            {
+                if compatible(&health, device_id, &version) {
+                    return Ok(());
+                }
+                return Err(RobotError::CommandFailed(
+                    "real-iOS helper version/identity mismatch; reinstall this device's helper"
+                        .into(),
+                ));
+            }
+            if let Some(child) = agents.get_mut(device_id) {
+                if let Some(exit) = child
+                    .try_wait()
+                    .map_err(|e| RobotError::CommandFailed(e.to_string()))?
+                {
+                    return Err(RobotError::CommandFailed(format!(
+                        "iOS XCTest helper exited with {exit}; inspect derived-data Logs/Agent"
+                    )));
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(RobotError::CommandFailed(
+                    self.agent.connection_diagnostic().await,
+                ));
+            }
+            sleep(Duration::from_millis(250)).await;
+        }
     }
 
     async fn dispatch(
@@ -255,87 +359,121 @@ impl IosXCTestRobot {
         params: Value,
     ) -> Result<Value, RobotError> {
         self.ensure_agent_started(device_id).await?;
-        self.agent.dispatch(method, params, ACTION_TIMEOUT).await
+        self.agent
+            .dispatch_for(device_id, method, params, ACTION_TIMEOUT)
+            .await
     }
 
-    async fn agent_exit_detail(&self, device_id: &str) -> Result<Option<String>, RobotError> {
-        let mut agents = self.persistent_agents.lock().await;
-        let Some(agent) = agents.get_mut(device_id) else {
-            return Ok(None);
+    /// Reusable, read-only preflight for QC, REST and MCP callers.
+    pub async fn connection_report(
+        &self,
+        device_id: &str,
+        check_xcode: bool,
+    ) -> Result<crate::connection::DeviceConnectionReport, RobotError> {
+        use crate::connection::{ConnectionCheck, DeviceConnectionReport};
+        validate_device_id(device_id)?;
+        let (devices, usb) = tokio::join!(
+            tokio::time::timeout(Duration::from_secs(4), self.devicectl_devices()),
+            crate::connection::usb_attached(device_id)
+        );
+        let devices = devices.map_err(|_| {
+            RobotError::CommandFailed("CoreDevice preflight timed out after 4s".into())
+        })??;
+        let connected = devices
+            .iter()
+            .any(|d| d.id == device_id && d.state == DeviceState::Available);
+        let mut checks = vec![ConnectionCheck {name:"CoreDevice", status:if connected {"pass"} else {"fail"}, detail:if connected {"Device connection is live"} else {"Device is offline/unavailable or not trusted; reconnect USB, unlock and trust this Mac"}.into()}];
+        let usb_attached = usb.as_ref().ok().copied();
+        checks.push(ConnectionCheck {name:"USB", status:match usb_attached {Some(true)=>"pass",Some(false) if !connected=>"fail",Some(false)=>"warn",None=>"unknown"}, detail:match usb {Ok(true)=>"Matching iPhone detected on USB".into(),Ok(false)=>"Matching iPhone not found in macOS USB registry; check cable/port or use a live network connection".into(),Err(error)=>error}});
+        let destination = if !connected {
+            Some(false)
+        } else if check_xcode {
+            let command = self
+                .agent_launcher
+                .as_ref()
+                .map(|l| l.xcodebuild_path.as_str())
+                .unwrap_or("xcodebuild");
+            match crate::connection::xcode_destination_ready(
+                command,
+                &self.runner_project,
+                device_id,
+            )
+            .await
+            {
+                Ok(ready) => Some(ready),
+                Err(error) => {
+                    checks.push(ConnectionCheck {
+                        name: "Xcode",
+                        status: "unknown",
+                        detail: error,
+                    });
+                    None
+                }
+            }
+        } else {
+            None
         };
-        let Some(status) = agent.try_wait().map_err(|error| {
-            RobotError::CommandFailed(format!(
-                "could not inspect the real-iOS XCTest agent process: {error}"
-            ))
-        })?
-        else {
-            return Ok(None);
+        if destination.is_some() {
+            checks.push(ConnectionCheck {
+                name: "Xcode destination",
+                status: if destination == Some(true) {
+                    "pass"
+                } else {
+                    "fail"
+                },
+                detail: if destination == Some(true) {
+                    "Device is eligible for helper installation"
+                } else {
+                    "No eligible connected iOS destination; helper build/install was not started"
+                }
+                .into(),
+            });
+        }
+        let recommended_actions = if !connected {
+            vec!["reconnect_data_usb_cable_and_unlock", "trust_this_mac"]
+        } else if check_xcode && destination != Some(true) {
+            vec!["check_xcode_device_support_and_developer_mode"]
+        } else {
+            vec![]
         };
-        agents.remove(device_id);
-        let log_path = self
+        Ok(DeviceConnectionReport {
+            device_id: device_id.into(),
+            connected,
+            usb_attached,
+            xcode_destination_ready: destination,
+            checks,
+            recommended_actions,
+        })
+    }
+
+    async fn agent_status(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
+        let default_project = &self.runner_project;
+        let default_derived = default_project.parent().unwrap().join("build");
+        let cache = self
             .agent_launcher
             .as_ref()
-            .map(|launcher| {
-                launcher
-                    .derived_data
-                    .join("Logs/Agent")
-                    .display()
-                    .to_string()
-            })
-            .unwrap_or_else(|| "the XCTest derived-data Logs/Agent directory".into());
-        Ok(Some(format!(
-            "the auto-started iOS XCTest agent exited with {status}; inspect {log_path}"
-        )))
-    }
-
-    async fn agent_status(&self, device_id: &str) -> UiRunnerStatus {
-        if let Err(error) = self.ensure_agent_started(device_id).await {
-            return UiRunnerStatus {
-                ready: false,
-                detail: error.to_string(),
-            };
+            .map(|l| l.cache())
+            .unwrap_or(RunnerCache {
+                project: default_project,
+                derived_data: &default_derived,
+                simulator: false,
+            });
+        let expected = cache.version()?;
+        let health = self
+            .agent
+            .dispatch_for(device_id, "health", json!({}), AGENT_PROBE_TIMEOUT)
+            .await;
+        let mut status = live_status(
+            device_id,
+            Some(expected.clone()),
+            cache.is_current(&expected),
+            health,
+        );
+        if self.agent_launcher.is_none() && status.state == "disconnected" {
+            status.state = "unconfigured".into();
+            status.detail = "Configure a signed real-iOS helper and a LAN-reachable agent bridge on the Mac before Prepare / Install".into();
         }
-        let deadline = tokio::time::Instant::now()
-            + if self.agent_launcher.is_some() {
-                AGENT_START_TIMEOUT
-            } else {
-                AGENT_PROBE_TIMEOUT
-            };
-        loop {
-            if self
-                .agent
-                .dispatch("health", json!({}), AGENT_PROBE_TIMEOUT)
-                .await
-                .is_ok()
-            {
-                return UiRunnerStatus {
-                    ready: true,
-                    detail: "XCTest agent connected".into(),
-                };
-            }
-            match self.agent_exit_detail(device_id).await {
-                Ok(Some(detail)) => {
-                    return UiRunnerStatus {
-                        ready: false,
-                        detail,
-                    };
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    return UiRunnerStatus {
-                        ready: false,
-                        detail: error.to_string(),
-                    };
-                }
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return UiRunnerStatus {
-                    ready: false,
-                    detail: self.agent.connection_diagnostic().await,
-                };
-            }
-            sleep(Duration::from_secs(1)).await;
-        }
+        Ok(status)
     }
 
     async fn devicectl_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
@@ -800,7 +938,69 @@ impl Robot for IosXCTestRobot {
 
     async fn ui_runner_status(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
         validate_device_id(device_id)?;
-        Ok(self.agent_status(device_id).await)
+        self.agent_status(device_id).await
+    }
+    async fn check_device_health(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
+        validate_device_id(device_id)?;
+        let (status, report) = tokio::join!(
+            self.agent_status(device_id),
+            self.connection_report(device_id, false)
+        );
+        let mut status = status?;
+        let report = report?;
+        if !report.connected {
+            status.ready = false;
+            status.state = "offline".into();
+            status.detail = report.summary();
+        }
+        status.diagnostics = Some(json!(report));
+        Ok(status)
+    }
+
+    async fn prepare_ui_runner(
+        &self,
+        device_id: &str,
+        app_id: Option<&str>,
+        reinstall: bool,
+    ) -> Result<UiRunnerStatus, RobotError> {
+        validate_device_id(device_id)?;
+        let status = self.check_device_health(device_id).await?;
+        if !reinstall
+            && status.ready
+            && app_id.is_none_or(|app| status.target_app_id.as_deref() == Some(app))
+        {
+            return Ok(status);
+        }
+        let report = self.connection_report(device_id, true).await?;
+        if !report.can_install() {
+            return Err(RobotError::CommandFailed(report.summary()));
+        }
+        if self.agent_launcher.is_none() {
+            return Err(RobotError::Unsupported("Real-iOS helper setup needs a signed runner and a reachable bridge. Configure DEVICE_BOT_IOS_AGENT_BIND, DEVICE_BOT_IOS_AGENT_HOSTS and the shared agent token on the Mac".into()));
+        }
+        let target = if app_id.is_some() {
+            app_id.map(str::to_owned)
+        } else {
+            self.agent_status(device_id)
+                .await
+                .ok()
+                .and_then(|s| s.target_app_id)
+        };
+        if reinstall {
+            let _ = self
+                .agent
+                .dispatch_for(device_id, "stop", json!({}), AGENT_PROBE_TIMEOUT)
+                .await;
+            if let Some(mut child) = self.persistent_agents.lock().await.remove(device_id) {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
+        }
+        self.ensure_agent_started(device_id).await?;
+        if let Some(app_id) = target {
+            self.launch_app(device_id, &app_id).await?;
+        }
+        self.agent_status(device_id).await
     }
 }
 
@@ -960,6 +1160,10 @@ struct CoreConnectionProperties {
     local_hostnames: Vec<String>,
     #[serde(default)]
     potential_hostnames: Vec<String>,
+    #[serde(default)]
+    tunnel_state: Option<String>,
+    #[serde(default)]
+    pairing_state: Option<String>,
 }
 
 fn parse_devicectl_devices(output: &str) -> Result<Vec<RobotDevice>, RobotError> {
@@ -972,6 +1176,15 @@ fn parse_devicectl_devices(output: &str) -> Result<Vec<RobotDevice>, RobotError>
         .into_iter()
         .filter_map(|device| {
             let connection = device.connection_properties?;
+            let state = match (
+                connection.pairing_state.as_deref(),
+                connection.tunnel_state.as_deref(),
+            ) {
+                (Some("unpaired"), _) => DeviceState::Unauthorized,
+                (_, Some("connected")) => DeviceState::Available,
+                (_, Some("unavailable" | "disconnected")) => DeviceState::Offline,
+                _ => DeviceState::Unknown,
+            };
             let udid = connection
                 .local_hostnames
                 .into_iter()
@@ -991,7 +1204,7 @@ fn parse_devicectl_devices(output: &str) -> Result<Vec<RobotDevice>, RobotError>
                 id: udid,
                 name: format!("{} ({})", device.device_properties.name, device.identifier),
                 platform: Platform::Ios,
-                state: DeviceState::Available,
+                state,
             })
         })
         .collect())
@@ -1149,5 +1362,72 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("DEVICE_BOT_IOS_AGENT_HOSTS"));
+    }
+    #[test]
+    fn unavailable_or_unpaired_coredevices_are_never_available() {
+        for (tunnel, pairing, expected) in [
+            ("unavailable", "paired", DeviceState::Offline),
+            ("disconnected", "paired", DeviceState::Offline),
+            ("connected", "unpaired", DeviceState::Unauthorized),
+            ("connected", "paired", DeviceState::Available),
+            ("connecting", "paired", DeviceState::Unknown),
+        ] {
+            let devices = parse_devicectl_devices(&json!({"result":{"devices":[{
+                "identifier":"CORE-ID", "deviceProperties":{"name":"Phone"},
+                "connectionProperties":{"potentialHostnames":["00008130-000959E43EDA001C.coredevice.local"],
+                    "tunnelState":tunnel, "pairingState":pairing}
+            }]}}).to_string()).unwrap();
+            assert_eq!(devices[0].state, expected, "{tunnel}/{pairing}");
+        }
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn public_prepare_and_reboot_fail_before_build_when_device_is_unavailable() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("ios-preflight-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let xcrun = root.join("xcrun");
+        let fixture = json!({"result":{"devices":[{"identifier":"CORE-ID","deviceProperties":{"name":"Phone"},"connectionProperties":{"tunnelState":"unavailable","pairingState":"paired","potentialHostnames":["00008130-000959E43EDA001C.coredevice.local"]}}]}}).to_string();
+        std::fs::write(&xcrun, format!("#!/bin/sh\nfor argument in \"$@\"; do last=\"$argument\"; done\nprintf '%s' '{}' > \"$last\"\n", fixture)).unwrap();
+        std::fs::set_permissions(&xcrun, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let project = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("xctest-runner/MobileMcpRealRunner.xcodeproj");
+        let launcher = XCTestAgentLauncher::new(
+            "must-not-run-xcodebuild",
+            project,
+            root.join("build"),
+            "192.168.1.2",
+            18787,
+            Some("test-token".into()),
+        )
+        .unwrap();
+        let robot = IosXCTestRobot::with_artifact_dir(
+            xcrun.to_string_lossy(),
+            XCTestAgentBridge::new(None),
+            root.join("artifacts"),
+        )
+        .with_agent_launcher(launcher);
+        let status = robot
+            .check_device_health("00008130-000959E43EDA001C")
+            .await
+            .unwrap();
+        assert!(!status.ready);
+        assert_eq!(status.state, "offline");
+        assert_eq!(status.diagnostics.unwrap()["connected"], false);
+        for reinstall in [false, true] {
+            let result = if reinstall {
+                robot.reboot_helper("00008130-000959E43EDA001C", None).await
+            } else {
+                robot
+                    .prepare_helper("00008130-000959E43EDA001C", None)
+                    .await
+            };
+            let error = result.unwrap_err().to_string();
+            assert!(error.contains("CoreDevice"), "{error}");
+            assert!(!error.contains("could not build"), "{error}");
+            assert!(robot.persistent_agents.lock().await.is_empty());
+            assert!(!root.join("build").exists());
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

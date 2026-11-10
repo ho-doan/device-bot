@@ -58,6 +58,7 @@ case "$command" in
     }
     # Xcode strips the TEST_RUNNER_ prefix before the on-device test reads
     # DEVICE_BOT_HOSTS, DEVICE_BOT_PORT, and DEVICE_BOT_TOKEN.
+    export TEST_RUNNER_DEVICE_BOT_DEVICE_ID="$device"
     export TEST_RUNNER_DEVICE_BOT_HOSTS="$hosts"
     export TEST_RUNNER_DEVICE_BOT_PORT="$port"
     export TEST_RUNNER_DEVICE_BOT_TOKEN="$token"

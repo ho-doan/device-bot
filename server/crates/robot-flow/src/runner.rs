@@ -837,7 +837,13 @@ impl FlowRunner {
                     values.contains(&json!("native")) && values.contains(&json!("flutter"))
                 });
             if !supports_source {
+                if s.source.as_deref().is_some_and(|v| v != "auto") {
+                    return Err("MCP server does not support explicit element source".into());
+                }
                 return self.query_source(s, None).await;
+            }
+            if let Some(source) = s.source.as_deref().filter(|v| *v != "auto") {
+                return self.query_source(s, Some(source)).await;
             }
             let native = self.query_source(s, Some("native")).await?;
             if !native.is_empty() {
@@ -900,6 +906,11 @@ impl FlowRunner {
                     let y = (b.1 + b.3) / 2.;
                     found.retain(|e| rectangle(e).is_ok_and(|b| (y >= b.1 && y <= b.3) != exclude));
                 }
+            }
+            if let Some(position) = &s.position {
+                found = schema::position_index(position, found.len())?
+                    .map(|index| vec![found[index].clone()])
+                    .unwrap_or_default();
             }
             Ok(found)
         })

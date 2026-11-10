@@ -8,15 +8,16 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use axum::{
     Router,
     body::Bytes,
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 use device_admin_api::{ActivityLog, AdminState};
 use device_mcp_protocol::{JsonRpcRequest, RpcError};
 use robot_core::Robot;
-use serde_json::Value;
+use serde::Deserialize;
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -46,12 +47,140 @@ pub fn router(robot: Arc<dyn Robot>, bearer_token: Option<String>) -> Router {
     };
     Router::new()
         .route("/mcp", post(handle_post).delete(handle_delete))
+        .route("/health", get(handle_health))
+        .route("/reboot", post(handle_reboot))
         .with_state(state)
         .merge(device_admin_api::router(AdminState::new(
             robot,
             activity_log,
             bearer_token,
         )))
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HealthTarget {
+    device_id: Option<String>,
+}
+
+async fn handle_health(
+    State(state): State<HttpState>,
+    headers: HeaderMap,
+    Query(target): Query<HealthTarget>,
+) -> Response {
+    if !is_authorized(&headers, state.bearer_token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let devices = match tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        state.robot.list_devices(),
+    )
+    .await
+    {
+        Ok(Ok(devices)) => devices,
+        _ => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                axum::Json(
+                    json!({"healthy":false,"detail":"Device discovery failed or timed out"}),
+                ),
+            )
+                .into_response();
+        }
+    };
+    if target
+        .device_id
+        .as_ref()
+        .is_some_and(|id| !devices.iter().any(|d| &d.id == id))
+    {
+        return (
+            StatusCode::NOT_FOUND,
+            axum::Json(json!({"healthy":false,"detail":"Device not found"})),
+        )
+            .into_response();
+    }
+    let mut checks = Vec::new();
+    let mut probes = tokio::task::JoinSet::new();
+    for device in devices
+        .into_iter()
+        .filter(|d| target.device_id.as_ref().is_none_or(|id| &d.id == id))
+    {
+        let robot = state.robot.clone();
+        probes.spawn(async move {
+            let status = tokio::time::timeout(std::time::Duration::from_secs(5), robot.check_device_health(&device.id)).await;
+            let mut value = match status {
+                Ok(Ok(status)) => json!(status),
+                Ok(Err(error)) => json!({"ready":false,"state":"unverified","detail":error.to_string()}),
+                Err(_) => json!({"ready":false,"state":"timeout","detail":"Read-only helper check timed out"}),
+            };
+            value["device"] = json!(device);
+            value
+        });
+    }
+    while let Some(result) = probes.join_next().await {
+        match result {
+            Ok(value) => checks.push(value),
+            Err(_) => checks.push(json!({"ready":false,"state":"check_failed"})),
+        }
+    }
+    checks.sort_by(|a, b| a["device"]["id"].as_str().cmp(&b["device"]["id"].as_str()));
+    let ready = !checks.is_empty() && checks.iter().all(|v| v["ready"] == true);
+    let code = if target.device_id.is_some() && !ready {
+        StatusCode::SERVICE_UNAVAILABLE
+    } else {
+        StatusCode::OK
+    };
+    (code, axum::Json(json!({"server":{"healthy":true,"name":"device-bot","version":env!("CARGO_PKG_VERSION"),"protocolVersion":device_mcp_protocol::PROTOCOL_VERSION},"ready":ready,"devices":checks}))).into_response()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RebootTarget {
+    device_id: String,
+    app_id: Option<String>,
+    #[serde(default = "default_reinstall")]
+    reinstall: bool,
+}
+fn default_reinstall() -> bool {
+    true
+}
+
+async fn handle_reboot(
+    State(state): State<HttpState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if !is_authorized(&headers, state.bearer_token.as_deref()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let target =
+        match serde_json::from_slice::<RebootTarget>(&body) {
+            Ok(target)
+                if !target.device_id.trim().is_empty()
+                    && target
+                        .app_id
+                        .as_ref()
+                        .is_none_or(|id| !id.trim().is_empty()) =>
+            {
+                target
+            }
+            _ => return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(
+                    json!({"detail":"Expected deviceId and optional non-empty appId/reinstall"}),
+                ),
+            )
+                .into_response(),
+        };
+    // Reinstall only the helper. Never reset/reboot the device or uninstall its target app.
+    match tokio::time::timeout(std::time::Duration::from_secs(300), async {
+        if target.reinstall { state.robot.reboot_helper(&target.device_id, target.app_id.as_deref()).await }
+        else { state.robot.prepare_helper(&target.device_id, target.app_id.as_deref()).await }
+    }).await {
+        Ok(Ok(status)) => (StatusCode::OK, axum::Json(json!({"deviceId":target.device_id,"serverVersion":env!("CARGO_PKG_VERSION"),"runner":status}))).into_response(),
+        Ok(Err(error)) => (StatusCode::SERVICE_UNAVAILABLE, axum::Json(json!({"deviceId":target.device_id,"detail":error.to_string()}))).into_response(),
+        Err(_) => (StatusCode::GATEWAY_TIMEOUT, axum::Json(json!({"deviceId":target.device_id,"detail":"Helper preparation timed out"}))).into_response(),
+    }
 }
 
 /// Bind and serve Streamable HTTP.
@@ -230,12 +359,50 @@ mod tests {
 
     use super::*;
 
-    struct NoopRobot;
+    #[derive(Default)]
+    struct NoopRobot {
+        preparations: std::sync::Mutex<Vec<Value>>,
+    }
 
     #[async_trait]
     impl Robot for NoopRobot {
         async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
-            Ok(vec![])
+            Ok(vec![RobotDevice {
+                id: "sim".into(),
+                name: "Simulator".into(),
+                platform: robot_core::Platform::Ios,
+                state: robot_core::DeviceState::Available,
+            }])
+        }
+        async fn ui_runner_status(
+            &self,
+            _: &str,
+        ) -> Result<robot_core::UiRunnerStatus, RobotError> {
+            Ok(robot_core::UiRunnerStatus {
+                ready: false,
+                state: "disconnected".into(),
+                detail: "No live helper".into(),
+                cache_ready: true,
+                expected_version: Some("v2".into()),
+                ..Default::default()
+            })
+        }
+        async fn prepare_ui_runner(
+            &self,
+            id: &str,
+            app: Option<&str>,
+            reinstall: bool,
+        ) -> Result<robot_core::UiRunnerStatus, RobotError> {
+            self.preparations
+                .lock()
+                .unwrap()
+                .push(json!({"deviceId":id,"appId":app,"reinstall":reinstall}));
+            Ok(robot_core::UiRunnerStatus {
+                ready: true,
+                state: "ready".into(),
+                detail: "prepared".into(),
+                ..Default::default()
+            })
         }
         async fn take_screenshot(&self, _: &str) -> Result<Vec<u8>, RobotError> {
             Err(RobotError::Unsupported("unused".into()))
@@ -278,7 +445,7 @@ mod tests {
 
     #[tokio::test]
     async fn requires_bearer_auth_and_preserves_lifecycle_in_one_session() {
-        let app = router(Arc::new(NoopRobot), Some("secret".into()));
+        let app = router(Arc::new(NoopRobot::default()), Some("secret".into()));
         let unauthorized = app
             .clone()
             .oneshot(
@@ -329,7 +496,7 @@ mod tests {
 
     #[tokio::test]
     async fn returns_an_sse_message_when_the_client_requests_it() {
-        let response = router(Arc::new(NoopRobot), None)
+        let response = router(Arc::new(NoopRobot::default()), None)
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -345,5 +512,90 @@ mod tests {
             response.headers()[header::CONTENT_TYPE],
             "text/event-stream"
         );
+    }
+    #[tokio::test]
+    async fn health_is_read_only_and_reboot_is_authenticated_and_device_scoped() {
+        let robot = Arc::new(NoopRobot::default());
+        let app = router(robot.clone(), Some("test-secret".into()));
+        for (method, uri, body) in [
+            ("GET", "/health?deviceId=sim", ""),
+            ("POST", "/reboot", r#"{"deviceId":"sim"}"#),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+        assert!(robot.preparations.lock().unwrap().is_empty());
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/health?deviceId=sim")
+                    .header(header::AUTHORIZATION, "Bearer test-secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = axum::body::to_bytes(response.into_body(), 10000)
+            .await
+            .unwrap();
+        let status: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status["server"]["healthy"], true);
+        assert_eq!(status["devices"][0]["ready"], false);
+        assert_eq!(status["devices"][0]["cacheReady"], true);
+        assert!(robot.preparations.lock().unwrap().is_empty());
+        for (body, expected) in [
+            (r#"{"deviceId":"sim", "appId":"app"}"#, true),
+            (r#"{"deviceId":"sim", "reinstall":false}"#, false),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/reboot")
+                        .header(header::AUTHORIZATION, "Bearer test-secret")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                robot.preparations.lock().unwrap().last().unwrap()["reinstall"],
+                expected
+            );
+        }
+        for body in [
+            r#"{"deviceId":""}"#,
+            r#"{"deviceId":"sim","appId":""}"#,
+            r#"{"deviceId":"sim", "wipe":true}"#,
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/reboot")
+                        .header(header::AUTHORIZATION, "Bearer test-secret")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+        assert_eq!(robot.preparations.lock().unwrap().len(), 2);
     }
 }

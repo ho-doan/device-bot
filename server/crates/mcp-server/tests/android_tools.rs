@@ -705,3 +705,54 @@ async fn flutter_discovery_only_runs_for_missing_native_matches() {
     assert_eq!(response["result"]["isError"], true);
     assert_eq!(robot.actions.lock().unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn element_position_is_one_based_and_applied_before_result_limit() {
+    let robot = Arc::new(RecordingRobot::default());
+    let mut server = Server::new(robot);
+    ready(&mut server).await;
+    for (i, (position, expected)) in [
+        (json!("first"), Some(1)),
+        (json!(2), Some(2)),
+        (json!("last"), Some(3)),
+        (json!(4), None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let response = server
+            .handle(request(
+                300 + i as u64,
+                "tools/call",
+                json!({
+                    "name": "mobile_list_elements_on_screen",
+                    "arguments": {"deviceId":"emulator-5554", "position":position, "maxResults":1}
+                }),
+            ))
+            .await
+            .unwrap();
+        let elements = response["result"]["structuredContent"]["elements"]
+            .as_array()
+            .unwrap();
+        if let Some(index) = expected {
+            assert_eq!(elements.len(), 1);
+            assert_eq!(elements[0]["index"], index);
+        } else {
+            assert!(elements.is_empty());
+        }
+    }
+    for position in [json!(0), json!(-1), json!("second"), Value::Null] {
+        let response = server
+            .handle(request(
+                400,
+                "tools/call",
+                json!({
+                    "name":"mobile_list_elements_on_screen",
+                    "arguments":{"deviceId":"emulator-5554", "position":position}
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response["result"]["isError"], true);
+    }
+}

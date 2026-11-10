@@ -6,7 +6,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -38,6 +38,8 @@ pub struct AgentCommand {
     pub id: String,
     pub method: String,
     pub params: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,13 +79,35 @@ impl XCTestAgentBridge {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, RobotError> {
+        self.dispatch_to(None, method.into(), params, timeout).await
+    }
+
+    pub async fn dispatch_for(
+        &self,
+        device_id: &str,
+        method: impl Into<String>,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, RobotError> {
+        self.dispatch_to(Some(device_id.into()), method.into(), params, timeout)
+            .await
+    }
+
+    async fn dispatch_to(
+        &self,
+        device_id: Option<String>,
+        method: String,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, RobotError> {
         let id = Uuid::new_v4().to_string();
         let (sender, receiver) = oneshot::channel();
         self.state.waiters.lock().await.insert(id.clone(), sender);
         self.state.commands.lock().await.push_back(AgentCommand {
             id: id.clone(),
-            method: method.into(),
+            method,
             params,
+            device_id,
         });
 
         let result = tokio::time::timeout(timeout, receiver).await;
@@ -124,18 +148,37 @@ impl XCTestAgentBridge {
     }
 }
 
-async fn health(State(state): State<Arc<StateData>>, headers: HeaderMap) -> Response {
+async fn health(
+    State(state): State<Arc<StateData>>,
+    Query(identity): Query<AgentIdentity>,
+    headers: HeaderMap,
+) -> Response {
     if !authorized(&headers, &state) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let bridge = XCTestAgentBridge { state };
-    match bridge.dispatch("health", serde_json::json!({}), Duration::from_secs(2)).await {
-        // dispatch already validates AgentResult.ok; it is not part of the payload.
-        Ok(_) =>
-            Json(serde_json::json!({"healthy":true})).into_response(),
-        _ => (StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"healthy":false,"detail":"XCTest helper did not confirm its heartbeat"})))
-            .into_response(),
+    let result = if let Some(device) = identity.device_id.as_deref() {
+        bridge
+            .dispatch_for(
+                device,
+                "health",
+                serde_json::json!({}),
+                Duration::from_secs(2),
+            )
+            .await
+    } else {
+        bridge
+            .dispatch("health", serde_json::json!({}), Duration::from_secs(2))
+            .await
+    };
+    match result {
+        Ok(value) => {
+            let matches = identity.device_id.as_ref().is_none_or(|id| value["deviceId"].as_str() == Some(id))
+                && identity.expected_version.as_ref().is_none_or(|v| value["agentVersion"].as_str() == Some(v));
+            (if matches { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE },
+                Json(serde_json::json!({"healthy":matches,"helper":value}))).into_response()
+        }
+        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"healthy":false,"detail":"XCTest helper did not confirm its heartbeat"}))).into_response(),
     }
 }
 
@@ -149,12 +192,27 @@ fn authorized(headers: &HeaderMap, state: &StateData) -> bool {
         .is_some_and(|value| value == token)
 }
 
-async fn next(State(state): State<Arc<StateData>>, headers: HeaderMap) -> Response {
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentIdentity {
+    device_id: Option<String>,
+    expected_version: Option<String>,
+}
+
+async fn next(
+    State(state): State<Arc<StateData>>,
+    Query(identity): Query<AgentIdentity>,
+    headers: HeaderMap,
+) -> Response {
     if !authorized(&headers, &state) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     *state.last_authenticated_request.lock().await = Some(std::time::Instant::now());
-    match state.commands.lock().await.pop_front() {
+    let mut commands = state.commands.lock().await;
+    let index = commands
+        .iter()
+        .position(|command| command.device_id.is_none() || command.device_id == identity.device_id);
+    match index.and_then(|index| commands.remove(index)) {
         Some(command) => Json(command).into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
     }
@@ -318,5 +376,49 @@ mod tests {
         );
         assert!(bridge.state.commands.lock().await.is_empty());
         assert!(bridge.state.waiters.lock().await.is_empty());
+    }
+    #[tokio::test]
+    async fn helper_on_another_device_cannot_consume_scoped_commands() {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+        let bridge = XCTestAgentBridge::new(None);
+        let sender = bridge.clone();
+        let task = tokio::spawn(async move {
+            sender
+                .dispatch_for(
+                    "sim-a",
+                    "health",
+                    serde_json::json!({}),
+                    Duration::from_secs(2),
+                )
+                .await
+        });
+        tokio::task::yield_now().await;
+        for path in ["/next?deviceId=sim-b", "/next"] {
+            let response = bridge
+                .router()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        }
+        let response = bridge
+            .router()
+            .oneshot(
+                Request::builder()
+                    .uri("/next?deviceId=sim-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let command: Value = serde_json::from_slice(&bytes).unwrap();
+        let response = bridge.router().oneshot(Request::builder().method("POST").uri("/result").header("content-type","application/json").body(Body::from(serde_json::json!({"id":command["id"],"ok":true,"deviceId":"sim-a","agentVersion":"v2"}).to_string())).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(task.await.unwrap().unwrap()["deviceId"], "sim-a");
     }
 }

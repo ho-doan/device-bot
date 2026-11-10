@@ -8,9 +8,13 @@ class Dashboard extends StatelessWidget {
     required this.onViewScreenshot,
     required this.onBootDevice,
     required this.onLaunchApp,
+    this.onRunnerAction,
+    this.busyDevices = const {},
     super.key,
   });
 
+  final void Function(AdminDevice, RunnerAction)? onRunnerAction;
+  final Set<String> busyDevices;
   final DashboardSnapshot snapshot;
   final ValueChanged<AdminDevice> onViewScreenshot;
   final Future<void> Function(AdminDevice) onBootDevice;
@@ -25,6 +29,8 @@ class Dashboard extends StatelessWidget {
           onViewScreenshot: onViewScreenshot,
           onBootDevice: onBootDevice,
           onLaunchApp: onLaunchApp,
+          onRunnerAction: onRunnerAction,
+          busyDevices: busyDevices,
         );
         final activity = _ActivityPanel(
           events: snapshot.events,
@@ -54,9 +60,13 @@ class _DevicesPanel extends StatelessWidget {
     required this.onViewScreenshot,
     required this.onBootDevice,
     required this.onLaunchApp,
+    required this.onRunnerAction,
+    required this.busyDevices,
   });
 
   final List<AdminDevice> devices;
+  final void Function(AdminDevice, RunnerAction)? onRunnerAction;
+  final Set<String> busyDevices;
   final ValueChanged<AdminDevice> onViewScreenshot;
   final Future<void> Function(AdminDevice) onBootDevice;
   final Future<void> Function(AdminDevice) onLaunchApp;
@@ -78,37 +88,91 @@ class _DevicesPanel extends StatelessWidget {
               const Text('No active devices were reported by the MCP server.')
             else
               ...devices.map(
-                (device) => ListTile(
-                  key: ValueKey(device.id),
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    device.platform == 'ios'
-                        ? Icons.phone_iphone
-                        : Icons.android,
-                  ),
-                  title: Text(device.name),
-                  subtitle: SelectableText(device.id),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _StatusChip(status: device.state),
-                      IconButton(
-                        tooltip: 'Boot device',
-                        onPressed: () => onBootDevice(device),
-                        icon: const Icon(Icons.power_settings_new),
+                (device) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ListTile(
+                      key: ValueKey(device.id),
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        device.platform == 'ios'
+                            ? Icons.phone_iphone
+                            : Icons.android,
                       ),
-                      IconButton(
-                        tooltip: 'Launch app',
-                        onPressed: () => onLaunchApp(device),
-                        icon: const Icon(Icons.rocket_launch_outlined),
+                      title: Text(device.name),
+                      subtitle: SelectableText(device.id),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _StatusChip(
+                            status: device.state,
+                            readiness: device.readiness,
+                            busy: busyDevices.contains(device.id),
+                          ),
+                          IconButton(
+                            tooltip: 'Boot device',
+                            onPressed: busyDevices.contains(device.id)
+                                ? null
+                                : () => onBootDevice(device),
+                            icon: const Icon(Icons.power_settings_new),
+                          ),
+                          IconButton(
+                            tooltip: 'Launch app',
+                            onPressed: busyDevices.contains(device.id)
+                                ? null
+                                : () => onLaunchApp(device),
+                            icon: const Icon(Icons.rocket_launch_outlined),
+                          ),
+                          IconButton(
+                            tooltip: 'Screenshot',
+                            onPressed: busyDevices.contains(device.id)
+                                ? null
+                                : () => onViewScreenshot(device),
+                            icon: const Icon(Icons.screenshot_monitor),
+                          ),
+                        ],
                       ),
-                      IconButton(
-                        tooltip: 'Screenshot',
-                        onPressed: () => onViewScreenshot(device),
-                        icon: const Icon(Icons.screenshot_monitor),
+                    ),
+                    if (device.readiness != null)
+                      Tooltip(
+                        message: device.readiness!.report,
+                        child: Text(
+                          device.readiness!.detail,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ],
-                  ),
+                    if (device.platform == 'ios')
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8, bottom: 12),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final action in RunnerAction.values)
+                              OutlinedButton.icon(
+                                onPressed:
+                                    busyDevices.contains(device.id) ||
+                                        onRunnerAction == null
+                                    ? null
+                                    : () => onRunnerAction!(device, action),
+                                icon: Icon(switch (action) {
+                                  RunnerAction.health =>
+                                    Icons.health_and_safety_outlined,
+                                  RunnerAction.prepare =>
+                                    Icons.download_outlined,
+                                  RunnerAction.reboot => Icons.restart_alt,
+                                }, size: 18),
+                                label: Text(switch (action) {
+                                  RunnerAction.health => 'Check health',
+                                  RunnerAction.prepare => 'Prepare / Install',
+                                  RunnerAction.reboot => 'Reboot helper',
+                                }),
+                              ),
+                          ],
+                        ),
+                      ),
+                  ],
                 ),
               ),
           ],
@@ -164,19 +228,27 @@ class _ActivityPanel extends StatelessWidget {
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.status});
+  const _StatusChip({required this.status, this.readiness, this.busy = false});
 
   final String status;
+  final DeviceReadiness? readiness;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
-    final available = status == 'available';
+    final available =
+        !busy && status == 'available' && readiness?.ready == true;
+    final label = busy
+        ? 'Working…'
+        : status != 'available'
+        ? status
+        : readiness?.label ?? 'Detected';
     return Chip(
       avatar: Icon(
         available ? Icons.check_circle : Icons.pause_circle_outline,
         size: 18,
       ),
-      label: Text(available ? 'Available' : status),
+      label: Text(label),
       backgroundColor: available
           ? const Color(0xFF14532D)
           : const Color(0xFF78350F),

@@ -19,7 +19,7 @@ String elementInspectionErrorMessage(Object error) {
   final message = error.toString();
   if (message.contains('no active app is known')) {
     return 'Accessibility elements are unavailable. Launch the target app '
-        'through Device Bot, then reopen the inspector.\n\nDriver: $message';
+        'through Device Bot, then refresh the inspector.\n\nDriver: $message';
   }
   return 'Could not find accessibility elements.\n\n$message';
 }
@@ -53,37 +53,73 @@ double inspectorCoordinateScale({
   );
 }
 
-enum InspectorFlowAction { tap, typeText, assertVisible }
+enum InspectorFlowAction { tap, typeText, assertVisible, scrollUp, scrollDown }
 
 String buildInspectorFlowYaml({
   required AdminElement element,
   required InspectorFlowAction action,
   required int sequence,
   String inputText = '',
+  List<AdminElement> elements = const [],
 }) {
-  final selector = _yamlQuoteValue(element.selector);
+  final String selector;
+  final id = element.resourceId?.trim();
+  final uniqueId =
+      id != null &&
+      id.isNotEmpty &&
+      (elements.isEmpty ||
+          elements.where((e) => e.resourceId == id).length == 1);
+  final uniqueLabel =
+      element.hasLabel &&
+      (elements.isEmpty ||
+          elements
+                  .where(
+                    (e) => [e.text, e.contentDescription].any(
+                      (value) =>
+                          value
+                              ?.toLowerCase()
+                              .split('\n')
+                              .contains(element.name.toLowerCase()) ??
+                          false,
+                    ),
+                  )
+                  .length ==
+              1);
+  final source = element.source == null
+      ? ''
+      : '      source: ${element.source}\n';
+  if (uniqueId) {
+    selector = '$source      resource_id: "${_yamlQuoteValue(id)}"';
+  } else if (uniqueLabel) {
+    selector = '$source      label: "${_yamlQuoteValue(element.name)}"';
+  } else if (element.position != null) {
+    selector = [
+      if (element.source != null) '      source: ${element.source}',
+      '      class_contains: "${_yamlQuoteValue(element.className)}"',
+      '      position: ${element.position}',
+    ].join('\n');
+  } else if (element.resourceId?.trim().isNotEmpty ?? false) {
+    selector = '      resource_id: "${_yamlQuoteValue(element.resourceId!)}"';
+  } else if (element.hasLabel) {
+    selector = '      label: "${_yamlQuoteValue(element.name)}"';
+  } else {
+    selector =
+        '      class_contains: "${_yamlQuoteValue(element.className)}"\n'
+        '      position: 1';
+  }
   switch (action) {
     case InspectorFlowAction.tap:
-      return '''
-  - id: tap_element_$sequence
-    tap_element:
-      filter: "$selector"
-      max_results: 1''';
+      return '  - id: tap_element_$sequence\n    tap_element:\n$selector';
     case InspectorFlowAction.typeText:
-      return '''
-  - id: tap_element_$sequence
-    tap_element:
-      filter: "$selector"
-      max_results: 1
-  - id: type_text_$sequence
-    type_text:
-      text: "${_yamlQuoteValue(inputText)}"''';
+      return '  - id: tap_element_$sequence\n    tap_element:\n$selector\n'
+          '  - id: type_text_$sequence\n    type_text:\n'
+          '      text: "${_yamlQuoteValue(inputText)}"';
     case InspectorFlowAction.assertVisible:
-      return '''
-  - id: assert_element_$sequence
-    assert_element:
-      filter: "$selector"
-      max_results: 1''';
+      return '  - id: assert_element_$sequence\n    assert_element:\n$selector';
+    case InspectorFlowAction.scrollUp:
+    case InspectorFlowAction.scrollDown:
+      return '  - id: scroll_$sequence\n    scroll:\n$selector\n'
+          '      direction: ${action == InspectorFlowAction.scrollUp ? 'up' : 'down'}';
   }
 }
 
@@ -105,6 +141,8 @@ class _CompanionHomeState extends State<CompanionHome> {
   StreamSubscription<AdminEvent>? _mcpEventSubscription;
   List<AdminEvent> _liveEvents = const [];
   String _activityStatus = 'Activity stream is connecting…';
+  final Map<String, DeviceReadiness> _deviceReadiness = {};
+  final Set<String> _busyDevices = {};
   int _connectionGeneration = 0;
   bool _tokenVisible = false;
 
@@ -139,6 +177,7 @@ class _CompanionHomeState extends State<CompanionHome> {
     unawaited(previousClient?.dispose() ?? Future<void>.value());
     setState(() {
       _liveEvents = const [];
+      _deviceReadiness.clear();
       _activityStatus = 'MCP session is connecting…';
       _snapshot = client.loadDashboard();
     });
@@ -182,10 +221,42 @@ class _CompanionHomeState extends State<CompanionHome> {
       ..sort((first, second) => first.sequence.compareTo(second.sequence));
     final firstToKeep = events.length - snapshot.config.logCapacity;
     return DashboardSnapshot(
-      devices: snapshot.devices,
+      devices: [
+        for (final device in snapshot.devices)
+          if (_deviceReadiness[device.id] case final readiness?)
+            device.withReadiness(readiness)
+          else
+            device,
+      ],
       config: snapshot.config,
       events: firstToKeep > 0 ? events.sublist(firstToKeep) : events,
     );
+  }
+
+  Future<void> _runnerAction(AdminDevice device, RunnerAction action) async {
+    if (_busyDevices.contains(device.id)) return;
+    final generation = _connectionGeneration;
+    setState(() => _busyDevices.add(device.id));
+    try {
+      final status = await _client().runnerStatus(device.id, action: action);
+      if (!mounted || generation != _connectionGeneration) return;
+      setState(() => _deviceReadiness[device.id] = status);
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('${device.name}: ${status.label}'),
+          content: SingleChildScrollView(child: SelectableText(status.report)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busyDevices.remove(device.id));
+    }
   }
 
   void _showScreenshot(AdminDevice device) {
@@ -193,7 +264,7 @@ class _CompanionHomeState extends State<CompanionHome> {
       context: context,
       builder: (context) => _ScreenshotDialog(
         device: device,
-        inspection: _loadInspection(device),
+        loadInspection: () => _loadInspection(device),
       ),
     );
   }
@@ -226,6 +297,14 @@ class _CompanionHomeState extends State<CompanionHome> {
     if (!mounted || appId == null || appId.trim().isEmpty) return;
     try {
       await _client().launchApp(device.id, appId.trim());
+      if (device.platform == 'ios') {
+        final status = await _client().runnerStatus(
+          device.id,
+          action: RunnerAction.prepare,
+          appId: appId.trim(),
+        );
+        if (!status.ready) throw McpException(status.detail);
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -250,8 +329,12 @@ class _CompanionHomeState extends State<CompanionHome> {
     final client = _client();
     final image = await client.takeScreenshot(device.id);
     try {
-      final elements = await client.listElements(device.id);
-      return _InspectionData(image: image, elements: elements);
+      final inspection = await client.inspectElements(device.id);
+      return _InspectionData(
+        image: image,
+        elements: inspection.elements,
+        elementsError: inspection.warning,
+      );
     } catch (error) {
       // A screenshot does not require an app context, while iOS XCTest UI
       // queries do. Keep the screenshot visible when the latter is unavailable.
@@ -316,6 +399,8 @@ class _CompanionHomeState extends State<CompanionHome> {
                             onViewScreenshot: _showScreenshot,
                             onBootDevice: _bootDevice,
                             onLaunchApp: _launchApp,
+                            onRunnerAction: _runnerAction,
+                            busyDevices: _busyDevices,
                           );
                         },
                       ),
@@ -567,10 +652,10 @@ class _InspectionData {
 }
 
 class _ScreenshotDialog extends StatefulWidget {
-  const _ScreenshotDialog({required this.device, required this.inspection});
+  const _ScreenshotDialog({required this.device, required this.loadInspection});
 
   final AdminDevice device;
-  final Future<_InspectionData> inspection;
+  final Future<_InspectionData> Function() loadInspection;
 
   @override
   State<_ScreenshotDialog> createState() => _ScreenshotDialogState();
@@ -580,11 +665,13 @@ class _ScreenshotDialogState extends State<_ScreenshotDialog> {
   late final TextEditingController _yamlController;
   int? _selectedIndex;
   int _flowSequence = 0;
+  late Future<_InspectionData> _inspection;
 
   @override
   void initState() {
     super.initState();
     _yamlController = TextEditingController(text: _initialYaml());
+    _inspection = widget.loadInspection();
   }
 
   @override
@@ -594,17 +681,13 @@ class _ScreenshotDialogState extends State<_ScreenshotDialog> {
   }
 
   String _initialYaml() =>
-      '''version: 1
+      '''version: 2
 name: qc_${widget.device.id.replaceAll(RegExp(r'[^a-zA-Z0-9]+'), '_')}
 description: Scenario drafted from the Flutter element inspector.
 steps:
   - id: select_device
     select_device:
       id: "${_yamlQuoteValue(widget.device.id)}"
-  - id: inspect_elements
-    list_elements:
-      filter: "button"
-      max_results: 20
 ''';
 
   void _selectElement(int index) {
@@ -626,6 +709,7 @@ steps:
       action: draft.action,
       sequence: ++_flowSequence,
       inputText: draft.inputText,
+      elements: elements,
     );
     final current = _yamlController.text.trimRight();
     final next = '$current\n$snippet\n';
@@ -651,6 +735,14 @@ steps:
       title: Row(
         children: [
           Expanded(child: Text('${widget.device.name} element inspector')),
+          IconButton(
+            tooltip: 'Recapture screenshot and elements (indices may change)',
+            icon: const Icon(Icons.refresh),
+            onPressed: () => setState(() {
+              _selectedIndex = null;
+              _inspection = widget.loadInspection();
+            }),
+          ),
           Tooltip(
             message: 'Screenshot is captured before finding all elements',
             child: Icon(
@@ -665,7 +757,7 @@ steps:
         width: 1080,
         height: 680,
         child: FutureBuilder<_InspectionData>(
-          future: widget.inspection,
+          future: _inspection,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
@@ -749,6 +841,15 @@ class _InspectorSidebar extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (elementsError != null && elements.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              elementsError!,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         Text(
           'Elements (${elements.length})',
           style: Theme.of(context).textTheme.titleMedium,
@@ -758,7 +859,7 @@ class _InspectorSidebar extends StatelessWidget {
           height: 210,
           child: Card(
             clipBehavior: Clip.antiAlias,
-            child: elementsError != null
+            child: elementsError != null && elements.isEmpty
                 ? Padding(
                     padding: const EdgeInsets.all(12),
                     child: SingleChildScrollView(
@@ -774,6 +875,8 @@ class _InspectorSidebar extends StatelessWidget {
                       final subtitle = [
                         if (element.name != element.selector) element.name,
                         element.className,
+                        if (element.source != null)
+                          '${element.source} · position ${element.position}',
                         element.clickable ? 'clickable' : 'static',
                       ].join(' · ');
                       return Semantics(
@@ -893,6 +996,16 @@ _InspectorElementKind _inspectorElementKind(AdminElement element) {
 }
 
 List<InspectorFlowAction> _inspectorFlowActions(AdminElement element) {
+  if (RegExp(
+    r'scroll|listview|recyclerview',
+    caseSensitive: false,
+  ).hasMatch(element.className)) {
+    return [
+      InspectorFlowAction.scrollDown,
+      InspectorFlowAction.scrollUp,
+      InspectorFlowAction.assertVisible,
+    ];
+  }
   switch (_inspectorElementKind(element)) {
     case _InspectorElementKind.input:
       return [InspectorFlowAction.typeText];
@@ -914,6 +1027,10 @@ String _inspectorFlowActionLabel(InspectorFlowAction action) {
       return 'Type text';
     case InspectorFlowAction.assertVisible:
       return 'Assert element is visible';
+    case InspectorFlowAction.scrollUp:
+      return 'Scroll up';
+    case InspectorFlowAction.scrollDown:
+      return 'Scroll down';
   }
 }
 
@@ -1246,10 +1363,9 @@ class _ElementOverlayPainter extends CustomPainter {
       canvas.drawRect(rect, border);
 
       final element = elements[index];
-      final selector = element.selector;
-      final labelText = selected
-          ? '${element.className} ($selector)'
-          : '${index + 1} $selector';
+      final labelText =
+          '#${element.index ?? index + 1} ${element.name}'
+          '${selected ? ' · ${element.source ?? 'native'}' : ''}';
       final label = TextPainter(
         text: TextSpan(
           text: labelText,

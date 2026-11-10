@@ -1,7 +1,8 @@
 // !$*UTF8*$!
 {
 	archiveVersion = 1;
-	classes = {};
+	classes = {
+	};
 	objectVersion = 56;
 	objects = {
 
@@ -33,8 +34,20 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		A10000000000000000000040 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		A10000000000000000000041 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000040 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000041 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -49,7 +62,10 @@
 		};
 		A10000000000000000000022 /* RunnerHost */ = {
 			isa = PBXGroup;
-			children = (A10000000000000000000011 /* RunnerHostApp.swift */, A10000000000000000000013 /* Info.plist */);
+			children = (
+				A10000000000000000000011 /* RunnerHostApp.swift */,
+				A10000000000000000000013 /* Info.plist */,
+			);
 			path = RunnerHost;
 			sourceTree = "<group>";
 		};
@@ -65,7 +81,10 @@
 		};
 		A10000000000000000000024 /* Products */ = {
 			isa = PBXGroup;
-			children = (A10000000000000000000010 /* MobileMcpSimulatorRunnerHost.app */, A10000000000000000000014 /* MobileMcpSimulatorRunnerUITests.xctest */);
+			children = (
+				A10000000000000000000010 /* MobileMcpSimulatorRunnerHost.app */,
+				A10000000000000000000014 /* MobileMcpSimulatorRunnerUITests.xctest */,
+			);
 			name = Products;
 			sourceTree = "<group>";
 		};
@@ -75,9 +94,14 @@
 		A10000000000000000000030 /* MobileMcpSimulatorRunnerHost */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A10000000000000000000050 /* Build configuration list for PBXNativeTarget "MobileMcpSimulatorRunnerHost" */;
-			buildPhases = (A10000000000000000000060 /* Sources */, A10000000000000000000040 /* Frameworks */);
-			buildRules = ();
-			dependencies = ();
+			buildPhases = (
+				A10000000000000000000060 /* Sources */,
+				A10000000000000000000040 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
 			name = MobileMcpSimulatorRunnerHost;
 			productName = MobileMcpSimulatorRunnerHost;
 			productReference = A10000000000000000000010 /* MobileMcpSimulatorRunnerHost.app */;
@@ -86,9 +110,15 @@
 		A10000000000000000000031 /* MobileMcpSimulatorRunnerUITests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A10000000000000000000051 /* Build configuration list for PBXNativeTarget "MobileMcpSimulatorRunnerUITests" */;
-			buildPhases = (A10000000000000000000061 /* Sources */, A10000000000000000000041 /* Frameworks */);
-			buildRules = ();
-			dependencies = (A10000000000000000000070 /* PBXTargetDependency */);
+			buildPhases = (
+				A10000000000000000000061 /* Sources */,
+				A10000000000000000000041 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A10000000000000000000070 /* PBXTargetDependency */,
+			);
 			name = MobileMcpSimulatorRunnerUITests;
 			productName = MobileMcpSimulatorRunnerUITests;
 			productReference = A10000000000000000000014 /* MobileMcpSimulatorRunnerUITests.xctest */;
@@ -99,45 +129,171 @@
 /* Begin PBXProject section */
 		A10000000000000000000020 /* Project object */ = {
 			isa = PBXProject;
-			attributes = { LastSwiftUpdateCheck = 1630; LastUpgradeCheck = 1630; TargetAttributes = { A10000000000000000000031 = { CreatedOnToolsVersion = 16.3; TestTargetID = A10000000000000000000030; }; }; };
+			attributes = {
+				LastSwiftUpdateCheck = 1630;
+				LastUpgradeCheck = 1630;
+				TargetAttributes = {
+					A10000000000000000000031 = {
+						CreatedOnToolsVersion = 16.3;
+						TestTargetID = A10000000000000000000030;
+					};
+				};
+			};
 			buildConfigurationList = A10000000000000000000052 /* Build configuration list for PBXProject "MobileMcpSimulatorRunner" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
-			knownRegions = (en, Base);
+			knownRegions = (
+				en,
+				Base,
+			);
 			mainGroup = A10000000000000000000021;
 			productRefGroup = A10000000000000000000024 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (A10000000000000000000030 /* MobileMcpSimulatorRunnerHost */, A10000000000000000000031 /* MobileMcpSimulatorRunnerUITests */);
+			targets = (
+				A10000000000000000000030 /* MobileMcpSimulatorRunnerHost */,
+				A10000000000000000000031 /* MobileMcpSimulatorRunnerUITests */,
+			);
 		};
 /* End PBXProject section */
 
-/* Begin PBXResourcesBuildPhase section */
-/* End PBXResourcesBuildPhase section */
-
 /* Begin PBXSourcesBuildPhase section */
-		A10000000000000000000060 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001 /* RunnerHostApp.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
-		A10000000000000000000061 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000002 /* MobileMcpSimulatorRunnerUITests.swift in Sources */, A10000000000000000000004 /* SimulatorXCTestHostAgent.swift in Sources */, A10000000000000000000005 /* SimulatorXCTestDriver.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000060 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000001 /* RunnerHostApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000061 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000002 /* MobileMcpSimulatorRunnerUITests.swift in Sources */,
+				A10000000000000000000004 /* SimulatorXCTestHostAgent.swift in Sources */,
+				A10000000000000000000005 /* SimulatorXCTestDriver.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		A10000000000000000000070 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A10000000000000000000030 /* MobileMcpSimulatorRunnerHost */; targetProxy = A10000000000000000000003 /* PBXContainerItemProxy */; };
+		A10000000000000000000070 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000030 /* MobileMcpSimulatorRunnerHost */;
+			targetProxy = A10000000000000000000003 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		A10000000000000000000080 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 5.0; }; name = Debug; };
-		A10000000000000000000081 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { CLANG_ENABLE_MODULES = YES; SWIFT_VERSION = 5.0; }; name = Release; };
-		A10000000000000000000082 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGNING_ALLOWED = NO; INFOPLIST_FILE = RunnerHost/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = com.mobilemcp.simulatorrunner.host; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
-		A10000000000000000000083 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGNING_ALLOWED = NO; INFOPLIST_FILE = RunnerHost/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = com.mobilemcp.simulatorrunner.host; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
-		A10000000000000000000084 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGNING_ALLOWED = NO; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = com.mobilemcp.simulatorrunner.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = MobileMcpSimulatorRunnerHost; }; name = Debug; };
-		A10000000000000000000085 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { CODE_SIGNING_ALLOWED = NO; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = com.mobilemcp.simulatorrunner.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = MobileMcpSimulatorRunnerHost; }; name = Release; };
+		A10000000000000000000080 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A10000000000000000000081 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A10000000000000000000082 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				INFOPLIST_FILE = RunnerHost/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mobilemcp.simulatorrunner.host;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A10000000000000000000083 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				INFOPLIST_FILE = RunnerHost/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mobilemcp.simulatorrunner.host;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A10000000000000000000084 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = RunnerTests/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mobilemcp.simulatorrunner.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MobileMcpSimulatorRunnerHost;
+			};
+			name = Debug;
+		};
+		A10000000000000000000085 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = RunnerTests/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mobilemcp.simulatorrunner.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MobileMcpSimulatorRunnerHost;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A10000000000000000000050 /* Build configuration list for PBXNativeTarget "MobileMcpSimulatorRunnerHost" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000082 /* Debug */, A10000000000000000000083 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		A10000000000000000000051 /* Build configuration list for PBXNativeTarget "MobileMcpSimulatorRunnerUITests" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000084 /* Debug */, A10000000000000000000085 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		A10000000000000000000052 /* Build configuration list for PBXProject "MobileMcpSimulatorRunner" */ = {isa = XCConfigurationList; buildConfigurations = (A10000000000000000000080 /* Debug */, A10000000000000000000081 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A10000000000000000000050 /* Build configuration list for PBXNativeTarget "MobileMcpSimulatorRunnerHost" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000082 /* Debug */,
+				A10000000000000000000083 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000051 /* Build configuration list for PBXNativeTarget "MobileMcpSimulatorRunnerUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000084 /* Debug */,
+				A10000000000000000000085 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000052 /* Build configuration list for PBXProject "MobileMcpSimulatorRunner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000080 /* Debug */,
+				A10000000000000000000081 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 	};
 	rootObject = A10000000000000000000020 /* Project object */;

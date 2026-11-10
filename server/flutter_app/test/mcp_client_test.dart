@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_mcp_companion/mcp_client.dart';
+import 'package:mobile_mcp_companion/models.dart';
 
 void main() {
   test(
@@ -158,6 +159,152 @@ void main() {
         'session-1',
         'session-1',
         'session-1',
+      ]);
+    },
+  );
+  for (final fallback in ['label', 'unnamed', 'unavailable', 'empty']) {
+    test('inspector fallback: $fallback', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final sources = <String>[];
+      Map<String, dynamic> element(String? text) => {
+        'className': 'button IconButton',
+        'text': text,
+        'resourceId': null,
+        'contentDescription': null,
+        'bounds': {'left': 1, 'top': 2, 'right': 30, 'bottom': 40},
+        'enabled': true,
+        'clickable': true,
+      };
+      server.listen((request) async {
+        final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+        var result = <String, dynamic>{};
+        if (body['method'] == 'initialize') {
+          request.response.headers.set('mcp-session-id', 'inspection');
+        } else if (body['method'] == 'notifications/initialized') {
+          request.response.statusCode = 202;
+          await request.response.close();
+          return;
+        } else if (body['method'] == 'tools/call') {
+          final arguments = (body['params'] as Map)['arguments'] as Map;
+          final source = arguments['source'] as String? ?? 'auto';
+          sources.add(source);
+          result = source == 'flutter' && fallback == 'unavailable'
+              ? {
+                  'isError': true,
+                  'content': [
+                    {'type': 'text', 'text': 'bridge unavailable'},
+                  ],
+                }
+              : {
+                  'structuredContent': {
+                    'source': source == 'flutter' ? 'flutter' : 'native',
+                    'elements': source == 'flutter' && fallback == 'empty'
+                        ? []
+                        : [
+                            element(
+                              source == 'flutter' && fallback == 'label'
+                                  ? 'Save'
+                                  : null,
+                            ),
+                            element(null),
+                          ],
+                  },
+                };
+        }
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({'jsonrpc': '2.0', 'id': body['id'], 'result': result}),
+        );
+        await request.response.close();
+      });
+      final client = McpClient(
+        baseUrl: 'http://127.0.0.1:${server.port}',
+        bearerToken: 'token',
+      );
+      addTearDown(client.dispose);
+      final inspection = await client.inspectElements('device');
+      expect(sources, ['auto', 'flutter']);
+      expect(inspection.elements.length, 2);
+      final native = fallback == 'empty' || fallback == 'unavailable';
+      expect(inspection.elements.first.source, native ? 'native' : 'flutter');
+      expect(inspection.warning, native ? isNotNull : isNull);
+      expect(inspection.elements.last.position, 2);
+      expect(inspection.elements.last.index, 2);
+      expect(inspection.elements.last.name, 'button IconButton #2');
+      if (fallback == 'label') expect(inspection.elements.first.name, 'Save');
+    });
+  }
+  test(
+    'QC actions share lifecycle and reconnect once after server session loss',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      var initialized = 0;
+      var expire = true;
+      final actions = <Map<String, dynamic>>[];
+      server.listen((request) async {
+        final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+        var result = <String, dynamic>{};
+        if (body['method'] == 'initialize') {
+          initialized++;
+          request.response.headers.set(
+            'mcp-session-id',
+            'session-$initialized',
+          );
+        } else if (body['method'] == 'notifications/initialized') {
+          request.response.statusCode = 202;
+          await request.response.close();
+          return;
+        } else if (body['method'] == 'tools/call') {
+          if (expire) {
+            expire = false;
+            request.response.statusCode = 404;
+            await request.response.close();
+            return;
+          }
+          final arguments = Map<String, dynamic>.from(
+            (body['params'] as Map)['arguments'] as Map,
+          );
+          expect(
+            (body['params'] as Map)['name'],
+            'mobile_get_ui_runner_status',
+          );
+          actions.add(arguments);
+          result = {
+            'structuredContent': {
+              'ready': true,
+              'state': 'ready',
+              'detail': 'heartbeat confirmed',
+              'expectedVersion': 'v2',
+              'agentVersion': 'v2',
+              'serverVersion': '0.1.7',
+              'targetAppId': 'app',
+              'cacheReady': true,
+            },
+          };
+        }
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({'jsonrpc': '2.0', 'id': body['id'], 'result': result}),
+        );
+        await request.response.close();
+      });
+      final client = McpClient(
+        baseUrl: 'http://127.0.0.1:${server.port}',
+        bearerToken: 'token',
+      );
+      addTearDown(client.dispose);
+      for (final action in RunnerAction.values) {
+        final status = await client.runnerStatus('sim', action: action);
+        expect(status.ready, true);
+        expect(status.agentVersion, status.expectedVersion);
+      }
+      expect(initialized, 2);
+      expect(actions, [
+        {'deviceId': 'sim'},
+        {'deviceId': 'sim', 'prepare': true},
+        {'deviceId': 'sim', 'prepare': true, 'reinstall': true},
       ]);
     },
   );

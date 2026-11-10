@@ -24,11 +24,20 @@ class McpClient {
   int _nextRequestId = 1;
   int _nextEventSequence = 1;
   bool _initialized = false;
+  Future<void>? _initializing;
 
   Stream<AdminEvent> get events => _eventsController.stream;
 
   Future<DashboardSnapshot> loadDashboard() async {
-    final devices = await listDevices();
+    final discovered = await listDevices();
+    final devices = await Future.wait(
+      discovered.map((device) async {
+        if (device.platform != 'ios' || device.state != 'available') {
+          return device;
+        }
+        return device.withReadiness(await runnerStatus(device.id));
+      }),
+    );
     return DashboardSnapshot(
       devices: devices,
       config: AdminConfig(
@@ -49,6 +58,29 @@ class McpClient {
 
   Future<void> bootDevice(String deviceId) async {
     await callTool('mobile_boot_device', {'deviceId': deviceId});
+  }
+
+  Future<DeviceReadiness> runnerStatus(
+    String deviceId, {
+    RunnerAction action = RunnerAction.health,
+    String? appId,
+  }) async {
+    try {
+      final result = await callTool('mobile_get_ui_runner_status', {
+        'deviceId': deviceId,
+        if (action != RunnerAction.health) 'prepare': true,
+        if (action == RunnerAction.reboot) 'reinstall': true,
+        if (appId != null && action != RunnerAction.health) 'appId': appId,
+      });
+      return DeviceReadiness.fromJson(result.structuredContent ?? {});
+    } catch (error) {
+      return DeviceReadiness(
+        ready: false,
+        state: 'error',
+        detail: error.toString(),
+        checkedAt: DateTime.now(),
+      );
+    }
   }
 
   Future<void> launchApp(String deviceId, String appId) async {
@@ -87,17 +119,61 @@ class McpClient {
     String deviceId, {
     String? filter,
     int? maxResults,
+    String source = 'auto',
   }) async {
     final arguments = <String, dynamic>{'deviceId': deviceId};
+    if (source != 'auto') arguments['source'] = source;
     if (filter != null && filter.trim().isNotEmpty) {
       arguments['filter'] = filter;
     }
     if (maxResults != null) arguments['maxResults'] = maxResults;
     final result = await callTool('mobile_list_elements_on_screen', arguments);
     final values = (result.structuredContent?['elements'] as List?) ?? const [];
-    return values
-        .map((value) => AdminElement.fromJson(value as Map<String, dynamic>))
-        .toList();
+    return [
+      for (var i = 0; i < values.length; i++)
+        AdminElement.fromJson({
+          ...values[i] as Map<String, dynamic>,
+          'source': result.structuredContent?['source'],
+          'index': (values[i] as Map)['index'] ?? i + 1,
+          'position': values
+              .take(i + 1)
+              .where(
+                (value) => ((value as Map)['className'] as String).contains(
+                  (values[i] as Map)['className'] as String,
+                ),
+              )
+              .length,
+        }),
+    ];
+  }
+
+  /// Use a whole Flutter snapshot when native controls have no labels. Never
+  /// merge nodes across trees: their order, identity and coordinates can differ.
+  Future<({List<AdminElement> elements, String? warning})> inspectElements(
+    String deviceId,
+  ) async {
+    final elements = await listElements(deviceId);
+    if (elements.isNotEmpty &&
+        elements.first.source != 'flutter' &&
+        elements.any((element) => !element.hasLabel)) {
+      try {
+        final flutter = await listElements(deviceId, source: 'flutter');
+        if (flutter.isNotEmpty) return (elements: flutter, warning: null);
+        return (
+          elements: elements,
+          warning:
+              'Flutter tree is empty. Showing native elements with snapshot indices.',
+        );
+      } catch (error) {
+        return (
+          elements: elements,
+          warning:
+              'Flutter fallback unavailable. Showing native elements with snapshot '
+              'indices. The target app must start DeviceBotFlutter.\n$error',
+        );
+      }
+    }
+    return (elements: elements, warning: null);
   }
 
   Future<McpToolResult> callTool(
@@ -119,7 +195,20 @@ class McpClient {
 
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
+    if (_initializing case final pending?) {
+      await pending;
+      return;
+    }
+    final pending = _initialize();
+    _initializing = pending;
+    try {
+      await pending;
+    } finally {
+      _initializing = null;
+    }
+  }
 
+  Future<void> _initialize() async {
     final initialized = await _post({
       'jsonrpc': '2.0',
       'id': _nextRequestId++,
@@ -150,12 +239,24 @@ class McpClient {
     String method,
     Map<String, dynamic> params,
   ) async {
-    final response = await _post({
+    final body = <String, dynamic>{
       'jsonrpc': '2.0',
       'id': _nextRequestId++,
       'method': method,
       'params': params,
-    });
+    };
+    _McpResponse response;
+    try {
+      response = await _post(body);
+    } on McpException catch (error) {
+      if (!_initialized || ![404, 410].contains(error.httpStatus)) rethrow;
+      // A missing MCP session has not executed this request. Reinitialize once;
+      // never replay on timeouts, where a device action may already have run.
+      _initialized = false;
+      _sessionId = null;
+      await _ensureInitialized();
+      response = await _post(body);
+    }
     final result = response.body['result'];
     if (result is! Map) {
       throw const McpException('MCP response did not contain a result object.');
@@ -167,7 +268,12 @@ class McpClient {
     Map<String, dynamic> body, {
     bool expectResponse = true,
   }) async {
-    final client = HttpClient();
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    final preparing =
+        body['method'] == 'tools/call' &&
+        (body['params'] as Map?)?['name'] == 'mobile_get_ui_runner_status' &&
+        ((body['params'] as Map?)?['arguments'] as Map?)?['prepare'] == true;
+    final timeout = Duration(seconds: preparing ? 300 : 30);
     try {
       final request = await client.postUrl(_baseUri.resolve('/mcp'));
       request.headers.contentType = ContentType.json;
@@ -182,7 +288,7 @@ class McpClient {
         request.headers.set('mcp-session-id', _sessionId!);
       }
       request.write(jsonEncode(body));
-      final response = await request.close();
+      final response = await request.close().timeout(timeout);
       final bytes = await response.fold<BytesBuilder>(
         BytesBuilder(copy: false),
         (builder, data) => builder..add(data),
@@ -192,6 +298,7 @@ class McpClient {
         throw McpException(
           'MCP ${body['method']} failed with HTTP ${response.statusCode}: '
           '${utf8.decode(raw)}',
+          httpStatus: response.statusCode,
         );
       }
       if (!expectResponse || raw.isEmpty) {
@@ -313,9 +420,10 @@ class McpToolResult {
 }
 
 class McpException implements Exception {
-  const McpException(this.message);
+  const McpException(this.message, {this.httpStatus});
 
   final String message;
+  final int? httpStatus;
 
   @override
   String toString() => message;

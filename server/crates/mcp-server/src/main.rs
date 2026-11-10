@@ -336,7 +336,12 @@ async fn main() -> std::io::Result<()> {
                 .await
                 .map_err(|e| std::io::Error::other(e.to_string()))?
         } else {
-            robot_ios_real::health::physical_health(&xcrun, &device_id).await
+            robot_ios_real::health::physical_health_with_project(
+                &xcrun,
+                &device_id,
+                &assets::xctest_project("ios-real"),
+            )
+            .await
         };
         println!(
             "{}",
@@ -555,7 +560,8 @@ async fn main() -> std::io::Result<()> {
         }
     });
     let mut real_ios =
-        IosXCTestRobot::with_artifact_dir(xcrun_path.clone(), ios_agent, artifact_dir.clone());
+        IosXCTestRobot::with_artifact_dir(xcrun_path.clone(), ios_agent, artifact_dir.clone())
+            .with_runner_project(assets::xctest_project("ios-real"));
     if let Some(launcher) = ios_agent_launcher {
         real_ios = real_ios.with_agent_launcher(launcher);
     }

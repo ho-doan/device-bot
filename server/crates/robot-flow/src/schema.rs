@@ -32,6 +32,11 @@ pub struct Step {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Selector {
+    /// One-based position among matches, or "first" / "last".
+    #[serde(default)]
+    pub position: Option<Value>,
+    #[serde(default)]
+    pub source: Option<String>,
     #[serde(default)]
     pub filter: Option<String>,
     #[serde(default)]
@@ -337,6 +342,18 @@ fn check_recipe_cycles(name: &str, profile: &Profile, stack: &mut Vec<String>) -
 }
 
 fn validate_selector(name: &str, s: &Selector, p: &Profile, stack: &mut Vec<String>) -> Result<()> {
+    if let Some(position) = &s.position {
+        position_index(position, 0)?;
+        if s.native_tap {
+            return Err("position cannot be combined with native_tap; use coordinate tap to preserve the selected match".into());
+        }
+    }
+    if s.source
+        .as_deref()
+        .is_some_and(|v| !["auto", "native", "flutter"].contains(&v))
+    {
+        return Err("source must be auto, native, or flutter".into());
+    }
     if stack.iter().any(|v| v == name) {
         return Err(format!("selector relation cycle: {name}"));
     }
@@ -378,6 +395,21 @@ fn validate_selector(name: &str, s: &Selector, p: &Profile, stack: &mut Vec<Stri
     }
     stack.pop();
     Ok(())
+}
+
+/// Resolve against the complete filtered snapshot; out-of-range positions do
+/// not match. Keep tree order so inspector positions and execution agree.
+pub fn position_index(position: &Value, len: usize) -> Result<Option<usize>> {
+    let index = match position.as_str() {
+        Some("first") => 0,
+        Some("last") => return Ok(len.checked_sub(1)),
+        _ => position
+            .as_u64()
+            .filter(|n| *n > 0)
+            .and_then(|n| usize::try_from(n - 1).ok())
+            .ok_or("position must be first, last, or a positive one-based integer")?,
+    };
+    Ok((index < len).then_some(index))
 }
 
 pub fn selector(args: &Value, profile: &Profile) -> Result<Selector> {
@@ -621,7 +653,7 @@ fn expand(
 }
 
 fn validate_action_keys(action: &str, args: &Value) -> Result<()> {
-    let selector = "target filter label labels element_type resource_id prefer_resource_id class_contains row_with exclude_row_with allow_missing_row_anchor largest native_tap stable_samples replace_recipe verify_recipe require_focus max_results timeout_ms";
+    let selector = "target filter label labels element_type resource_id prefer_resource_id class_contains row_with exclude_row_with allow_missing_row_anchor largest native_tap stable_samples replace_recipe verify_recipe require_focus max_results timeout_ms position source";
     let extra = match action {
         "run" => "recipe with",
         "if_element" => "target then else",

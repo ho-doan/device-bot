@@ -284,7 +284,10 @@ private final class MobileMcpRealHostAgent {
   fileprivate func execute(_ command: Command) -> [String: Any] {
     switch command.method {
     case "health":
-      return ["ok": true, "bundleId": currentBundleId ?? ""]
+      return ["ok": true, "bundleId": currentBundleId ?? "",
+        "appForeground": currentBundleId.map { XCUIApplication(bundleIdentifier: $0).state == .runningForeground } ?? false,
+        "deviceId": ProcessInfo.processInfo.environment["DEVICE_BOT_DEVICE_ID"] ?? ProcessInfo.processInfo.environment["SIMULATOR_UDID"] ?? "",
+        "agentVersion": Bundle(for: MobileMcpRealRunnerUITests.self).object(forInfoDictionaryKey: "DeviceBotBuildId") as? String ?? "unknown"]
     case "launch":
       guard let bundleId = string(command.params["bundleId"]), !bundleId.isEmpty else {
         return ["ok": false, "message": "bundleId is required"]
@@ -388,7 +391,6 @@ private final class MobileMcpRealHostAgent {
       }
       return ["ok": true, "pngBase64": data.base64EncodedString()]
     case "stop":
-      driver.terminate()
       return ["ok": true, "message": "stopped"]
     default:
       return ["ok": false, "message": "unknown_method"]
@@ -667,7 +669,10 @@ private final class MobileMcpRealHostAgent {
   }
 
   private func getCommand(host: String) -> Command? {
-    guard let url = bridgeUrl(host: host, port: port, path: "/next") else { return nil }
+    guard let base = bridgeUrl(host: host, port: port, path: "/next"),
+          var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
+    components.queryItems = [URLQueryItem(name: "deviceId", value: ProcessInfo.processInfo.environment["DEVICE_BOT_DEVICE_ID"] ?? "")]
+    guard let url = components.url else { return nil }
     guard let data = request(url: url, method: "GET", body: nil),
           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let id = object["id"] as? String,

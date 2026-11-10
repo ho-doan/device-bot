@@ -239,10 +239,23 @@ pub enum UiAction {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct UiRunnerStatus {
     pub ready: bool,
     pub detail: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub expected_version: Option<String>,
+    #[serde(default)]
+    pub agent_version: Option<String>,
+    #[serde(default)]
+    pub cache_ready: bool,
+    #[serde(default)]
+    pub target_app_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<Value>,
 }
 
 /// Async, platform-independent device control boundary.
@@ -331,6 +344,34 @@ pub trait Robot: Send + Sync {
         Err(RobotError::Unsupported(format!(
             "UI runner status is not supported for device {device_id}"
         )))
+    }
+    /// Read-only readiness check; never builds, installs, or starts a helper.
+    async fn check_device_health(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
+        self.ui_runner_status(device_id).await
+    }
+    /// Reuse the current helper, building/installing only when required.
+    async fn prepare_helper(
+        &self,
+        device_id: &str,
+        app_id: Option<&str>,
+    ) -> Result<UiRunnerStatus, RobotError> {
+        self.prepare_ui_runner(device_id, app_id, false).await
+    }
+    /// Restart/reinstall the helper from the versioned cache; never reboot the OS.
+    async fn reboot_helper(
+        &self,
+        device_id: &str,
+        app_id: Option<&str>,
+    ) -> Result<UiRunnerStatus, RobotError> {
+        self.prepare_ui_runner(device_id, app_id, true).await
+    }
+    async fn prepare_ui_runner(
+        &self,
+        device_id: &str,
+        _app_id: Option<&str>,
+        _reinstall: bool,
+    ) -> Result<UiRunnerStatus, RobotError> {
+        self.ui_runner_status(device_id).await
     }
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError>;
     /// Optional Flutter discovery. Native queries remain independent, so a
@@ -572,6 +613,20 @@ impl Robot for RobotRegistry {
     }
     async fn ui_runner_status(&self, id: &str) -> Result<UiRunnerStatus, RobotError> {
         self.driver_for(id).await?.ui_runner_status(id).await
+    }
+    async fn check_device_health(&self, id: &str) -> Result<UiRunnerStatus, RobotError> {
+        self.driver_for(id).await?.check_device_health(id).await
+    }
+    async fn prepare_ui_runner(
+        &self,
+        id: &str,
+        app_id: Option<&str>,
+        reinstall: bool,
+    ) -> Result<UiRunnerStatus, RobotError> {
+        self.driver_for(id)
+            .await?
+            .prepare_ui_runner(id, app_id, reinstall)
+            .await
     }
     async fn list_elements(&self, id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.driver_for(id).await?.list_elements(id).await

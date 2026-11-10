@@ -12,7 +12,7 @@ pub(super) fn definition() -> ToolDefinition {
     ToolDefinition {
         name: LIST_ELEMENTS_NAME.into(),
         title: Some("List accessibility elements on screen".into()),
-        description: "Return normalized accessibility elements. source=auto queries native first and uses an opt-in Flutter bridge only when native has no matches. source=native or flutter selects one tree; native errors and ambiguous matches are never hidden. Optional `filter` and `elementType` are combined with AND and applied before `maxResults`. `elementType` is one of textField, button, link, staticText, checkBox, switch, image, radio, or slider. textField includes password, search, and multiline editors. An unknown type is an error, not an empty element list. `focused`, `checked`, and `selected` are omitted when the driver cannot observe them; omission means unknown, not false. `value` is the native editor value when the platform exposes one.".into(),
+        description: "Return normalized accessibility elements with a one-based `index` in query tree order (snapshot-local, not a persistent ID). `position` selects first, last, or a one-based match after filtering. Use its bounds for tap, typing focus, or scroll gestures. source=auto queries native first and uses an opt-in Flutter bridge only when native has no matches. source=native or flutter selects one tree; native errors and ambiguous matches are never hidden. Optional `filter` and `elementType` are combined with AND and applied before `maxResults`. `elementType` is one of textField, button, link, staticText, checkBox, switch, image, radio, or slider. textField includes password, search, and multiline editors. An unknown type is an error, not an empty element list. `focused`, `checked`, and `selected` are omitted when the driver cannot observe them; omission means unknown, not false. `value` is the native editor value when the platform exposes one.".into(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -23,6 +23,7 @@ pub(super) fn definition() -> ToolDefinition {
                     "enum": ["textField", "button", "link", "staticText", "checkBox", "switch", "image", "radio", "slider"]
                 },
                 "source": { "type": "string", "enum": ["auto", "native", "flutter"], "default": "auto" },
+                "position": { "description": "One-based position in tree order after type/text filtering, before maxResults. Use first, last, or a positive integer. Positions belong to this snapshot only.", "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "string", "enum": ["first", "last"] }] },
                 "maxResults": { "type": "integer", "minimum": 1, "maximum": 100 },
                 "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 60000 }
             },
@@ -61,6 +62,14 @@ pub(super) async fn list_elements(robot: &Arc<dyn Robot>, arguments: &Value) -> 
         Ok(None) => None,
         Err(error) => return error,
     };
+    let position = arguments.get("position");
+    if position.is_some_and(|v| {
+        v.as_u64().is_none_or(|n| n == 0) && !matches!(v.as_str(), Some("first" | "last"))
+    }) {
+        return ToolResult::execution_error(
+            "position must be first, last, or a positive one-based integer",
+        );
+    }
     let timeout = match optional_u64(arguments, "timeoutMs") {
         Ok(Some(value @ 1..=60_000)) => Some(Duration::from_millis(value)),
         Ok(Some(_)) => return ToolResult::execution_error("timeoutMs must be between 1 and 60000"),
@@ -81,7 +90,11 @@ pub(super) async fn list_elements(robot: &Arc<dyn Robot>, arguments: &Value) -> 
     let query = ElementQuery {
         filter,
         element_type,
-        max_results,
+        max_results: if position.is_some() {
+            Some(100)
+        } else {
+            max_results
+        },
     };
     let list = async {
         if source != "flutter" {
@@ -109,6 +122,27 @@ pub(super) async fn list_elements(robot: &Arc<dyn Robot>, arguments: &Value) -> 
     match result {
         Ok((mut elements, source)) => {
             prepare_elements(&mut elements);
+            if position.is_some() && elements.len() >= 100 {
+                return ToolResult::execution_error(
+                    "positional query reached 100 elements; narrow the filter to avoid a truncated selection",
+                );
+            }
+            let count = elements.len();
+            let selected = position.map(|v| match v.as_str() {
+                Some("first") => 0,
+                Some("last") => count.saturating_sub(1),
+                _ => usize::try_from(v.as_u64().unwrap() - 1).unwrap_or(usize::MAX),
+            });
+            let elements: Vec<Value> = elements
+                .into_iter()
+                .enumerate()
+                .filter(|(index, _)| selected.is_none_or(|selected| selected == *index))
+                .map(|(index, element)| {
+                    let mut value = serde_json::to_value(element).unwrap();
+                    value["index"] = json!(index + 1);
+                    value
+                })
+                .collect();
             ToolResult::structured(json!({ "elements": elements, "source": source }))
         }
         Err(error) => ToolResult::execution_error(error.to_string()),

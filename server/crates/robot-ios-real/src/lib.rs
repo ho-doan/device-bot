@@ -11,7 +11,9 @@ pub mod xctest_robot;
 pub use xctest_agent::XCTestAgentBridge;
 pub use xctest_robot::{IosXCTestRobot, XCTestAgentLauncher};
 
+pub mod connection;
 pub mod health;
+pub mod runner_cache;
 
 /// Finds the team ID belonging to the requested (or only) local Apple
 /// Development signing identity. Xcode still needs a valid login for that team
@@ -89,6 +91,15 @@ pub async fn provision_xctest_runner(
             RobotError::CommandFailed("iOS XCTest project has no parent directory".into())
         })?
         .join("build");
+    let cache = runner_cache::RunnerCache {
+        project,
+        derived_data: &derived_data,
+        simulator: false,
+    };
+    let version = cache.version()?;
+    if cache.is_current(&version) {
+        return Ok(());
+    }
     let output = Command::new("xcodebuild")
         .args(["build-for-testing", "-allowProvisioningUpdates", "-project"])
         .arg(project)
@@ -99,7 +110,8 @@ pub async fn provision_xctest_runner(
             &format!("platform=iOS,id={device_id}"),
             "-derivedDataPath",
         ])
-        .arg(derived_data)
+        .arg(&derived_data)
+        .arg(format!("DEVICE_BOT_BUILD_ID={version}"))
         .arg(format!("DEVELOPMENT_TEAM={team}"))
         .output()
         .await
@@ -107,7 +119,7 @@ pub async fn provision_xctest_runner(
             RobotError::CommandFailed(format!("could not start xcodebuild: {error}"))
         })?;
     if output.status.success() {
-        return Ok(());
+        return cache.mark_current(&version);
     }
 
     let diagnostic = format!(

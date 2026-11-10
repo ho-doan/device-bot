@@ -68,13 +68,20 @@ impl IosSimulatorRobot {
             }
         }
 
+        let derived = Self::xctest_derived_data();
+        let cache = robot_ios_real::runner_cache::RunnerCache {
+            project: &self.xctest_project,
+            derived_data: &derived,
+            simulator: true,
+        };
+        let version = cache.version()?;
         // Independent probes run concurrently; none starts a recording or agent.
         let guest_args = ["simctl", "spawn", device_id, "/usr/bin/true"];
         let (guest, display, recording, agent) = tokio::join!(
             run_output(&self.xcrun_path, &guest_args, DEADLINE),
             display_probe(&self.xcrun_path, device_id),
             self.check_recording_session(device_id),
-            robot_ios_real::health::agent_check(true),
+            robot_ios_real::health::agent_check_for(true, device_id, &version),
         );
         checks.push(command_result("device_heartbeat", guest, false));
         checks.push(command_result("display_response", display, true));
@@ -93,13 +100,13 @@ impl IosSimulatorRobot {
         ));
         checks.push(check(
             "xctest_products",
-            if Self::xctest_runner_ready(&Self::xctest_derived_data()) {
+            if cache.is_current(&version) {
                 CheckStatus::Pass
             } else {
                 CheckStatus::Warn
             },
-            if Self::xctest_runner_ready(&Self::xctest_derived_data()) {
-                "Compiled XCTest runner products are available (not a live agent heartbeat)"
+            if cache.is_current(&version) {
+                "Compiled XCTest runner cache matches the current source version (separate from live helper readiness)"
             } else {
                 "XCTest runner products are missing; the UI session requires runner setup/build"
             },

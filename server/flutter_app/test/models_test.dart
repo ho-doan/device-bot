@@ -64,7 +64,7 @@ void main() {
       inputText: 'qa@example.com',
     );
 
-    expect(yaml, contains('filter: "email-input"'));
+    expect(yaml, contains('resource_id: "email-input"'));
     expect(yaml, contains('type_text:'));
     expect(yaml, contains('text: "qa@example.com"'));
   });
@@ -130,6 +130,37 @@ void main() {
     );
 
     expect(message, contains('Launch the target app through Device Bot'));
-    expect(message, contains('reopen the inspector'));
+    expect(message, contains('refresh the inspector'));
   });
+  test(
+    'unnamed duplicate uses class position and source, never a fake label',
+    () {
+      final element = AdminElement.fromJson({
+        'className': 'button IconButton',
+        'resourceId': null,
+        'text': null,
+        'contentDescription': null,
+        'clickable': true,
+        'enabled': true,
+        'bounds': {'left': 10, 'top': 20, 'right': 110, 'bottom': 60},
+        'source': 'flutter',
+        'index': 5,
+        'position': 2,
+      });
+      expect(element.name, 'button IconButton #2');
+      for (final action in InspectorFlowAction.values) {
+        final yaml = buildInspectorFlowYaml(
+          element: element,
+          action: action,
+          sequence: 1,
+          inputText: 'hello',
+        );
+        expect(yaml, contains('source: flutter'));
+        expect(yaml, contains('class_contains: "button IconButton"'));
+        expect(yaml, contains('position: 2'));
+        expect(yaml, isNot(contains('max_results: 1')));
+        expect(yaml, isNot(contains('filter:')));
+      }
+    },
+  );
 }

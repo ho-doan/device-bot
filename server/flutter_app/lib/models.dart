@@ -16,6 +16,7 @@ class AdminDevice {
     required this.name,
     required this.platform,
     required this.state,
+    this.readiness,
   });
 
   factory AdminDevice.fromJson(Map<String, dynamic> json) => AdminDevice(
@@ -29,6 +30,81 @@ class AdminDevice {
   final String name;
   final String platform;
   final String state;
+  final DeviceReadiness? readiness;
+  AdminDevice withReadiness(DeviceReadiness readiness) => AdminDevice(
+    id: id,
+    name: name,
+    platform: platform,
+    state: readiness.diagnostics?['connected'] == true
+        ? 'available'
+        : readiness.state == 'offline'
+        ? 'offline'
+        : state,
+    readiness: readiness,
+  );
+}
+
+enum RunnerAction { health, prepare, reboot }
+
+class DeviceReadiness {
+  const DeviceReadiness({
+    required this.ready,
+    required this.state,
+    required this.detail,
+    this.expectedVersion,
+    this.agentVersion,
+    this.serverVersion,
+    this.targetAppId,
+    this.cacheReady = false,
+    this.checkedAt,
+    this.diagnostics,
+  });
+  factory DeviceReadiness.fromJson(Map<String, dynamic> json) =>
+      DeviceReadiness(
+        ready:
+            json['ready'] == true &&
+            json['state'] == 'ready' &&
+            json['expectedVersion'] is String &&
+            json['expectedVersion'] == json['agentVersion'] &&
+            (json['targetAppId'] as String?)?.isNotEmpty == true,
+        state: json['state'] as String? ?? 'unverified',
+        detail: json['detail'] as String? ?? '',
+        expectedVersion: json['expectedVersion'] as String?,
+        agentVersion: json['agentVersion'] as String?,
+        serverVersion: json['serverVersion'] as String?,
+        targetAppId: json['targetAppId'] as String?,
+        cacheReady: json['cacheReady'] == true,
+        checkedAt: DateTime.now(),
+        diagnostics: json['diagnostics'] is Map
+            ? Map<String, dynamic>.from(json['diagnostics'] as Map)
+            : null,
+      );
+  final bool ready;
+  final String state;
+  final String detail;
+  final String? expectedVersion, agentVersion, serverVersion, targetAppId;
+  final bool cacheReady;
+  final DateTime? checkedAt;
+  final Map<String, dynamic>? diagnostics;
+  String get label => ready
+      ? 'Ready'
+      : switch (state) {
+          'needs_target' => 'Select app',
+          'target_not_running' => 'Launch app',
+          'unconfigured' => 'Setup needed',
+          'version_mismatch' => 'Update helper',
+          'disconnected' => 'Helper offline',
+          'error' => 'Check failed',
+          _ => 'Not ready',
+        };
+  String get report =>
+      'MCP server: ${serverVersion ?? 'unknown'}\n'
+      'Expected helper: ${expectedVersion ?? 'unknown'}\n'
+      'Device helper: ${agentVersion ?? 'not connected'}\n'
+      'Build cache: ${cacheReady ? 'current' : 'missing or outdated'}\n'
+      'Target app: ${targetAppId ?? 'not selected'}\n'
+      'Checked: ${checkedAt?.toLocal() ?? 'not checked'}\n\n$detail'
+      '${diagnostics == null ? '' : '\n\n${((diagnostics!['checks'] as List?) ?? []).map((check) => '${check['name']}: ${check['status']} — ${check['detail']}').join('\n')}'}';
 }
 
 class InstalledApp {
@@ -124,6 +200,9 @@ class AdminElement {
     required this.bounds,
     required this.clickable,
     required this.enabled,
+    this.source,
+    this.index,
+    this.position,
   });
 
   factory AdminElement.fromJson(Map<String, dynamic> json) => AdminElement(
@@ -134,6 +213,9 @@ class AdminElement {
     bounds: AdminBounds.fromJson(json['bounds'] as Map<String, dynamic>),
     clickable: json['clickable'] as bool,
     enabled: json['enabled'] as bool,
+    source: json['source'] as String?,
+    index: json['index'] as int?,
+    position: json['position'] as int?,
   );
 
   final String className;
@@ -143,12 +225,22 @@ class AdminElement {
   final AdminBounds bounds;
   final bool clickable;
   final bool enabled;
+  final String? source;
+  final int? index;
+
+  /// One-based position among elements matching className in the same tree.
+  final int? position;
+
+  bool get hasLabel => [
+    text,
+    contentDescription,
+  ].any((value) => value != null && value.trim().isNotEmpty);
 
   String get name {
-    for (final value in [text, contentDescription, resourceId, className]) {
+    for (final value in [text, contentDescription, resourceId]) {
       if (value != null && value.trim().isNotEmpty) return value.trim();
     }
-    return 'Unnamed element';
+    return '$className #${position ?? index ?? '?'}';
   }
 
   /// Stable value used by robot-flow element queries.

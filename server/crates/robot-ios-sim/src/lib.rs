@@ -16,7 +16,10 @@ use robot_core::{
     Bounds, DeviceState, ElementQuery, ImeAction, Platform, Point, Robot, RobotDevice, RobotError,
     UiAction, UiElement, UiRunnerStatus, apply_element_query,
 };
-use robot_ios_real::XCTestAgentBridge;
+use robot_ios_real::{
+    XCTestAgentBridge,
+    runner_cache::{RunnerCache, compatible, live_status},
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{
@@ -235,6 +238,7 @@ impl IosSimulatorRobot {
             })
     }
 
+    #[cfg(test)]
     fn xctest_runner_ready(derived_data: &Path) -> bool {
         let products = derived_data.join("Build/Products/Debug-iphonesimulator");
         products.join("MobileMcpSimulatorRunnerHost.app").is_dir()
@@ -249,10 +253,15 @@ impl IosSimulatorRobot {
         destination: &str,
         derived_data: &Path,
     ) -> Result<(), RobotError> {
-        if Self::xctest_runner_ready(derived_data) {
+        let cache = RunnerCache {
+            project: &self.xctest_project,
+            derived_data,
+            simulator: true,
+        };
+        let version = cache.version()?;
+        if cache.is_current(&version) {
             return Ok(());
         }
-
         let derived_data = derived_data.to_string_lossy().into_owned();
         let output = tokio::time::timeout(
             XCTEST_BUILD_TIMEOUT,
@@ -268,6 +277,7 @@ impl IosSimulatorRobot {
                     "-derivedDataPath",
                     &derived_data,
                 ])
+                .arg(format!("DEVICE_BOT_BUILD_ID={version}"))
                 .stdin(Stdio::null())
                 .kill_on_drop(true)
                 .output(),
@@ -286,8 +296,8 @@ impl IosSimulatorRobot {
             ))
         })?;
 
-        if output.status.success() && Self::xctest_runner_ready(Path::new(&derived_data)) {
-            return Ok(());
+        if output.status.success() {
+            return cache.mark_current(&version);
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -321,45 +331,70 @@ impl IosSimulatorRobot {
     }
 
     async fn active_app(&self, device_id: &str) -> Result<String, RobotError> {
-        self.active_apps
-            .lock()
-            .await
-            .get(device_id)
-            .cloned()
-            .ok_or_else(|| {
-                RobotError::InvalidInput(format!(
-                    "no active app is known for simulator {device_id}; launch an app before using UI tools"
-                ))
-            })
+        Self::valid_device_id(device_id)?;
+        if let Some(app) = self.active_apps.lock().await.get(device_id).cloned() {
+            return Ok(app);
+        }
+        // A compatible helper outlives the MCP process and remembers its app.
+        if let Ok(status) = self.ui_runner_status(device_id).await {
+            if status.ready {
+                return Ok(status.target_app_id.unwrap());
+            }
+        }
+        Err(RobotError::InvalidInput(format!(
+            "no active app is known for simulator {device_id}; launch an app before using UI tools"
+        )))
     }
 
     async fn stop_persistent_agent(&self, device_id: &str) {
+        let stopped = if let Some(agent) = &self.simulator_agent {
+            agent
+                .dispatch_for(device_id, "stop", json!({}), Duration::from_secs(2))
+                .await
+                .is_ok()
+        } else {
+            false
+        };
         if let Some(mut child) = self.persistent_agents.lock().await.remove(device_id) {
-            let _ = child.start_kill();
-            let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
+            if tokio::time::timeout(Duration::from_secs(3), child.wait())
+                .await
+                .is_err()
+            {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+            }
         }
-        let _ = self
-            .simctl(&[
-                "simctl".into(),
-                "terminate".into(),
-                device_id.into(),
-                XCTEST_RUNNER_BUNDLE_ID.into(),
-            ])
-            .await;
+        if !stopped {
+            let _ = self
+                .simctl(&[
+                    "simctl".into(),
+                    "terminate".into(),
+                    device_id.into(),
+                    XCTEST_RUNNER_BUNDLE_ID.into(),
+                ])
+                .await;
+        }
     }
 
     async fn wait_for_persistent_agent(
         &self,
         agent: &XCTestAgentBridge,
+        device_id: &str,
+        version: &str,
         timeout: Duration,
     ) -> Result<Value, RobotError> {
         let deadline = Instant::now() + timeout;
         loop {
             match agent
-                .dispatch("health", json!({}), Duration::from_secs(2))
+                .dispatch_for(device_id, "health", json!({}), Duration::from_secs(2))
                 .await
             {
-                Ok(value) => return Ok(value),
+                Ok(value) if compatible(&value, device_id, version) => return Ok(value),
+                Ok(_) => {
+                    return Err(RobotError::CommandFailed(
+                        "XCTest helper version/identity mismatch after preparation".into(),
+                    ));
+                }
                 Err(error) if Instant::now() < deadline => {
                     let _ = error;
                     sleep(Duration::from_millis(250)).await;
@@ -376,15 +411,23 @@ impl IosSimulatorRobot {
         agent: &XCTestAgentBridge,
         current_app: &str,
     ) -> Result<(), RobotError> {
-        let bound_to_session = self
-            .agent_apps
-            .lock()
-            .await
-            .get(device_id)
-            .is_some_and(|app_id| app_id == target_app_id);
-        if current_app != target_app_id || !bound_to_session {
+        if target_app_id.is_empty() {
+            return Ok(());
+        }
+        if current_app != target_app_id {
+            // Reject a missing target before XCUIApplication.launch can fail
+            // the long-lived test and tear down an otherwise healthy helper.
+            self.simctl(&[
+                "simctl".into(),
+                "get_app_container".into(),
+                device_id.into(),
+                target_app_id.into(),
+                "app".into(),
+            ])
+            .await?;
             agent
-                .dispatch(
+                .dispatch_for(
+                    device_id,
                     "launch",
                     json!({ "bundleId": target_app_id }),
                     Duration::from_secs(20),
@@ -412,17 +455,31 @@ impl IosSimulatorRobot {
             )
         })?;
 
+        let version = RunnerCache {
+            project: &self.xctest_project,
+            derived_data,
+            simulator: true,
+        }
+        .version()?;
         if let Ok(health) = agent
-            .dispatch("health", json!({}), Duration::from_secs(2))
+            .dispatch_for(device_id, "health", json!({}), Duration::from_secs(2))
             .await
         {
-            let current_app = health
-                .get("bundleId")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            self.ensure_agent_app(device_id, target_app_id, &agent, current_app)
+            if compatible(&health, device_id, &version) {
+                self.ensure_agent_app(
+                    device_id,
+                    target_app_id,
+                    &agent,
+                    if health["appForeground"] == true {
+                        health["bundleId"].as_str().unwrap_or_default()
+                    } else {
+                        ""
+                    },
+                )
                 .await?;
-            return Ok(());
+                return Ok(());
+            }
+            self.stop_persistent_agent(device_id).await;
         }
 
         let agent_is_running = {
@@ -440,13 +497,14 @@ impl IosSimulatorRobot {
         };
         if agent_is_running {
             if let Ok(health) = self
-                .wait_for_persistent_agent(&agent, Duration::from_secs(15))
+                .wait_for_persistent_agent(&agent, device_id, &version, Duration::from_secs(15))
                 .await
             {
-                let current_app = health
-                    .get("bundleId")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
+                let current_app = if health["appForeground"] == true {
+                    health["bundleId"].as_str().unwrap_or_default()
+                } else {
+                    ""
+                };
                 self.ensure_agent_app(device_id, target_app_id, &agent, current_app)
                     .await?;
                 return Ok(());
@@ -466,6 +524,8 @@ impl IosSimulatorRobot {
                 .await;
         }
 
+        self.ensure_xctest_runner(project, destination, derived_data)
+            .await?;
         tokio::fs::create_dir_all(&self.artifact_dir)
             .await
             .map_err(|error| {
@@ -480,18 +540,26 @@ impl IosSimulatorRobot {
         let stderr_path = artifact_dir.join(format!(
             "mobile-mcp-ios-xctest-agent-{device_id}.stderr.log"
         ));
-        let stdout = std::fs::File::create(&stdout_path).map_err(|error| {
-            RobotError::CommandFailed(format!(
-                "could not create XCTest agent stdout log {}: {error}",
-                stdout_path.display()
-            ))
-        })?;
-        let stderr = std::fs::File::create(&stderr_path).map_err(|error| {
-            RobotError::CommandFailed(format!(
-                "could not create XCTest agent stderr log {}: {error}",
-                stderr_path.display()
-            ))
-        })?;
+        let stdout = std::fs::File::options()
+            .create(true)
+            .append(true)
+            .open(&stdout_path)
+            .map_err(|error| {
+                RobotError::CommandFailed(format!(
+                    "could not create XCTest agent stdout log {}: {error}",
+                    stdout_path.display()
+                ))
+            })?;
+        let stderr = std::fs::File::options()
+            .create(true)
+            .append(true)
+            .open(&stderr_path)
+            .map_err(|error| {
+                RobotError::CommandFailed(format!(
+                    "could not create XCTest agent stderr log {}: {error}",
+                    stderr_path.display()
+                ))
+            })?;
         let derived_data_argument = derived_data.to_string_lossy().into_owned();
         let mut command = Command::new(&self.xcodebuild_path);
         command
@@ -507,6 +575,7 @@ impl IosSimulatorRobot {
                 "-derivedDataPath",
                 &derived_data_argument,
             ])
+            .env("TEST_RUNNER_DEVICE_BOT_DEVICE_ID", device_id)
             .env("TEST_RUNNER_DEVICE_BOT_HOSTS", &self.simulator_agent_host)
             .env(
                 "TEST_RUNNER_DEVICE_BOT_PORT",
@@ -534,17 +603,18 @@ impl IosSimulatorRobot {
             .insert(device_id.into(), child);
 
         let health = self
-            .wait_for_persistent_agent(&agent, Duration::from_secs(60))
+            .wait_for_persistent_agent(&agent, device_id, &version, Duration::from_secs(60))
             .await
             .map_err(|error| {
                 RobotError::CommandFailed(format!(
                     "persistent XCTest agent did not become ready: {error}"
                 ))
             })?;
-        let current_app = health
-            .get("bundleId")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let current_app = if health["appForeground"] == true {
+            health["bundleId"].as_str().unwrap_or_default()
+        } else {
+            ""
+        };
         self.ensure_agent_app(device_id, target_app_id, &agent, current_app)
             .await?;
         Ok(())
@@ -569,8 +639,6 @@ impl IosSimulatorRobot {
         let project = self.xctest_project.to_string_lossy().into_owned();
         let destination = format!("platform=iOS Simulator,id={device_id}");
         let _xctest_lock = self.xctest_lock.lock().await;
-        self.ensure_xctest_runner(&project, &destination, &derived_data)
-            .await?;
         self.ensure_persistent_agent(
             device_id,
             target_app_id,
@@ -608,16 +676,24 @@ impl IosSimulatorRobot {
             .collect::<serde_json::Map<_, _>>();
         let timeout = timeout.unwrap_or(Duration::from_secs(45));
         match action {
-            "tap" => agent.dispatch("tap", Value::Object(params), timeout).await,
-            "tap-element" => {
+            "tap" => {
                 agent
-                    .dispatch("tap-element", Value::Object(params), timeout)
+                    .dispatch_for(device_id, "tap", Value::Object(params), timeout)
                     .await
             }
-            "type" => agent.dispatch("text", Value::Object(params), timeout).await,
+            "tap-element" => {
+                agent
+                    .dispatch_for(device_id, "tap-element", Value::Object(params), timeout)
+                    .await
+            }
+            "type" => {
+                agent
+                    .dispatch_for(device_id, "text", Value::Object(params), timeout)
+                    .await
+            }
             "ime-action" => {
                 agent
-                    .dispatch("ime-action", Value::Object(params), timeout)
+                    .dispatch_for(device_id, "ime-action", Value::Object(params), timeout)
                     .await
             }
             "swipe" => {
@@ -629,10 +705,14 @@ impl IosSimulatorRobot {
                     params.insert("fromY".into(), value);
                 }
                 agent
-                    .dispatch("swipe", Value::Object(params), timeout)
+                    .dispatch_for(device_id, "swipe", Value::Object(params), timeout)
                     .await
             }
-            "list-elements" => agent.dispatch("dump", Value::Object(params), timeout).await,
+            "list-elements" => {
+                agent
+                    .dispatch_for(device_id, "dump", Value::Object(params), timeout)
+                    .await
+            }
             _ => Err(RobotError::Unsupported(format!(
                 "persistent XCTest agent action {action} is not supported"
             ))),
@@ -1072,15 +1152,92 @@ impl Robot for IosSimulatorRobot {
 
     async fn ui_runner_status(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
         Self::valid_device_id(device_id)?;
-        let ready = Self::xctest_runner_ready(&Self::xctest_derived_data());
-        Ok(UiRunnerStatus {
-            ready,
-            detail: if ready {
-                "XCTest runner products ready for test-without-building".into()
-            } else {
-                "XCTest runner products missing; the next UI request will build them".into()
-            },
-        })
+        let derived = Self::xctest_derived_data();
+        let cache = RunnerCache {
+            project: &self.xctest_project,
+            derived_data: &derived,
+            simulator: true,
+        };
+        let expected = cache.version()?;
+        let health = match &self.simulator_agent {
+            Some(agent) => {
+                agent
+                    .dispatch_for(device_id, "health", json!({}), Duration::from_secs(2))
+                    .await
+            }
+            None => Err(RobotError::Unsupported(
+                "Simulator helper bridge is not configured".into(),
+            )),
+        };
+        let status = live_status(
+            device_id,
+            Some(expected.clone()),
+            cache.is_current(&expected),
+            health,
+        );
+        if status.ready {
+            self.active_apps
+                .lock()
+                .await
+                .insert(device_id.into(), status.target_app_id.clone().unwrap());
+        }
+        Ok(status)
+    }
+
+    async fn prepare_ui_runner(
+        &self,
+        device_id: &str,
+        app_id: Option<&str>,
+        reinstall: bool,
+    ) -> Result<UiRunnerStatus, RobotError> {
+        Self::valid_device_id(device_id)?;
+        let _lock = self.xctest_lock.lock().await;
+        let booted = self
+            .list_devices()
+            .await?
+            .iter()
+            .any(|d| d.id == device_id && d.state == DeviceState::Available);
+        if !booted {
+            return Err(RobotError::InvalidInput(
+                "Boot the simulator before preparing its helper".into(),
+            ));
+        }
+        if let Some(app_id) = app_id {
+            Self::valid_id(app_id, "app id")?;
+            self.simctl(&[
+                "simctl".into(),
+                "get_app_container".into(),
+                device_id.into(),
+                app_id.into(),
+                "app".into(),
+            ])
+            .await?;
+        }
+        // Recover the target from a helper left alive by an earlier MCP process.
+        let recovered_target = self
+            .ui_runner_status(device_id)
+            .await
+            .ok()
+            .filter(|status| status.state != "wrong_device")
+            .and_then(|status| status.target_app_id);
+        if reinstall {
+            self.stop_persistent_agent(device_id).await;
+        }
+        let target = app_id
+            .map(str::to_owned)
+            .or(self.active_apps.lock().await.get(device_id).cloned())
+            .or(recovered_target)
+            .unwrap_or_default();
+        let derived = Self::xctest_derived_data();
+        self.ensure_persistent_agent(
+            device_id,
+            &target,
+            &self.xctest_project.to_string_lossy(),
+            &format!("platform=iOS Simulator,id={device_id}"),
+            &derived,
+        )
+        .await?;
+        self.ui_runner_status(device_id).await
     }
 
     async fn list_elements_filtered(

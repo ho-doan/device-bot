@@ -11,8 +11,8 @@ pub(super) fn definitions() -> [ToolDefinition; 2] {
     [
         ToolDefinition {
             name: NAME.into(),
-            title: Some("List available mobile devices".into()),
-            description: "List Android and iOS devices known to the configured drivers.".into(),
+            title: Some("List discovered devices".into()),
+            description: "List devices known to the configured drivers. state=available means detected/connected, not verified for UI control. For iOS, call mobile_get_ui_runner_status to check live helper identity/version and target app; use prepare=true only when setup/recovery is needed.".into(),
             input_schema: json!({"type":"object","additionalProperties":false}),
         },
         ToolDefinition {

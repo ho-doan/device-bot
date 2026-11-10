@@ -50,7 +50,7 @@ pub async fn coredevice_connected(xcrun: &str, device: &str) -> Result<bool, Str
                 "--device",
                 device,
                 "--timeout",
-                "3",
+                "5",
                 "--json-output",
             ])
             .arg(&path)
@@ -103,6 +103,50 @@ pub async fn usb_attached(device: &str) -> Result<bool, String> {
     })
     .await
     .map_err(|_| "USB registry probe timed out".to_owned())?
+}
+
+/// Query the current lock state independently of the XCTest helper. Missing,
+/// failed or timed-out probes are unknown, never evidence that a phone is locked.
+pub async fn device_lock_state(xcrun: &str, device: &str) -> Option<bool> {
+    let path = std::env::temp_dir().join(format!("device-bot-lock-{}.json", uuid::Uuid::new_v4()));
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        let output = Command::new(xcrun)
+            .args([
+                "devicectl",
+                "device",
+                "info",
+                "lockState",
+                "--device",
+                device,
+                "--timeout",
+                "5",
+                "--json-output",
+            ])
+            .arg(&path)
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let bytes = tokio::fs::read(&path).await.ok()?;
+        parse_device_lock_state(&bytes)
+    })
+    .await
+    .ok()
+    .flatten();
+    let _ = tokio::fs::remove_file(path).await;
+    result
+}
+
+fn parse_device_lock_state(bytes: &[u8]) -> Option<bool> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    if value["info"]["outcome"] != "success" {
+        return None;
+    }
+    value["result"]["passcodeRequired"].as_bool()
 }
 
 fn normalized_id(value: &str) -> String {
@@ -197,6 +241,25 @@ pub fn destination_is_eligible(output: &str, device: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn lock_state_is_current_and_missing_data_is_unknown() {
+        for locked in [true, false] {
+            let value = serde_json::json!({"info":{"outcome":"success"},"result":{
+                "passcodeRequired":locked,"unlockedSinceBoot":true}});
+            assert_eq!(
+                parse_device_lock_state(&serde_json::to_vec(&value).unwrap()),
+                Some(locked)
+            );
+        }
+        for bytes in [
+            b"{}".as_slice(),
+            b"invalid",
+            br#"{"info":{"outcome":"failure"},"result":{"passcodeRequired":true}}"#,
+            br#"{"info":{"outcome":"success"},"result":{"unlockedSinceBoot":true}}"#,
+        ] {
+            assert_eq!(parse_device_lock_state(bytes), None);
+        }
+    }
     #[test]
     fn cached_success_does_not_prove_a_live_connection() {
         let device = "00008130-000959E43EDA001C";

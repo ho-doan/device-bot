@@ -134,15 +134,22 @@ class _DevicesPanel extends StatelessWidget {
                         ),
                       ],
                     ),
-                    if (device.readiness?.state == 'trust_required')
-                      DeviceTrustWarning(
+                    if (device.readiness?.state == 'trust_required' ||
+                        device.readiness?.state == 'device_locked')
+                      DeviceRecoveryWarning(
                         detail: device.readiness!.detail,
+                        deviceLocked:
+                            device.readiness!.state == 'device_locked',
                         onRetry:
                             busyDevices.contains(device.id) ||
                                 onRunnerAction == null
                             ? null
-                            : () =>
-                                  onRunnerAction!(device, RunnerAction.prepare),
+                            : () => onRunnerAction!(
+                                device,
+                                device.readiness!.state == 'device_locked'
+                                    ? RunnerAction.health
+                                    : RunnerAction.prepare,
+                              ),
                       )
                     else if (device.readiness != null)
                       Tooltip(
@@ -193,17 +200,19 @@ class _DevicesPanel extends StatelessWidget {
   }
 }
 
-class DeviceTrustWarning extends StatelessWidget {
-  const DeviceTrustWarning({
+class DeviceRecoveryWarning extends StatelessWidget {
+  const DeviceRecoveryWarning({
     super.key,
     required this.detail,
     this.onRetry,
     this.showRetry = true,
+    this.deviceLocked = false,
   });
 
   final String detail;
   final VoidCallback? onRetry;
   final bool showRetry;
+  final bool deviceLocked;
 
   @override
   Widget build(BuildContext context) {
@@ -221,7 +230,7 @@ class DeviceTrustWarning extends StatelessWidget {
           children: [
             ExcludeSemantics(
               child: Icon(
-                Icons.warning_amber_rounded,
+                deviceLocked ? Icons.lock_outline : Icons.warning_amber_rounded,
                 color: colors.onTertiaryContainer,
               ),
             ),
@@ -231,7 +240,9 @@ class DeviceTrustWarning extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Trust the developer certificate on your iPhone',
+                    deviceLocked
+                        ? 'Unlock your iPhone to continue'
+                        : 'Trust the developer certificate on your iPhone',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       color: colors.onTertiaryContainer,
                     ),
@@ -250,7 +261,11 @@ class DeviceTrustWarning extends StatelessWidget {
                         minimumSize: const Size(48, 48),
                       ),
                       icon: const Icon(Icons.refresh),
-                      label: const Text('Retry after Trust'),
+                      label: Text(
+                        deviceLocked
+                            ? 'Check after unlocking'
+                            : 'Retry after Trust',
+                      ),
                     ),
                   ],
                 ],

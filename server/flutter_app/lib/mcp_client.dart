@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'models.dart';
+import 'local_connection.dart';
 
 /// MCP client used by the Flutter companion.
 ///
@@ -11,11 +12,18 @@ import 'models.dart';
 /// contract as any other MCP client. It does not call the server's admin
 /// endpoints to control devices.
 class McpClient {
-  McpClient({required String baseUrl, required this.bearerToken})
-    : _baseUri = Uri.parse(baseUrl);
+  McpClient({
+    required String baseUrl,
+    required this.bearerToken,
+    this.onDeviceReadiness,
+    this.localConnectionDirectory,
+  }) : _baseUri = Uri.parse(baseUrl);
 
   final Uri _baseUri;
-  final String bearerToken;
+  String bearerToken;
+  final void Function(String deviceId, DeviceReadiness readiness)?
+  onDeviceReadiness;
+  final String? localConnectionDirectory;
   final StreamController<AdminEvent> _eventsController =
       StreamController<AdminEvent>.broadcast();
   final List<AdminEvent> _events = [];
@@ -74,6 +82,9 @@ class McpClient {
       });
       return DeviceReadiness.fromJson(result.structuredContent ?? {});
     } catch (error) {
+      if (error is McpException && error.deviceStatus != null) {
+        return DeviceReadiness.fromJson(error.deviceStatus!);
+      }
       return DeviceReadiness(
         ready: false,
         state: 'error',
@@ -188,7 +199,37 @@ class McpClient {
     });
     final toolResult = McpToolResult.fromJson(result);
     if (toolResult.isError) {
-      throw McpException(toolResult.text ?? 'MCP tool $name failed.');
+      final message = toolResult.text ?? 'MCP tool $name failed.';
+      var deviceStatus = toolResult.structuredContent;
+      // Keep the warning usable with a server that returns the stable error code
+      // as text, while newer servers provide structured recovery information.
+      if (deviceStatus?['state'] != 'device_locked' &&
+          message.startsWith('device_locked:')) {
+        deviceStatus = {
+          'state': 'device_locked',
+          'ready': false,
+          'detail': message.substring('device_locked:'.length).trim(),
+          'deviceId': arguments['deviceId'],
+          'diagnostics': {'connected': true, 'screenLocked': true},
+        };
+      }
+      if (deviceStatus?['state'] == 'device_locked') {
+        final deviceId =
+            deviceStatus?['deviceId'] as String? ??
+            arguments['deviceId'] as String?;
+        if (deviceId != null) {
+          onDeviceReadiness?.call(
+            deviceId,
+            DeviceReadiness.fromJson(deviceStatus!),
+          );
+        }
+      }
+      throw McpException(
+        message,
+        deviceStatus: deviceStatus?['state'] == 'device_locked'
+            ? deviceStatus
+            : null,
+      );
     }
     return toolResult;
   }
@@ -209,6 +250,14 @@ class McpClient {
   }
 
   Future<void> _initialize() async {
+    if (bearerToken.trim().isEmpty) {
+      bearerToken =
+          await localBearerToken(
+            _baseUri,
+            directory: localConnectionDirectory,
+          ) ??
+          '';
+    }
     final initialized = await _post({
       'jsonrpc': '2.0',
       'id': _nextRequestId++,
@@ -420,10 +469,11 @@ class McpToolResult {
 }
 
 class McpException implements Exception {
-  const McpException(this.message, {this.httpStatus});
+  const McpException(this.message, {this.httpStatus, this.deviceStatus});
 
   final String message;
   final int? httpStatus;
+  final Map<String, dynamic>? deviceStatus;
 
   @override
   String toString() => message;

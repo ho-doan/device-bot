@@ -4,6 +4,59 @@ import 'package:mobile_mcp_companion/dashboard.dart';
 import 'package:mobile_mcp_companion/models.dart';
 
 void main() {
+  testWidgets(
+    'locked iPhone warning rechecks health without replaying a tool',
+    (tester) async {
+      final actions = <RunnerAction>[];
+      var locked = true;
+      Widget screen() => MaterialApp(
+        home: Scaffold(
+          body: Dashboard(
+            snapshot: DashboardSnapshot(
+              devices: [
+                AdminDevice(
+                  id: 'phone',
+                  name: 'iPhone',
+                  platform: 'ios',
+                  state: 'available',
+                  readiness: DeviceReadiness.fromJson(
+                    locked
+                        ? {
+                            'ready': false,
+                            'state': 'device_locked',
+                            'detail': 'Unlock the iPhone, then retry.',
+                          }
+                        : {
+                            'ready': false,
+                            'state': 'needs_target',
+                            'detail': 'Select the target app',
+                          },
+                  ),
+                ),
+              ],
+              config: const AdminConfig(authEnabled: true, logCapacity: 200),
+              events: const [],
+            ),
+            onViewScreenshot: (_) {},
+            onBootDevice: (_) async {},
+            onLaunchApp: (_) async {},
+            onRunnerAction: (_, action) => actions.add(action),
+          ),
+        ),
+      );
+      await tester.pumpWidget(screen());
+      expect(find.text('iPhone locked'), findsOneWidget);
+      expect(find.text('Unlock your iPhone to continue'), findsOneWidget);
+      expect(find.text('Ready'), findsNothing);
+      await tester.ensureVisible(find.text('Check after unlocking'));
+      await tester.tap(find.text('Check after unlocking'));
+      expect(actions, [RunnerAction.health]);
+      locked = false;
+      await tester.pumpWidget(screen());
+      expect(find.text('Unlock your iPhone to continue'), findsNothing);
+      expect(find.text('Select app'), findsOneWidget);
+    },
+  );
   const trustDetail =
       'The helper is installed, but iOS blocked its launch. '
       'On the iPhone, open Settings > General > VPN & Device Management, '
@@ -77,7 +130,7 @@ void main() {
                 ),
                 child: Scaffold(
                   body: SingleChildScrollView(
-                    child: DeviceTrustWarning(
+                    child: DeviceRecoveryWarning(
                       detail: trustDetail,
                       onRetry: () {},
                     ),

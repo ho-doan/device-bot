@@ -221,6 +221,18 @@ reuse a known token. After the HTTP socket is ready, a local `flutter_app/`
 source tree is started with `flutter run` in the background when Flutter is
 available. Set `DEVICE_BOT_FLUTTER_AUTOSTART=0` for headless or CI runs.
 
+QC does not require manual Bearer token entry for a local server. The HTTP
+server publishes an owner-private connection profile at
+`~/.device-bot/mcp/connection-<port>.json` and, on macOS, in the existing QC app
+sandbox container. QC discovers credentials only for a matching loopback URL,
+scheme and port. Other MCP clients continue to use the normal Bearer header.
+
+QC checks device readiness every five seconds using a separate read-only MCP
+session. A locked iPhone is reported as `device_locked` both by health checks and
+blocked UI tool calls. QC shows an unlock warning and a Check after unlocking
+action; it does not replay the interrupted tool automatically. Unknown lock
+state is not treated as evidence that the phone is locked.
+
 `POST /mcp` implements the `2025-11-25` session lifecycle. Send the token as
 `Authorization: Bearer <token>`. An
 `initialize` response returns `Mcp-Session-Id`; repeat it for subsequent calls,

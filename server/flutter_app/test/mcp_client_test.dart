@@ -6,6 +6,7 @@ import 'package:mobile_mcp_companion/mcp_client.dart';
 import 'package:mobile_mcp_companion/models.dart';
 
 void main() {
+  lockRecoveryTests();
   test(
     'uses one MCP session for discovery, screenshot, and elements',
     () async {
@@ -308,4 +309,87 @@ void main() {
       ]);
     },
   );
+}
+
+void lockRecoveryTests() {
+  for (final structured in [true, false]) {
+    test(
+      'locked tool updates QC and unlock clears health ($structured)',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(server.close);
+        var locked = true;
+        final warnings = <DeviceReadiness>[];
+        server.listen((request) async {
+          final body =
+              jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+          var result = <String, dynamic>{};
+          if (body['method'] == 'initialize') {
+            request.response.headers.set('mcp-session-id', 'lock-session');
+          } else if (body['method'] == 'notifications/initialized') {
+            request.response.statusCode = 202;
+            await request.response.close();
+            return;
+          } else if (body['method'] == 'tools/call') {
+            result = locked
+                ? {
+                    'isError': true,
+                    'content': [
+                      {
+                        'type': 'text',
+                        'text': 'device_locked: Unlock the iPhone, then retry.',
+                      },
+                    ],
+                    if (structured)
+                      'structuredContent': {
+                        'state': 'device_locked',
+                        'ready': false,
+                        'deviceId': 'phone',
+                        'detail': 'Unlock the iPhone, then retry.',
+                        'diagnostics': {
+                          'connected': true,
+                          'screenLocked': true,
+                        },
+                      },
+                  }
+                : {
+                    'structuredContent': {
+                      'state': 'needs_target',
+                      'ready': false,
+                      'detail': 'Select the target app',
+                      'diagnostics': {'connected': true, 'screenLocked': false},
+                    },
+                  };
+          }
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(
+            jsonEncode({'jsonrpc': '2.0', 'id': body['id'], 'result': result}),
+          );
+          await request.response.close();
+        });
+        final client = McpClient(
+          baseUrl: 'http://127.0.0.1:${server.port}',
+          bearerToken: 'token',
+          onDeviceReadiness: (deviceId, status) {
+            expect(deviceId, 'phone');
+            warnings.add(status);
+          },
+        );
+        addTearDown(client.dispose);
+        await expectLater(
+          client.takeScreenshot('phone'),
+          throwsA(isA<McpException>()),
+        );
+        expect(warnings.single.state, 'device_locked');
+        expect(warnings.single.ready, false);
+        expect(warnings.single.label, 'iPhone locked');
+        final status = await client.runnerStatus('phone');
+        expect(status.state, 'device_locked');
+        locked = false;
+        final unlocked = await client.runnerStatus('phone');
+        expect(unlocked.state, 'needs_target');
+        expect(unlocked.diagnostics?['screenLocked'], false);
+      },
+    );
+  }
 }

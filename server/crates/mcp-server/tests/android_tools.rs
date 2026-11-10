@@ -36,6 +36,9 @@ impl Robot for RecordingRobot {
     }
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
+        if device_id == "locked" {
+            return Err(RobotError::DeviceLocked(device_id.into()));
+        }
         if device_id == "emulator-5554" {
             Ok(vec![1, 2, 3])
         } else {
@@ -704,6 +707,36 @@ async fn flutter_discovery_only_runs_for_missing_native_matches() {
         .unwrap();
     assert_eq!(response["result"]["isError"], true);
     assert_eq!(robot.actions.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn locked_device_tool_errors_expose_actionable_recovery_data() {
+    let mut server = Server::new(Arc::new(RecordingRobot::default()));
+    ready(&mut server).await;
+    let response = server
+        .handle(request(
+            800,
+            "tools/call",
+            json!({
+                "name":"mobile_take_screenshot", "arguments":{"deviceId":"locked"}
+            }),
+        ))
+        .await
+        .unwrap();
+    let result = &response["result"];
+    assert_eq!(result["isError"], true);
+    assert_eq!(result["structuredContent"]["state"], "device_locked");
+    assert_eq!(result["structuredContent"]["deviceId"], "locked");
+    assert_eq!(
+        result["structuredContent"]["recommendedActions"][0],
+        "unlock_device"
+    );
+    assert!(
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Unlock")
+    );
 }
 
 #[tokio::test]

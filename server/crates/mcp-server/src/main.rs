@@ -16,6 +16,7 @@ use robot_windows::WindowsRobot;
 
 mod assets;
 mod launcher;
+mod qc_connection;
 mod update;
 
 fn android_adb_path() -> String {
@@ -607,6 +608,9 @@ async fn main() -> std::io::Result<()> {
             let listener = tokio::net::TcpListener::bind(address).await?;
             let listen_address = listener.local_addr()?;
             let bearer_token = resolve_bearer_token();
+            if let Err(error) = qc_connection::publish(listen_address, &bearer_token) {
+                eprintln!("QC local connection discovery unavailable: {error}");
+            }
             eprintln!("Device Bot listening on http://{listen_address}");
             let mut flutter_companion = launch_flutter_companion(listen_address, &bearer_token);
             let result = axum::serve(

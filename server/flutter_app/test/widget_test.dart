@@ -15,6 +15,7 @@ void main() {
 
     expect(find.text('Device Bot Companion'), findsOneWidget);
     expect(find.text('MCP server URL'), findsOneWidget);
+    expect(find.text('Bearer token (optional)'), findsNothing);
     expect(find.text('Refresh'), findsOneWidget);
   });
 }

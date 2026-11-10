@@ -362,10 +362,27 @@ impl IosXCTestRobot {
         method: &str,
         params: Value,
     ) -> Result<Value, RobotError> {
-        self.ensure_agent_started(device_id).await?;
-        self.agent
-            .dispatch_for(device_id, method, params, ACTION_TIMEOUT)
-            .await
+        self.ensure_device_unlocked(device_id).await?;
+        let result = async {
+            self.ensure_agent_started(device_id).await?;
+            self.agent
+                .dispatch_for(device_id, method, params, ACTION_TIMEOUT)
+                .await
+        }
+        .await;
+        if result.is_err() {
+            // The user may have locked the screen while the operation was running.
+            self.ensure_device_unlocked(device_id).await?;
+        }
+        result
+    }
+
+    async fn ensure_device_unlocked(&self, device_id: &str) -> Result<(), RobotError> {
+        validate_device_id(device_id)?;
+        if crate::connection::device_lock_state(&self.xcrun_path, device_id).await == Some(true) {
+            return Err(RobotError::DeviceLocked(device_id.into()));
+        }
+        Ok(())
     }
 
     /// Reusable, read-only preflight for QC, REST and MCP callers.
@@ -999,9 +1016,10 @@ impl Robot for IosXCTestRobot {
     }
     async fn check_device_health(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
         validate_device_id(device_id)?;
-        let (status, report) = tokio::join!(
+        let (status, report, screen_locked) = tokio::join!(
             self.agent_status(device_id),
-            self.connection_report(device_id, false)
+            self.connection_report(device_id, false),
+            crate::connection::device_lock_state(&self.xcrun_path, device_id)
         );
         let mut status = status?;
         let report = report?;
@@ -1009,8 +1027,18 @@ impl Robot for IosXCTestRobot {
             status.ready = false;
             status.state = "offline".into();
             status.detail = report.summary();
+        } else if screen_locked == Some(true) {
+            status.ready = false;
+            status.state = "device_locked".into();
+            status.detail = "The iPhone screen is locked. Unlock the iPhone on the device, then retry the operation in QC.".into();
         }
         status.diagnostics = Some(json!(report));
+        if let Some(diagnostics) = status.diagnostics.as_mut() {
+            diagnostics["screenLocked"] = json!(screen_locked);
+            if screen_locked == Some(true) {
+                diagnostics["recommendedActions"] = json!(["unlock_device", "retry_operation"]);
+            }
+        }
         Ok(status)
     }
 
@@ -1022,6 +1050,9 @@ impl Robot for IosXCTestRobot {
     ) -> Result<UiRunnerStatus, RobotError> {
         validate_device_id(device_id)?;
         let status = self.check_device_health(device_id).await?;
+        if status.state == "device_locked" {
+            return Ok(status);
+        }
         if !reinstall
             && status.ready
             && app_id.is_none_or(|app| status.target_app_id.as_deref() == Some(app))
@@ -1054,11 +1085,12 @@ impl Robot for IosXCTestRobot {
             }
         }
         if let Err(error) = self.ensure_agent_started(device_id).await {
-            if error.to_string().contains("iOS XCTest helper exited with") {
-                let status = self.check_device_health(device_id).await?;
-                if status.state == "trust_required" {
-                    return Ok(status);
-                }
+            let status = self.check_device_health(device_id).await?;
+            if status.state == "device_locked"
+                || (status.state == "trust_required"
+                    && error.to_string().contains("iOS XCTest helper exited with"))
+            {
+                return Ok(status);
             }
             return Err(error);
         }
@@ -1364,6 +1396,51 @@ mod tests {
         assert_eq!(status.state, "trust_required");
         assert!(!status.ready);
         assert_eq!(status.diagnostics.unwrap()["connected"], true);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn locked_phone_is_reported_by_health_and_blocks_ui_tools_before_helper_start() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("ios-lock-{}", Uuid::new_v4()));
+        let project = root.join("Phone.xcodeproj");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("project.pbxproj"),
+            "DEVELOPMENT_TEAM = TEAM123456;",
+        )
+        .unwrap();
+        let device = "00008130-000959E43EDA001C";
+        let devices = json!({"result":{"devices":[{"identifier":"CORE-ID",
+            "deviceProperties":{"name":"Phone"},"connectionProperties":{
+                "tunnelState":"connected","pairingState":"paired",
+                "potentialHostnames":[format!("{device}.coredevice.local")]}}]}});
+        let locked = root.join("locked.json");
+        std::fs::write(&locked, r#"{"info":{"outcome":"success"},"result":{"deviceIdentifier":"CORE-ID","passcodeRequired":true,"unlockedSinceBoot":true}}"#).unwrap();
+        let xcrun = root.join("xcrun");
+        std::fs::write(&xcrun, format!(
+            "#!/bin/sh\nfor argument in \"$@\"; do last=\"$argument\"; done\ncase \"$*\" in\n  'devicectl device info lockState '*) cat '{}' > \"$last\" ;;\n  'devicectl list devices '*) printf '%s' '{}' > \"$last\" ;;\n  *) exit 1 ;;\nesac\n", locked.display(), devices
+        )).unwrap();
+        std::fs::set_permissions(&xcrun, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let robot = IosXCTestRobot::with_artifact_dir(
+            xcrun.to_string_lossy(),
+            XCTestAgentBridge::new(None),
+            root.join("artifacts"),
+        )
+        .with_runner_project(project);
+        let status = robot.check_device_health(device).await.unwrap();
+        assert_eq!(status.state, "device_locked", "{}", status.detail);
+        assert!(!status.ready);
+        assert!(status.detail.contains("Unlock"));
+        assert_eq!(status.diagnostics.unwrap()["screenLocked"], true);
+        let error = robot.take_screenshot(device).await.unwrap_err().to_string();
+        assert!(error.starts_with("device_locked:"), "{error}");
+        assert!(robot.persistent_agents.lock().await.is_empty());
+        std::fs::write(&locked, r#"{"info":{"outcome":"success"},"result":{"deviceIdentifier":"CORE-ID","passcodeRequired":false,"unlockedSinceBoot":true}}"#).unwrap();
+        let status = robot.check_device_health(device).await.unwrap();
+        assert_ne!(status.state, "device_locked");
+        assert_eq!(status.diagnostics.unwrap()["screenLocked"], false);
         std::fs::remove_dir_all(root).unwrap();
     }
 

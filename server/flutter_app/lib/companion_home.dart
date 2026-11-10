@@ -15,6 +15,16 @@ const _defaultBaseUrl = String.fromEnvironment(
 );
 const _defaultAuthToken = String.fromEnvironment('DEVICE_BOT_AUTH');
 
+String installedAppsErrorMessage(Object? error) {
+  final message = error.toString();
+  if (message.contains('requireContainerAccess')) {
+    return 'The selected Xcode/CoreDevice cannot decode this iOS app list '
+        '(missing requireContainerAccess). Check Xcode device compatibility, '
+        'or enter the app bundle ID below.';
+  }
+  return 'Could not list installed apps: $message\nEnter the identifier manually.';
+}
+
 String elementInspectionErrorMessage(Object error) {
   final message = error.toString();
   if (message.contains('no active app is known')) {
@@ -135,7 +145,6 @@ class CompanionHome extends StatefulWidget {
 
 class _CompanionHomeState extends State<CompanionHome> {
   final _baseUrlController = TextEditingController(text: _defaultBaseUrl);
-  final _tokenController = TextEditingController(text: _defaultAuthToken);
   late Future<DashboardSnapshot> _snapshot;
   McpClient? _mcpClient;
   StreamSubscription<AdminEvent>? _mcpEventSubscription;
@@ -143,8 +152,10 @@ class _CompanionHomeState extends State<CompanionHome> {
   String _activityStatus = 'Activity stream is connecting…';
   final Map<String, DeviceReadiness> _deviceReadiness = {};
   final Set<String> _busyDevices = {};
+  Timer? _readinessTimer;
+  McpClient? _healthClient;
+  bool _checkingReadiness = false;
   int _connectionGeneration = 0;
-  bool _tokenVisible = false;
 
   @override
   void initState() {
@@ -154,8 +165,9 @@ class _CompanionHomeState extends State<CompanionHome> {
 
   @override
   void dispose() {
+    _readinessTimer?.cancel();
+    unawaited(_healthClient?.dispose() ?? Future<void>.value());
     _baseUrlController.dispose();
-    _tokenController.dispose();
     unawaited(_mcpEventSubscription?.cancel() ?? Future<void>.value());
     unawaited(_mcpClient?.dispose() ?? Future<void>.value());
     super.dispose();
@@ -163,16 +175,33 @@ class _CompanionHomeState extends State<CompanionHome> {
 
   McpClient _client() => _mcpClient ??= McpClient(
     baseUrl: _baseUrlController.text,
-    bearerToken: _tokenController.text,
+    bearerToken: _defaultAuthToken,
   );
 
   void _refresh() {
+    _readinessTimer ??= Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _pollDeviceReadiness(),
+    );
     final generation = ++_connectionGeneration;
     final previousClient = _mcpClient;
+    final previousHealthClient = _healthClient;
     final client = McpClient(
       baseUrl: _baseUrlController.text,
-      bearerToken: _tokenController.text,
+      bearerToken: _defaultAuthToken,
+      onDeviceReadiness: (deviceId, readiness) {
+        if (mounted && generation == _connectionGeneration) {
+          setState(() => _deviceReadiness[deviceId] = readiness);
+        }
+      },
     );
+    // A separate MCP session can still check the lock state while a UI tool is
+    // waiting for XCTest in the interactive session.
+    _healthClient = McpClient(
+      baseUrl: _baseUrlController.text,
+      bearerToken: _defaultAuthToken,
+    );
+    unawaited(previousHealthClient?.dispose() ?? Future<void>.value());
     _mcpClient = client;
     unawaited(previousClient?.dispose() ?? Future<void>.value());
     setState(() {
@@ -182,6 +211,38 @@ class _CompanionHomeState extends State<CompanionHome> {
       _snapshot = client.loadDashboard();
     });
     unawaited(_listenToMcpEvents(client, generation));
+  }
+
+  Future<void> _pollDeviceReadiness() async {
+    if (_checkingReadiness || _healthClient == null) return;
+    _checkingReadiness = true;
+    final generation = _connectionGeneration;
+    final client = _healthClient!;
+    try {
+      final snapshot = await _snapshot;
+      if (!mounted || generation != _connectionGeneration) return;
+      final statuses = await Future.wait(
+        snapshot.devices
+            .where(
+              (device) =>
+                  device.platform == 'ios' &&
+                  (device.state == 'available' ||
+                      RegExp(
+                        r'^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{16}|[0-9a-fA-F]{40})$',
+                      ).hasMatch(device.id)),
+            )
+            .map(
+              (device) async =>
+                  MapEntry(device.id, await client.runnerStatus(device.id)),
+            ),
+      );
+      if (!mounted || generation != _connectionGeneration) return;
+      setState(() => _deviceReadiness.addEntries(statuses));
+    } catch (_) {
+      // Discovery/session failures are already reported by the connection UI.
+    } finally {
+      _checkingReadiness = false;
+    }
   }
 
   Future<void> _listenToMcpEvents(McpClient client, int generation) async {
@@ -248,8 +309,14 @@ class _CompanionHomeState extends State<CompanionHome> {
           content: SingleChildScrollView(
             child: SizedBox(
               width: 480,
-              child: status.state == 'trust_required'
-                  ? DeviceTrustWarning(detail: status.detail, showRetry: false)
+              child:
+                  status.state == 'trust_required' ||
+                      status.state == 'device_locked'
+                  ? DeviceRecoveryWarning(
+                      detail: status.detail,
+                      showRetry: false,
+                      deviceLocked: status.state == 'device_locked',
+                    )
                   : SelectableText(status.report),
             ),
           ),
@@ -377,10 +444,6 @@ class _CompanionHomeState extends State<CompanionHome> {
                     const SizedBox(height: 24),
                     _ConnectionForm(
                       baseUrlController: _baseUrlController,
-                      tokenController: _tokenController,
-                      tokenVisible: _tokenVisible,
-                      onToggleTokenVisibility: () =>
-                          setState(() => _tokenVisible = !_tokenVisible),
                       onRefresh: _refresh,
                       activityStatus: _activityStatus,
                     ),
@@ -426,17 +489,11 @@ class _CompanionHomeState extends State<CompanionHome> {
 class _ConnectionForm extends StatelessWidget {
   const _ConnectionForm({
     required this.baseUrlController,
-    required this.tokenController,
-    required this.tokenVisible,
-    required this.onToggleTokenVisibility,
     required this.onRefresh,
     required this.activityStatus,
   });
 
   final TextEditingController baseUrlController;
-  final TextEditingController tokenController;
-  final bool tokenVisible;
-  final VoidCallback onToggleTokenVisibility;
   final VoidCallback onRefresh;
   final String activityStatus;
 
@@ -456,25 +513,6 @@ class _ConnectionForm extends StatelessWidget {
                 controller: baseUrlController,
                 keyboardType: TextInputType.url,
                 decoration: const InputDecoration(labelText: 'MCP server URL'),
-              ),
-            ),
-            SizedBox(
-              width: 300,
-              child: TextField(
-                controller: tokenController,
-                obscureText: !tokenVisible,
-                decoration: InputDecoration(
-                  labelText: 'Bearer token (optional)',
-                  suffixIcon: IconButton(
-                    tooltip: tokenVisible
-                        ? 'Hide bearer token'
-                        : 'Show bearer token',
-                    onPressed: onToggleTokenVisibility,
-                    icon: Icon(
-                      tokenVisible ? Icons.visibility_off : Icons.visibility,
-                    ),
-                  ),
-                ),
               ),
             ),
             FilledButton.icon(
@@ -574,7 +612,7 @@ class _LaunchAppDialogState extends State<_LaunchAppDialog> {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Text(
-                      'Could not list installed apps. Enter the identifier manually.',
+                      installedAppsErrorMessage(snapshot.error),
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.error,
                       ),

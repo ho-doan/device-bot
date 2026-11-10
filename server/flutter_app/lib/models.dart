@@ -90,6 +90,7 @@ class DeviceReadiness {
       ? 'Ready'
       : switch (state) {
           'trust_required' => 'Trust required',
+          'device_locked' => 'iPhone locked',
           'needs_target' => 'Select app',
           'target_not_running' => 'Launch app',
           'unconfigured' => 'Setup needed',

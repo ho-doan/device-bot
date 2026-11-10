@@ -14,7 +14,7 @@ mod ui;
 
 use std::sync::Arc;
 
-use device_mcp_protocol::{CallToolParams, ToolDefinition, ToolResult};
+use device_mcp_protocol::{CallToolParams, ToolContent, ToolDefinition, ToolResult};
 use robot_core::Robot;
 
 pub(crate) struct ToolRegistry {
@@ -48,7 +48,7 @@ impl ToolRegistry {
         &self,
         params: CallToolParams,
     ) -> Result<ToolResult, device_mcp_protocol::RpcError> {
-        let result = match params.name.as_str() {
+        let mut result = match params.name.as_str() {
             device::NAME => device::call(&self.robot).await,
             device::BOOT_NAME => device::boot(&self.robot, &params.arguments).await,
             recording::START_NAME => recording::start(&self.robot, &params.arguments).await,
@@ -74,6 +74,20 @@ impl ToolRegistry {
                 )));
             }
         };
+        if result.is_error == Some(true) {
+            let locked = result.content.iter().find_map(|content| match content {
+                ToolContent::Text { text } => text.strip_prefix("device_locked:").map(str::trim),
+                _ => None,
+            });
+            if let Some(detail) = locked {
+                result.structured_content = Some(serde_json::json!({
+                    "state":"device_locked", "code":"device_locked", "ready":false,
+                    "deviceId":params.arguments["deviceId"], "detail":detail,
+                    "recommendedActions":["unlock_device", "retry_operation"],
+                    "diagnostics":{"connected":true,"screenLocked":true}
+                }));
+            }
+        }
         Ok(result)
     }
 }

@@ -32,6 +32,8 @@ use tokio::{
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+mod startup;
+
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -47,6 +49,7 @@ pub struct ChromeRobot {
     artifact_dir: PathBuf,
     ffmpeg_path: String,
     recordings: Arc<Mutex<HashMap<String, ActiveRecording>>>,
+    boot_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -70,6 +73,7 @@ impl ChromeRobot {
             artifact_dir: "artifacts".into(),
             ffmpeg_path: "ffmpeg".into(),
             recordings: Arc::new(Mutex::new(HashMap::new())),
+            boot_lock: Arc::default(),
         }
     }
 
@@ -165,7 +169,11 @@ impl ChromeRobot {
     }
 
     async fn targets(&self) -> Result<Vec<ChromeTarget>, RobotError> {
-        let response = self.http_get("/json/list").await?;
+        let response = tokio::time::timeout(Duration::from_secs(2), self.http_get("/json/list"))
+            .await
+            .map_err(|_| {
+                RobotError::CommandFailed("Chrome DevTools discovery timed out".into())
+            })??;
         serde_json::from_slice(&response).map_err(|error| {
             RobotError::CommandFailed(format!(
                 "Chrome DevTools returned invalid target JSON: {error}"
@@ -310,9 +318,9 @@ impl Robot for ChromeRobot {
         // mobile and desktop drivers from listing their own devices.
         let targets = match self.targets().await {
             Ok(targets) => targets,
-            Err(_) => return Ok(vec![]),
+            Err(_) => return Ok(vec![self.offline_browser()]),
         };
-        Ok(targets
+        let devices: Vec<_> = targets
             .into_iter()
             .filter(|target| target.kind == "page" && target.web_socket_debugger_url.is_some())
             .map(|target| RobotDevice {
@@ -325,7 +333,16 @@ impl Robot for ChromeRobot {
                 platform: Platform::Chrome,
                 state: DeviceState::Available,
             })
-            .collect())
+            .collect();
+        Ok(if devices.is_empty() {
+            vec![self.offline_browser()]
+        } else {
+            devices
+        })
+    }
+
+    async fn boot_device(&self, device_id: &str) -> Result<(), RobotError> {
+        self.start_browser(device_id).await
     }
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {

@@ -85,7 +85,7 @@ class _DevicesPanel extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             if (devices.isEmpty)
-              const Text('No active devices were reported by the MCP server.')
+              const Text('No devices were reported by the MCP server.')
             else
               ...devices.map(
                 (device) => Column(
@@ -94,11 +94,12 @@ class _DevicesPanel extends StatelessWidget {
                     ListTile(
                       key: ValueKey(device.id),
                       contentPadding: EdgeInsets.zero,
-                      leading: Icon(
-                        device.platform == 'ios'
-                            ? Icons.phone_iphone
-                            : Icons.android,
-                      ),
+                      leading: Icon(switch (device.platform) {
+                        'ios' => Icons.phone_iphone,
+                        'android' => Icons.android,
+                        'chrome' => Icons.web,
+                        _ => Icons.computer,
+                      }),
                       title: Text(device.name),
                       subtitle: SelectableText(device.id),
                     ),
@@ -111,23 +112,32 @@ class _DevicesPanel extends StatelessWidget {
                           readiness: device.readiness,
                           busy: busyDevices.contains(device.id),
                         ),
-                        IconButton(
-                          tooltip: 'Boot device',
-                          onPressed: busyDevices.contains(device.id)
-                              ? null
-                              : () => onBootDevice(device),
-                          icon: const Icon(Icons.power_settings_new),
-                        ),
+                        if (device.canStart)
+                          OutlinedButton.icon(
+                            onPressed: busyDevices.contains(device.id)
+                                ? null
+                                : () => onBootDevice(device),
+                            icon: const Icon(Icons.power_settings_new),
+                            label: Text(
+                              busyDevices.contains(device.id)
+                                  ? 'Starting…'
+                                  : 'Start',
+                            ),
+                          ),
                         IconButton(
                           tooltip: 'Launch app',
-                          onPressed: busyDevices.contains(device.id)
+                          onPressed:
+                              busyDevices.contains(device.id) ||
+                                  device.state != 'available'
                               ? null
                               : () => onLaunchApp(device),
                           icon: const Icon(Icons.rocket_launch_outlined),
                         ),
                         IconButton(
                           tooltip: 'Screenshot',
-                          onPressed: busyDevices.contains(device.id)
+                          onPressed:
+                              busyDevices.contains(device.id) ||
+                                  device.state != 'available'
                               ? null
                               : () => onViewScreenshot(device),
                           icon: const Icon(Icons.screenshot_monitor),

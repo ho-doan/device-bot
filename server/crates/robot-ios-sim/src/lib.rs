@@ -777,23 +777,19 @@ impl Robot for IosSimulatorRobot {
 
     async fn boot_device(&self, device_id: &str) -> Result<(), RobotError> {
         Self::valid_device_id(device_id)?;
-        if self
-            .list_devices()
-            .await?
-            .iter()
-            .any(|device| device.id == device_id && device.state == DeviceState::Available)
-        {
-            return Ok(());
-        }
-        self.simctl(&["simctl".into(), "boot".into(), device_id.into()])
-            .await?;
-        self.simctl(&[
-            "simctl".into(),
-            "bootstatus".into(),
-            device_id.into(),
-            "-b".into(),
-        ])
-        .await?;
+        // bootstatus -b is idempotent and waits for readiness even when another
+        // caller has already started the simulator but it is still booting.
+        tokio::time::timeout(
+            Duration::from_secs(180),
+            self.simctl(&[
+                "simctl".into(),
+                "bootstatus".into(),
+                device_id.into(),
+                "-b".into(),
+            ]),
+        ).await.map_err(|_| RobotError::CommandFailed(format!(
+            "iOS Simulator {device_id} did not finish starting within 180 seconds; refresh devices before retrying"
+        )))??;
         Ok(())
     }
 
@@ -1430,6 +1426,27 @@ pub fn parse_simctl_devices(json: &str) -> Result<Vec<RobotDevice>, RobotError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn start_waits_for_simctl_bootstatus_and_propagates_boot_failure() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "device-bot-simulator-start-{}-{}",
+            std::process::id(),
+            ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("xcrun");
+        std::fs::write(&script, "#!/bin/sh\n[ \"$1\" = simctl ] && [ \"$2\" = bootstatus ] && [ \"$4\" = -b ] || exit 7\n[ \"$3\" = failed-id ] && { echo 'boot failed' >&2; exit 9; }\nexit 0\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let robot = IosSimulatorRobot::new(script.to_string_lossy(), &dir);
+        robot.boot_device("simulator-id").await.unwrap();
+        let error = robot.boot_device("failed-id").await.unwrap_err();
+        assert!(error.to_string().contains("boot failed"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn parses_booted_and_shutdown_simulators() {
         let devices = parse_simctl_devices(r#"{"devices":{"runtime":[{"udid":"booted-id","name":"iPhone 16","state":"Booted","isAvailable":true},{"udid":"off-id","name":"iPhone SE","state":"Shutdown","isAvailable":true}]}}"#).unwrap();

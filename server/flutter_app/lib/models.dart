@@ -31,6 +31,14 @@ class AdminDevice {
   final String platform;
   final String state;
   final DeviceReadiness? readiness;
+  bool get canStart =>
+      (platform == 'android' && id.startsWith('avd:')) ||
+      (platform == 'chrome' && id == 'chrome:browser') ||
+      (platform == 'ios' &&
+          RegExp(
+            r'^[A-Fa-f0-9]{8}(?:-[A-Fa-f0-9]{4}){3}-[A-Fa-f0-9]{12}$',
+          ).hasMatch(id) &&
+          state != 'available');
   AdminDevice withReadiness(DeviceReadiness readiness) => AdminDevice(
     id: id,
     name: name,

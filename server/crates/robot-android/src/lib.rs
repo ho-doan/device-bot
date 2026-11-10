@@ -26,6 +26,8 @@ use serde_json::{Value, json};
 use tokio::{process::Command, sync::Mutex};
 use url::Url;
 
+mod emulator;
+
 static TREE_DUMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -48,6 +50,15 @@ pub struct CommandOutput {
 #[async_trait]
 pub trait CommandRunner: Send + Sync {
     async fn run(&self, executable: &str, args: &[String]) -> Result<CommandOutput, RobotError>;
+
+    async fn spawn_background(
+        &self,
+        _executable: &str,
+        _args: &[String],
+        _log_path: &std::path::Path,
+    ) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported("background process launch".into()))
+    }
 }
 
 /// Real process runner used outside tests.
@@ -56,10 +67,36 @@ pub struct TokioCommandRunner;
 
 #[async_trait]
 impl CommandRunner for TokioCommandRunner {
+    async fn spawn_background(
+        &self,
+        executable: &str,
+        args: &[String],
+        log_path: &std::path::Path,
+    ) -> Result<(), RobotError> {
+        let log = std::fs::File::create(log_path).map_err(|error| {
+            RobotError::CommandFailed(format!("could not create emulator log: {error}"))
+        })?;
+        let stderr = log.try_clone().map_err(|error| {
+            RobotError::CommandFailed(format!("could not clone emulator log: {error}"))
+        })?;
+        Command::new(executable)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(log)
+            .stderr(stderr)
+            .kill_on_drop(false)
+            .spawn()
+            .map_err(|error| {
+                RobotError::CommandFailed(format!("could not start {executable}: {error}"))
+            })?;
+        Ok(())
+    }
+
     async fn run(&self, executable: &str, args: &[String]) -> Result<CommandOutput, RobotError> {
         let output = Command::new(executable)
             .args(args)
             .stdin(Stdio::null())
+            .kill_on_drop(true)
             .output()
             .await
             .map_err(|error| {
@@ -79,6 +116,8 @@ impl CommandRunner for TokioCommandRunner {
 #[derive(Debug, Clone)]
 pub struct AndroidRobot<R = TokioCommandRunner> {
     adb_path: String,
+    emulator_path: String,
+    boot_lock: Arc<Mutex<()>>,
     artifact_dir: PathBuf,
     recordings: Arc<Mutex<HashMap<String, ActiveRecording>>>,
     runner: R,
@@ -100,8 +139,11 @@ impl<R> AndroidRobot<R> {
         artifact_dir: impl Into<PathBuf>,
         runner: R,
     ) -> Self {
+        let adb_path = adb_path.into();
         Self {
-            adb_path: adb_path.into(),
+            emulator_path: emulator::emulator_path(&adb_path),
+            adb_path,
+            boot_lock: Arc::default(),
             artifact_dir: artifact_dir.into(),
             recordings: Arc::default(),
             runner,
@@ -110,6 +152,11 @@ impl<R> AndroidRobot<R> {
 
     pub fn adb_path(&self) -> &str {
         &self.adb_path
+    }
+
+    pub fn with_emulator_path(mut self, path: impl Into<String>) -> Self {
+        self.emulator_path = path.into();
+        self
     }
 
     fn next_recording(&self, device_id: &str) -> ActiveRecording {
@@ -137,11 +184,11 @@ impl<R> AndroidRobot<R> {
 #[async_trait]
 impl<R: CommandRunner> Robot for AndroidRobot<R> {
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
-        let output = self.run_adb(&["devices".into(), "-l".into()]).await?;
-        let text = String::from_utf8(output.stdout).map_err(|error| {
-            RobotError::CommandFailed(format!("adb devices returned invalid UTF-8: {error}"))
-        })?;
-        Ok(parse_adb_devices(&text))
+        self.discover_devices().await
+    }
+
+    async fn boot_device(&self, device_id: &str) -> Result<(), RobotError> {
+        self.boot_emulator(device_id).await
     }
 
     async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {
@@ -532,6 +579,11 @@ impl<R: CommandRunner> AndroidRobot<R> {
 }
 
 fn ensure_device_id(device_id: &str) -> Result<(), RobotError> {
+    if device_id.starts_with("avd:") {
+        return Err(RobotError::InvalidInput(
+            "start the AVD first, refresh devices, then use its emulator-* ADB id".into(),
+        ));
+    }
     if device_id.trim().is_empty() {
         return Err(RobotError::InvalidInput(
             "device id must not be empty".into(),
@@ -825,13 +877,13 @@ mod tests {
     use super::*;
 
     #[derive(Debug)]
-    struct FakeRunner {
+    pub(super) struct FakeRunner {
         outputs: Mutex<VecDeque<CommandOutput>>,
-        calls: Mutex<Vec<(String, Vec<String>)>>,
+        pub(super) calls: Mutex<Vec<(String, Vec<String>)>>,
     }
 
     impl FakeRunner {
-        fn new(outputs: impl IntoIterator<Item = CommandOutput>) -> Self {
+        pub(super) fn new(outputs: impl IntoIterator<Item = CommandOutput>) -> Self {
             Self {
                 outputs: Mutex::new(outputs.into_iter().collect()),
                 calls: Mutex::new(vec![]),
@@ -841,6 +893,18 @@ mod tests {
 
     #[async_trait]
     impl CommandRunner for FakeRunner {
+        async fn spawn_background(
+            &self,
+            executable: &str,
+            args: &[String],
+            _: &std::path::Path,
+        ) -> Result<(), RobotError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((executable.into(), args.to_vec()));
+            Ok(())
+        }
         async fn run(
             &self,
             executable: &str,
@@ -858,7 +922,7 @@ mod tests {
         }
     }
 
-    fn successful(stdout: impl Into<Vec<u8>>) -> CommandOutput {
+    pub(super) fn successful(stdout: impl Into<Vec<u8>>) -> CommandOutput {
         CommandOutput {
             success: true,
             exit_code: Some(0),

@@ -5,6 +5,90 @@ import 'package:mobile_mcp_companion/models.dart';
 
 void main() {
   testWidgets(
+    'stopped virtual devices and Chrome have Start; physical phones do not',
+    (tester) async {
+      final started = <String>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Dashboard(
+              snapshot: DashboardSnapshot(
+                devices: const [
+                  AdminDevice(
+                    id: 'avd:Pixel',
+                    name: 'Stopped Pixel',
+                    platform: 'android',
+                    state: 'offline',
+                  ),
+                  AdminDevice(
+                    id: 'chrome:browser',
+                    name: 'Chrome',
+                    platform: 'chrome',
+                    state: 'offline',
+                  ),
+                  AdminDevice(
+                    id: 'FAA83C0A-E2AD-4642-8D83-B83240B0B0EF',
+                    name: 'Simulator',
+                    platform: 'ios',
+                    state: 'offline',
+                  ),
+                  AdminDevice(
+                    id: 'phone',
+                    name: 'Android phone',
+                    platform: 'android',
+                    state: 'available',
+                  ),
+                ],
+                config: const AdminConfig(authEnabled: true, logCapacity: 200),
+                events: const [],
+              ),
+              onViewScreenshot: (_) {},
+              onBootDevice: (device) async => started.add(device.id),
+              onLaunchApp: (_) async {},
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Start'), findsNWidgets(3));
+      await tester.tap(find.text('Start').first);
+      expect(started, ['avd:Pixel']);
+      expect(find.byIcon(Icons.web), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('starting device cannot be started twice', (tester) async {
+    var starts = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Dashboard(
+            snapshot: DashboardSnapshot(
+              devices: const [
+                AdminDevice(
+                  id: 'avd:Pixel',
+                  name: 'Pixel',
+                  platform: 'android',
+                  state: 'offline',
+                ),
+              ],
+              config: const AdminConfig(authEnabled: true, logCapacity: 200),
+              events: const [],
+            ),
+            busyDevices: const {'avd:Pixel'},
+            onViewScreenshot: (_) {},
+            onBootDevice: (_) async => starts++,
+            onLaunchApp: (_) async {},
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Starting…'), findsOneWidget);
+    await tester.tap(find.text('Starting…'));
+    expect(starts, 0);
+  });
+
+  testWidgets(
     'locked iPhone warning rechecks health without replaying a tool',
     (tester) async {
       final actions = <RunnerAction>[];

@@ -33,6 +33,17 @@ fn android_adb_path() -> String {
             return path.to_string_lossy().into_owned();
         }
     }
+    if let Some(home) = std::env::var_os("HOME") {
+        for suffix in ["Library/Android/sdk", "Android/Sdk"] {
+            let path = PathBuf::from(&home)
+                .join(suffix)
+                .join("platform-tools")
+                .join(executable);
+            if path.is_file() {
+                return path.to_string_lossy().into_owned();
+            }
+        }
+    }
     executable.into()
 }
 

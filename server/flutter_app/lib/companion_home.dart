@@ -344,20 +344,27 @@ class _CompanionHomeState extends State<CompanionHome> {
   }
 
   Future<void> _bootDevice(AdminDevice device) async {
+    if (_busyDevices.contains(device.id)) return;
+    final generation = _connectionGeneration;
+    setState(() => _busyDevices.add(device.id));
     try {
       await _client().bootDevice(device.id);
-      if (mounted) {
+      if (mounted && generation == _connectionGeneration) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Boot requested for ${device.name}.')),
+          SnackBar(
+            content: Text('${device.name} started. Refreshing devices…'),
+          ),
         );
         _refresh();
       }
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not boot ${device.name}: $error')),
+          SnackBar(content: Text('Could not start ${device.name}: $error')),
         );
       }
+    } finally {
+      if (mounted) setState(() => _busyDevices.remove(device.id));
     }
   }
 

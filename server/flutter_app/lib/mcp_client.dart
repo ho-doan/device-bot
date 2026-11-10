@@ -322,7 +322,10 @@ class McpClient {
         body['method'] == 'tools/call' &&
         (body['params'] as Map?)?['name'] == 'mobile_get_ui_runner_status' &&
         ((body['params'] as Map?)?['arguments'] as Map?)?['prepare'] == true;
-    final timeout = Duration(seconds: preparing ? 300 : 30);
+    final starting =
+        body['method'] == 'tools/call' &&
+        (body['params'] as Map?)?['name'] == 'mobile_boot_device';
+    final timeout = Duration(seconds: preparing || starting ? 300 : 30);
     try {
       final request = await client.postUrl(_baseUri.resolve('/mcp'));
       request.headers.contentType = ContentType.json;

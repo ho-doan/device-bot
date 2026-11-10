@@ -57,13 +57,25 @@ cargo build -p device-bot -p robot-flow -p robot-report
 cargo run -p device-bot -- mcp
 ```
 
-The binary executes `adb` and `xcrun` from `PATH`. Set `ANDROID_ADB_PATH` or
-`XCRUN_PATH` to use a specific installation. Set `GO_IOS_PATH` when the
+The binary resolves `adb` from `ANDROID_ADB_PATH`, Android SDK environment variables,
+the usual home SDK directories, or `PATH`. `xcrun` uses `PATH`; set `XCRUN_PATH`
+to use a specific installation. Set `GO_IOS_PATH` when the
 `go-ios` binary is not named `ios`. Recording artifacts are written to
 `artifacts/` by default; set `DEVICE_BOT_ARTIFACT_DIR` to override it.
 
 The process accepts one JSON-RPC message per stdin line and writes one response
 per stdout line. Diagnostic output is reserved for stderr.
+
+Device discovery scans `adb devices -l` for physical Android devices and running
+emulators, plus `emulator -list-avds` for stopped AVDs. Set `ANDROID_EMULATOR_PATH`
+to override the emulator executable; otherwise it is resolved alongside ADB,
+from SDK environment variables, usual home SDK directories, or `PATH`.
+Stopped AVDs appear as `avd:<name>`. Use QC **Start** or call
+`mobile_boot_device` with that ID; the server launches the emulator in the
+background and waits for Android boot completion. Refresh the list afterwards
+and use the resulting `emulator-*` ADB ID for app/UI tools. Running AVDs are
+merged with their ADB entries. Startup logs are saved to `artifacts/emulator-<name>.log`.
+iOS Simulators that are shut down also have **Start** in QC.
 
 ## iOS health checks
 
@@ -485,11 +497,17 @@ input. The sample in
 `examples/flutter_app` includes this startup call. Launch the app through
 `mobile_launch_app` to retain its PID as the automation target.
 
-Chrome is exposed when a DevTools endpoint is available. Start Chrome with
-remote debugging, for example:
+Chrome pages are exposed when a DevTools endpoint is available. If it has no
+controllable page, discovery returns an offline `chrome:browser` row. Choose
+QC **Start** or call `mobile_boot_device` with `chrome:browser` to open a local
+Chrome automation session, then refresh to select a `chrome:<target-id>` page.
+The server uses a separate profile under `~/.device-bot/chrome/<port>` and leaves
+Chrome running. Set `DEVICE_BOT_CHROME_PATH` to override its executable.
+Only loopback DevTools endpoints can be started automatically.
+You can also start Chrome manually with a separate profile, for example:
 
 ```sh
-google-chrome --remote-debugging-port=9222
+google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/device-bot-chrome
 ```
 
 Set `DEVICE_BOT_CHROME_DEBUG_ADDRESS` to use a different endpoint. Each debuggable

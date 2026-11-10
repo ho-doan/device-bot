@@ -33,6 +33,22 @@ pub struct RobotDevice {
     pub state: DeviceState,
 }
 
+/// Desktop coordinates are global: secondary displays may have negative origins.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopDisplay {
+    pub id: String,
+    pub name: String,
+    pub is_primary: bool,
+    pub bounds: Bounds,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ScreenshotOptions {
+    pub app_id: Option<String>,
+    pub display_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Platform {
@@ -287,6 +303,23 @@ pub trait Robot: Send + Sync {
         )))
     }
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError>;
+    async fn list_displays(&self, device_id: &str) -> Result<Vec<DesktopDisplay>, RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "display selection is not supported for device {device_id}"
+        )))
+    }
+    async fn take_screenshot_with_options(
+        &self,
+        device_id: &str,
+        options: &ScreenshotOptions,
+    ) -> Result<Vec<u8>, RobotError> {
+        if options.app_id.is_some() || options.display_id.is_some() {
+            return Err(RobotError::Unsupported(
+                "app/display screenshot options are supported only on desktop devices".into(),
+            ));
+        }
+        self.take_screenshot(device_id).await
+    }
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError>;
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError>;
     async fn open_url(
@@ -578,6 +611,19 @@ impl Robot for RobotRegistry {
     }
     async fn take_screenshot(&self, id: &str) -> Result<Vec<u8>, RobotError> {
         self.driver_for(id).await?.take_screenshot(id).await
+    }
+    async fn list_displays(&self, id: &str) -> Result<Vec<DesktopDisplay>, RobotError> {
+        self.driver_for(id).await?.list_displays(id).await
+    }
+    async fn take_screenshot_with_options(
+        &self,
+        id: &str,
+        options: &ScreenshotOptions,
+    ) -> Result<Vec<u8>, RobotError> {
+        self.driver_for(id)
+            .await?
+            .take_screenshot_with_options(id, options)
+            .await
     }
     async fn tap(&self, id: &str, point: Point) -> Result<(), RobotError> {
         self.driver_for(id).await?.tap(id, point).await

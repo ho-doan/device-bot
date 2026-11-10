@@ -356,7 +356,16 @@ fn native_i32(value: CFTypeRef) -> Option<i32> {
 }
 
 #[cfg(target_os = "macos")]
-fn native_frontmost_application(preferred_app: Option<&str>) -> Result<CfOwned, RobotError> {
+fn native_frontmost_application(preferred_pid: Option<i32>) -> Result<CfOwned, RobotError> {
+    if let Some(pid) = preferred_pid {
+        let application = CfOwned(unsafe { AXUIElementCreateApplication(pid) });
+        if pid > 0 && !application.0.is_null() {
+            return Ok(application);
+        }
+        return Err(RobotError::CommandFailed(
+            "the selected macOS target process is unavailable; select the app again".into(),
+        ));
+    }
     // NSWorkspace identifies the actual foreground application PID even when
     // several Chrome processes have the same owner name.
     unsafe { NSApplicationLoad() };
@@ -399,7 +408,6 @@ fn native_frontmost_application(preferred_app: Option<&str>) -> Result<CfOwned, 
     }
     let layer_key = native_cf_string("kCGWindowLayer")?;
     let owner_pid_key = native_cf_string("kCGWindowOwnerPID")?;
-    let owner_name_key = native_cf_string("kCGWindowOwnerName")?;
     let count = unsafe { CFArrayGetCount(windows.0) };
     for index in 0..count {
         let window = unsafe { CFArrayGetValueAtIndex(windows.0, index) };
@@ -409,12 +417,6 @@ fn native_frontmost_application(preferred_app: Option<&str>) -> Result<CfOwned, 
         let layer = native_i32(unsafe { CFDictionaryGetValue(window, layer_key) });
         if layer != Some(0) {
             continue;
-        }
-        if let Some(preferred_app) = preferred_app {
-            let owner_name = native_string(unsafe { CFDictionaryGetValue(window, owner_name_key) });
-            if owner_name.as_deref() != Some(preferred_app) {
-                continue;
-            }
         }
         let Some(pid) = native_i32(unsafe { CFDictionaryGetValue(window, owner_pid_key) }) else {
             continue;
@@ -639,9 +641,9 @@ fn native_press_at(
 }
 
 #[cfg(target_os = "macos")]
-fn native_accessibility_tap(point: Point, preferred_app: Option<&str>) -> Result<(), RobotError> {
+fn native_accessibility_tap(point: Point, preferred_pid: Option<i32>) -> Result<(), RobotError> {
     let attributes = NativeAxAttributes::new()?;
-    let application = native_frontmost_application(preferred_app)?;
+    let application = native_frontmost_application(preferred_pid)?;
     let _ = unsafe {
         AXUIElementSetAttributeValue(
             application.0,
@@ -666,7 +668,7 @@ fn native_accessibility_tap(point: Point, preferred_app: Option<&str>) -> Result
 fn native_accessibility_elements(
     filter: Option<&str>,
     max_results: Option<usize>,
-    preferred_app: Option<&str>,
+    preferred_pid: Option<i32>,
 ) -> Result<Vec<UiElement>, RobotError> {
     if max_results == Some(0) {
         return Ok(vec![]);
@@ -678,7 +680,7 @@ fn native_accessibility_elements(
         ));
     }
     let attributes = NativeAxAttributes::new()?;
-    let application = native_frontmost_application(preferred_app)?;
+    let application = native_frontmost_application(preferred_pid)?;
     // Chrome does not expose renderer DOM nodes through AX until this is set.
     let _ = unsafe {
         AXUIElementSetAttributeValue(
@@ -717,6 +719,8 @@ pub struct MacosRobot {
     screencapture_path: String,
     recording: Arc<Mutex<Option<ActiveRecording>>>,
     active_application: Arc<Mutex<Option<String>>>,
+    active_process_id: Arc<Mutex<Option<i32>>>,
+    capture_lock: Arc<Mutex<()>>,
 }
 
 impl MacosRobot {
@@ -729,6 +733,8 @@ impl MacosRobot {
             screencapture_path: "screencapture".into(),
             recording: Arc::new(Mutex::new(None)),
             active_application: Arc::new(Mutex::new(None)),
+            active_process_id: Arc::default(),
+            capture_lock: Arc::default(),
         }
     }
 
@@ -803,15 +809,11 @@ impl MacosRobot {
         #[cfg(target_os = "macos")]
         {
             let filter = filter.map(str::to_owned).map(|value| value.to_lowercase());
-            let application = self.active_application.lock().await.clone();
+            let application = *self.active_process_id.lock().await;
             tokio::time::timeout(
                 Duration::from_millis(2_500),
                 tokio::task::spawn_blocking(move || {
-                    native_accessibility_elements(
-                        filter.as_deref(),
-                        max_results,
-                        application.as_deref(),
-                    )
+                    native_accessibility_elements(filter.as_deref(), max_results, application)
                 }),
             )
             .await
@@ -838,8 +840,8 @@ impl MacosRobot {
     async fn accessibility_tap(&self, point: Point) -> Result<(), RobotError> {
         #[cfg(target_os = "macos")]
         {
-            let application = self.active_application.lock().await.clone();
-            native_accessibility_tap(point, application.as_deref())
+            let application = *self.active_process_id.lock().await;
+            native_accessibility_tap(point, application)
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -990,25 +992,25 @@ impl Robot for MacosRobot {
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
         self.require_device(device_id)?;
-        tokio::fs::create_dir_all(&self.artifact_dir)
+        self.capture_desktop(&robot_core::ScreenshotOptions::default())
             .await
-            .map_err(|error| {
-                RobotError::CommandFailed(format!("could not create screenshot directory: {error}"))
-            })?;
-        let path = self.artifact_dir.join(format!(
-            "macos-screenshot-{}.png",
-            SCREENSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        self.run(
-            &self.screencapture_path,
-            &["-x".into(), path.to_string_lossy().into_owned()],
-        )
-        .await?;
-        let image = tokio::fs::read(&path).await.map_err(|error| {
-            RobotError::CommandFailed(format!("could not read macOS screenshot: {error}"))
-        });
-        let _ = tokio::fs::remove_file(path).await;
-        image
+    }
+
+    async fn take_screenshot_with_options(
+        &self,
+        device_id: &str,
+        options: &robot_core::ScreenshotOptions,
+    ) -> Result<Vec<u8>, RobotError> {
+        self.require_device(device_id)?;
+        self.capture_desktop(options).await
+    }
+
+    async fn list_displays(
+        &self,
+        device_id: &str,
+    ) -> Result<Vec<robot_core::DesktopDisplay>, RobotError> {
+        self.require_device(device_id)?;
+        self.desktop_displays().await
     }
 
     async fn start_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
@@ -1147,6 +1149,8 @@ impl Robot for MacosRobot {
             {
                 Ok(()) => {
                     *self.active_application.lock().await = Some(app_id.into());
+                    *self.active_process_id.lock().await =
+                        Some(self.focus_command("frontmost", "").await?);
                     return Ok(());
                 }
                 Err(error) => last_error = Some(error),
@@ -1217,7 +1221,8 @@ impl Robot for MacosRobot {
         #[cfg(target_os = "macos")]
         {
             let pid = {
-                let application = native_frontmost_application(None)?;
+                let application =
+                    native_frontmost_application(*self.active_process_id.lock().await)?;
                 let mut pid: i32 = 0;
                 let status = unsafe { AXUIElementGetPid(application.0, &mut pid) };
                 if status != 0 || pid <= 0 {
@@ -1275,3 +1280,8 @@ mod tests {
         assert!(elements[0].clickable);
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+mod screenshot_tests;
+
+mod screenshot;

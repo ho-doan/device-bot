@@ -2,22 +2,32 @@ use std::sync::Arc;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use device_mcp_protocol::{ToolDefinition, ToolResult};
-use robot_core::{Point, Robot};
+use robot_core::{Point, Robot, ScreenshotOptions};
 use serde_json::{Value, json};
 
 use super::arguments::{optional_u64, required_number, required_string};
 
 pub(super) const SCREENSHOT_NAME: &str = "mobile_take_screenshot";
+pub(super) const DISPLAYS_NAME: &str = "mobile_list_displays";
 pub(super) const TAP_NAME: &str = "mobile_click_on_screen_at_coordinates";
 pub(super) const SWIPE_NAME: &str = "mobile_swipe_on_screen";
 
-pub(super) fn definitions() -> [ToolDefinition; 3] {
+pub(super) fn definitions() -> [ToolDefinition; 4] {
     [
+        ToolDefinition {
+            name: DISPLAYS_NAME.into(), title: Some("List desktop displays".into()),
+            description: "List macOS/Windows displays with IDs, primary status and global coordinate bounds. Refresh before capture when the monitor configuration changes.".into(),
+            input_schema: device_id_schema(),
+        },
         ToolDefinition {
             name: SCREENSHOT_NAME.into(),
             title: Some("Take a mobile screenshot".into()),
-            description: "Capture the current screen as a PNG image.".into(),
-            input_schema: device_id_schema(),
+            description: "Capture a PNG. Desktop options: appId selects/activates the target app, displayId selects a display returned by mobile_list_displays. The previous foreground app (such as QC) is restored after capture, including failures. UI element coordinates remain global desktop coordinates.".into(),
+            input_schema: json!({"type":"object", "properties":{
+                "deviceId":{"type":"string","minLength":1},
+                "appId":{"type":"string","minLength":1},
+                "displayId":{"type":"string","minLength":1}
+            },"required":["deviceId"],"additionalProperties":false}),
         },
         ToolDefinition {
             name: TAP_NAME.into(),
@@ -60,8 +70,34 @@ pub(super) async fn screenshot(robot: &Arc<dyn Robot>, arguments: &Value) -> Too
         Ok(device_id) => device_id,
         Err(error) => return error,
     };
-    match robot.take_screenshot(&device_id).await {
+    let mut options = ScreenshotOptions::default();
+    for (key, slot) in [
+        ("appId", &mut options.app_id),
+        ("displayId", &mut options.display_id),
+    ] {
+        if arguments.get(key).is_some() {
+            match required_string(arguments, key) {
+                Ok(value) => *slot = Some(value),
+                Err(error) => return error,
+            }
+        }
+    }
+    match robot
+        .take_screenshot_with_options(&device_id, &options)
+        .await
+    {
         Ok(bytes) => ToolResult::image(STANDARD.encode(bytes), "image/png"),
+        Err(error) => ToolResult::execution_error(error.to_string()),
+    }
+}
+
+pub(super) async fn displays(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResult {
+    let id = match required_string(arguments, "deviceId") {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match robot.list_displays(&id).await {
+        Ok(displays) => ToolResult::structured(json!({"deviceId":id,"displays":displays})),
         Err(error) => ToolResult::execution_error(error.to_string()),
     }
 }

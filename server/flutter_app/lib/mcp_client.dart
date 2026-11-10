@@ -112,9 +112,24 @@ class McpClient {
     );
   }
 
-  Future<Uint8List> takeScreenshot(String deviceId) async {
+  Future<List<DesktopDisplay>> listDisplays(String deviceId) async {
+    final result = await callTool('mobile_list_displays', {
+      'deviceId': deviceId,
+    });
+    return ((result.structuredContent?['displays'] as List?) ?? const [])
+        .map((value) => DesktopDisplay.fromJson(value as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Uint8List> takeScreenshot(
+    String deviceId, {
+    String? appId,
+    String? displayId,
+  }) async {
     final result = await callTool('mobile_take_screenshot', {
       'deviceId': deviceId,
+      'appId': ?appId,
+      'displayId': ?displayId,
     });
     for (final content in result.content) {
       if (content['type'] == 'image' && content['data'] is String) {

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'dashboard.dart';
+import 'desktop_capture.dart';
 import 'mcp_client.dart';
 import 'models.dart';
 
@@ -144,6 +145,7 @@ class CompanionHome extends StatefulWidget {
 }
 
 class _CompanionHomeState extends State<CompanionHome> {
+  final Map<String, DesktopCaptureSettings> _desktopCaptures = {};
   final _baseUrlController = TextEditingController(text: _defaultBaseUrl);
   late Future<DashboardSnapshot> _snapshot;
   McpClient? _mcpClient;
@@ -333,12 +335,26 @@ class _CompanionHomeState extends State<CompanionHome> {
     }
   }
 
-  void _showScreenshot(AdminDevice device) {
+  void _showScreenshot(AdminDevice device) async {
+    DesktopCaptureSettings? capture;
+    if (device.platform == 'macos' || device.platform == 'windows') {
+      capture = await showDialog<DesktopCaptureSettings>(
+        context: context,
+        builder: (context) => DesktopCaptureDialog(
+          apps: _client().listInstalledApps(device.id),
+          displays: _client().listDisplays(device.id),
+          previous: _desktopCaptures[device.id],
+        ),
+      );
+      if (!mounted || capture == null) return;
+      _desktopCaptures[device.id] = capture;
+    }
+    if (!mounted) return;
     showDialog<void>(
       context: context,
       builder: (context) => _ScreenshotDialog(
         device: device,
-        loadInspection: () => _loadInspection(device),
+        loadInspection: () => _loadInspection(device, capture: capture),
       ),
     );
   }
@@ -403,18 +419,34 @@ class _CompanionHomeState extends State<CompanionHome> {
     }
   }
 
-  Future<_InspectionData> _loadInspection(AdminDevice device) async {
+  Future<_InspectionData> _loadInspection(
+    AdminDevice device, {
+    DesktopCaptureSettings? capture,
+  }) async {
     // Keep the screenshot and accessibility tree in the same inspection flow.
     // The screenshot is captured first so the QC overlay starts from a known
     // visual state before asking the driver for the element tree.
     final client = _client();
-    final image = await client.takeScreenshot(device.id);
+    final image = await client.takeScreenshot(
+      device.id,
+      appId: capture?.appId,
+      displayId: capture?.display.id,
+    );
     try {
       final inspection = await client.inspectElements(device.id);
       return _InspectionData(
         image: image,
-        elements: inspection.elements,
-        elementsError: inspection.warning,
+        elements: capture == null
+            ? inspection.elements
+            : inspection.elements
+                  .where(capture.display.containsElement)
+                  .toList(),
+        elementsError:
+            capture != null &&
+                !inspection.elements.any(capture.display.containsElement)
+            ? 'No target app elements are visible on ${capture.display.name}. Choose the screen containing the target window.'
+            : inspection.warning,
+        display: capture?.display,
       );
     } catch (error) {
       // A screenshot does not require an app context, while iOS XCTest UI
@@ -423,6 +455,7 @@ class _CompanionHomeState extends State<CompanionHome> {
         image: image,
         elements: const [],
         elementsError: elementInspectionErrorMessage(error),
+        display: capture?.display,
       );
     }
   }
@@ -696,11 +729,13 @@ class _InspectionData {
     required this.image,
     required this.elements,
     this.elementsError,
+    this.display,
   });
 
   final Uint8List image;
   final List<AdminElement> elements;
   final String? elementsError;
+  final DesktopDisplay? display;
 }
 
 class _ScreenshotDialog extends StatefulWidget {
@@ -830,6 +865,7 @@ steps:
                   flex: 3,
                   child: _ScreenshotCanvas(
                     bytes: inspection.image,
+                    display: inspection.display,
                     elements: inspection.elements,
                     selectedIndex: _selectedIndex,
                     onSelectElement: _selectElement,
@@ -1238,6 +1274,7 @@ class _ScreenshotCanvas extends StatefulWidget {
     required this.onSelectElement,
     required this.deviceName,
     required this.platform,
+    this.display,
   });
 
   final Uint8List bytes;
@@ -1246,6 +1283,7 @@ class _ScreenshotCanvas extends StatefulWidget {
   final ValueChanged<int> onSelectElement;
   final String deviceName;
   final String platform;
+  final DesktopDisplay? display;
 
   @override
   State<_ScreenshotCanvas> createState() => _ScreenshotCanvasState();
@@ -1284,7 +1322,10 @@ class _ScreenshotCanvasState extends State<_ScreenshotCanvas> {
   }
 
   int? _elementAt(Offset position, double scale) {
-    final point = Offset(position.dx / scale, position.dy / scale);
+    final point = Offset(
+      position.dx / scale + (widget.display?.bounds.left ?? 0),
+      position.dy / scale + (widget.display?.bounds.top ?? 0),
+    );
     for (var index = widget.elements.length - 1; index >= 0; index -= 1) {
       final bounds = widget.elements[index].bounds;
       final rect = Rect.fromLTRB(
@@ -1319,14 +1360,16 @@ class _ScreenshotCanvasState extends State<_ScreenshotCanvas> {
             final safeScale = scale.isFinite && scale > 0 ? scale : 1.0;
             final coordinateScale =
                 safeScale *
-                inspectorCoordinateScale(
-                  imageSize: ui.Size(
-                    image.width.toDouble(),
-                    image.height.toDouble(),
-                  ),
-                  elements: widget.elements,
-                  platform: widget.platform,
-                );
+                (widget.display == null
+                    ? inspectorCoordinateScale(
+                        imageSize: ui.Size(
+                          image.width.toDouble(),
+                          image.height.toDouble(),
+                        ),
+                        elements: widget.elements,
+                        platform: widget.platform,
+                      )
+                    : image.width / widget.display!.bounds.width);
             final size = Size(
               image.width * safeScale,
               image.height * safeScale,
@@ -1363,6 +1406,10 @@ class _ScreenshotCanvasState extends State<_ScreenshotCanvas> {
                               elements: widget.elements,
                               scale: coordinateScale,
                               selectedIndex: widget.selectedIndex,
+                              origin: Offset(
+                                (widget.display?.bounds.left ?? 0).toDouble(),
+                                (widget.display?.bounds.top ?? 0).toDouble(),
+                              ),
                             ),
                           ),
                         ),
@@ -1384,11 +1431,13 @@ class _ElementOverlayPainter extends CustomPainter {
     required this.elements,
     required this.scale,
     required this.selectedIndex,
+    this.origin = Offset.zero,
   });
 
   final List<AdminElement> elements;
   final double scale;
   final int? selectedIndex;
+  final Offset origin;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1403,10 +1452,12 @@ class _ElementOverlayPainter extends CustomPainter {
       final bounds = elements[index].bounds;
       final selected = selectedIndex == index;
       final rect = Rect.fromLTRB(
-        (bounds.left * scale).clamp(0.0, size.width).toDouble(),
-        (bounds.top * scale).clamp(0.0, size.height).toDouble(),
-        (bounds.right * scale).clamp(0.0, size.width).toDouble(),
-        (bounds.bottom * scale).clamp(0.0, size.height).toDouble(),
+        ((bounds.left - origin.dx) * scale).clamp(0.0, size.width).toDouble(),
+        ((bounds.top - origin.dy) * scale).clamp(0.0, size.height).toDouble(),
+        ((bounds.right - origin.dx) * scale).clamp(0.0, size.width).toDouble(),
+        ((bounds.bottom - origin.dy) * scale)
+            .clamp(0.0, size.height)
+            .toDouble(),
       );
       final border = Paint()
         ..color = selected ? const Color(0xfff44336) : const Color(0xffffb300)
@@ -1460,6 +1511,7 @@ class _ElementOverlayPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ElementOverlayPainter oldDelegate) =>
       oldDelegate.elements != elements ||
+      oldDelegate.origin != origin ||
       oldDelegate.scale != scale ||
       oldDelegate.selectedIndex != selectedIndex;
 }

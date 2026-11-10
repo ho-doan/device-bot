@@ -35,6 +35,7 @@ pub struct WindowsRobot {
     powershell_path: String,
     active_process_id: Arc<Mutex<Option<u32>>>,
     recording: Arc<Mutex<recording::DesktopRecorder>>,
+    capture_lock: Arc<Mutex<()>>,
 }
 
 impl WindowsRobot {
@@ -45,6 +46,7 @@ impl WindowsRobot {
                 .unwrap_or_else(|_| "powershell.exe".into()),
             active_process_id: Arc::new(Mutex::new(None)),
             recording: Arc::new(Mutex::new(recording::DesktopRecorder::default())),
+            capture_lock: Arc::default(),
         }
     }
 
@@ -100,7 +102,7 @@ impl WindowsRobot {
             return Ok(vec![]);
         }
 
-        self.activate_target().await?;
+        // UIA can query the selected process while QC remains foreground.
         let process_id = *self.active_process_id.lock().await;
         let script = build_uia_script(process_id, filter, max_results);
         let output = tokio::time::timeout(UIA_QUERY_TIMEOUT, self.powershell(script))
@@ -139,65 +141,12 @@ $targetPid = [uint32]0
     }
 
     async fn activate_target(&self) -> Result<(), RobotError> {
-        let Some(process_id) = *self.active_process_id.lock().await else {
+        let Some(id) = *self.active_process_id.lock().await else {
             return Ok(());
         };
-        let script = format!(
-            r#"
-Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public static class DeviceBotWindow {{
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
-  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint source, uint target, bool attach);
-  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr window);
-  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
-  [StructLayout(LayoutKind.Sequential)] private struct MSG {{
-    public IntPtr window;
-    public uint message;
-    public UIntPtr wParam;
-    public IntPtr lParam;
-    public uint time;
-    public int x, y;
-    public uint reserved;
-  }}
-  [DllImport("user32.dll")] private static extern bool PeekMessage(out MSG message, IntPtr window, uint min, uint max, uint remove);
-  public static void Activate(IntPtr window) {{
-    // Avoid resetting keyboard focus/input state on every query or keystroke
-    // when the target is already foreground.
-    if (GetForegroundWindow() == window) return;
-    MSG queued;
-    PeekMessage(out queued, IntPtr.Zero, 0, 0, 0);
-    uint ignored;
-    uint current = GetCurrentThreadId();
-    uint foreground = GetWindowThreadProcessId(GetForegroundWindow(), out ignored);
-    uint target = GetWindowThreadProcessId(window, out ignored);
-    bool attachedForeground = foreground != 0 && foreground != current && AttachThreadInput(current, foreground, true);
-    bool attachedTarget = target != 0 && target != current && target != foreground && AttachThreadInput(current, target, true);
-    try {{
-      ShowWindow(window, 9);
-      BringWindowToTop(window);
-      SetForegroundWindow(window);
-    }} finally {{
-      if (attachedTarget) AttachThreadInput(current, target, false);
-      if (attachedForeground) AttachThreadInput(current, foreground, false);
-    }}
-  }}
-}}
-'@
-$process = Get-Process -Id {process_id} -ErrorAction Stop
-$window = $process.MainWindowHandle
-if ($window -eq [IntPtr]::Zero) {{ throw "Windows process {process_id} has no main window." }}
-[DeviceBotWindow]::Activate($window)
-$foregroundPid = [uint32]0
-[void][DeviceBotWindow]::GetWindowThreadProcessId([DeviceBotWindow]::GetForegroundWindow(), [ref]$foregroundPid)
-if ($foregroundPid -ne {process_id}) {{ throw "Could not activate Windows target {process_id}; foreground process is $foregroundPid. No input was sent." }}
-"#
-        );
-        self.powershell(script).await.map(|_| ())
+        self.powershell(screenshot::activate_script(id))
+            .await
+            .map(|_| ())
     }
 }
 
@@ -566,31 +515,25 @@ if ($null -eq $apps) {
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
         self.require_device(device_id)?;
-        self.activate_target().await?;
-        tokio::fs::create_dir_all(&self.artifact_dir)
+        self.capture_desktop(&robot_core::ScreenshotOptions::default())
             .await
-            .map_err(|error| {
-                RobotError::CommandFailed(format!("could not create screenshot directory: {error}"))
-            })?;
-        let path = self.artifact_dir.join(format!(
-            "windows-screenshot-{}.png",
-            SCREENSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        let script = format!(
-            "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; \
-             $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; \
-             $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height; \
-             $graphics = [System.Drawing.Graphics]::FromImage($bitmap); \
-             $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size); \
-             $bitmap.Save({}, [System.Drawing.Imaging.ImageFormat]::Png); $graphics.Dispose(); $bitmap.Dispose()",
-            ps_quote(&path.to_string_lossy())
-        );
-        self.powershell(script).await?;
-        let image = tokio::fs::read(&path).await.map_err(|error| {
-            RobotError::CommandFailed(format!("could not read Windows screenshot: {error}"))
-        });
-        let _ = tokio::fs::remove_file(path).await;
-        image
+    }
+
+    async fn take_screenshot_with_options(
+        &self,
+        device_id: &str,
+        options: &robot_core::ScreenshotOptions,
+    ) -> Result<Vec<u8>, RobotError> {
+        self.require_device(device_id)?;
+        self.capture_desktop(options).await
+    }
+
+    async fn list_displays(
+        &self,
+        device_id: &str,
+    ) -> Result<Vec<robot_core::DesktopDisplay>, RobotError> {
+        self.require_device(device_id)?;
+        self.desktop_displays().await
     }
 
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
@@ -904,3 +847,5 @@ mod tests {
         assert!(native.is_ok(), "native UIA fallback failed: {native:?}");
     }
 }
+
+mod screenshot;

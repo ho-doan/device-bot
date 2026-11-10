@@ -280,6 +280,7 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
             "mobile_list_installed_apps",
             "mobile_start_screen_recording",
             "mobile_stop_screen_recording",
+            "mobile_list_displays",
             "mobile_take_screenshot",
             "mobile_click_on_screen_at_coordinates",
             "mobile_swipe_on_screen"

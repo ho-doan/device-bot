@@ -52,6 +52,32 @@ class AdminDevice {
   );
 }
 
+class DesktopDisplay {
+  const DesktopDisplay({
+    required this.id,
+    required this.name,
+    required this.isPrimary,
+    required this.bounds,
+  });
+  factory DesktopDisplay.fromJson(Map<String, dynamic> json) => DesktopDisplay(
+    id: json['id'] as String,
+    name: json['name'] as String,
+    isPrimary: json['isPrimary'] as bool,
+    bounds: AdminBounds.fromJson(json['bounds'] as Map<String, dynamic>),
+  );
+  final String id;
+  final String name;
+  final bool isPrimary;
+  final AdminBounds bounds;
+  String get label =>
+      '$name${isPrimary ? ' (main)' : ''} · ${bounds.width} × ${bounds.height}';
+  bool containsElement(AdminElement element) =>
+      element.bounds.right > bounds.left &&
+      element.bounds.left < bounds.right &&
+      element.bounds.bottom > bounds.top &&
+      element.bounds.top < bounds.bottom;
+}
+
 enum RunnerAction { health, prepare, reboot }
 
 class DeviceReadiness {

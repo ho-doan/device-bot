@@ -1,34 +1,25 @@
-# elec-app
+# Orbit — Electron + Vue login example
 
-An Electron application with Vue and TypeScript
+A clone of [`examples/flutter_app`](../flutter_app) with the same demo
+authentication, routing, checklist, and responsive workspace.
 
-## Recommended IDE Setup
+Hash URLs match Flutter web, for example `/#/account`.
 
-- [VSCode](https://code.visualstudio.com/) + [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint) + [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar)
+## Run
 
-## Project Setup
-
-### Install
-
-```bash
-$ npm install
+```sh
+cd examples/elec-app
+npm install
+npm run dev
 ```
 
-### Development
+Demo credentials: **alex@orbit.demo** / **Orbit123!**.
+Use **Try demo workspace** to fill the credentials and sign in immediately.
 
-```bash
-$ npm run dev
-```
+Behavior source of truth: [../flutter_app/BEHAVIOR_FLOWS.md](../flutter_app/BEHAVIOR_FLOWS.md).
 
-### Build
+## Check
 
-```bash
-# For windows
-$ npm run build:win
-
-# For macOS
-$ npm run build:mac
-
-# For Linux
-$ npm run build:linux
+```sh
+npm run typecheck
 ```

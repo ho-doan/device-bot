@@ -173,7 +173,7 @@
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
-                                    <ProgressBar Value="{Binding CompletedCount}" Maximum="3" Height="8" Foreground="{DynamicResource PrimaryBrush}" Background="{DynamicResource OutlineBrush}"
+                                    <ProgressBar Value="{Binding CompletedCount, Mode=OneWay}" Maximum="3" Height="8" Foreground="{DynamicResource PrimaryBrush}" Background="{DynamicResource OutlineBrush}"
                                                  AutomationProperties.Name="{Binding ProgressDescription}"/>
                                 </StackPanel>
                             </Border>

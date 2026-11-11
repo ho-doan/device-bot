@@ -1,0 +1,57 @@
+version: 1
+selectors:
+  email: {resource_id: email-field}
+  password: {resource_id: password-field}
+  show_password: {label: Show password}
+  hide_password: {label: Hide password}
+  sign_in: {label: Sign in, element_type: button}
+recipes:
+  open_native:
+    - launch_app: {app_id: '${app_id}'}
+    - wait: {ms: 1500}
+  open_web:
+    - open_url: {url: '${app_id}'}
+    - wait: {ms: 1500}
+targets:
+  swift:
+    device: {platform: ios, state: available}
+    app_id: com.hodoan.swift-app
+    preconditions: [fixture_ready]
+    recipes:
+      open_fixture:
+        - run: {recipe: open_native}
+  android:
+    device: {platform: android, state: available}
+    app_id: com.example.android_app
+    preconditions: [fixture_ready]
+    recipes:
+      open_fixture:
+        - run: {recipe: open_native}
+  rn-android:
+    device: {platform: android, state: available}
+    app_id: com.rnapp
+    preconditions: [fixture_ready]
+    recipes:
+      open_fixture:
+        - run: {recipe: open_native}
+  rn-ios:
+    device: {platform: ios, state: available}
+    app_id: org.reactjs.native.example.rnApp
+    preconditions: [fixture_ready]
+    recipes:
+      open_fixture:
+        - run: {recipe: open_native}
+  vite:
+    device: {platform: chrome, state: available}
+    app_id: http://127.0.0.1:5173/login
+    preconditions: [fixture_ready]
+    recipes:
+      open_fixture:
+        - run: {recipe: open_web}
+  electron:
+    device: {platform: chrome, state: available}
+    app_id: http://localhost:5173/login
+    preconditions: [fixture_ready]
+    recipes:
+      open_fixture:
+        - run: {recipe: open_web}

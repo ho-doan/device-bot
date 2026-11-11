@@ -1,0 +1,17 @@
+version: 2
+name: orbit_control_smoke
+description: Tap and text-input smoke using the shared Orbit login flow (Flutter IT-02/03).
+steps:
+  - select_device: '${device}'
+  - run: {recipe: open_fixture}
+  - screenshot: {path: login.png}
+  - tap_element: {target: email}
+  - type_text: {text: alex@orbit.demo}
+  - tap_element: {target: password}
+  - type_text: {text: 'Orbit123!'}
+  - tap_element: {target: show_password}
+  - screenshot: {path: input.png}
+  - tap_element: {target: hide_password}
+  - tap_element: {target: sign_in}
+  - wait: {ms: 1500}
+  - screenshot: {path: submitted.png}

@@ -1,5 +1,17 @@
 ## Unreleased
 
+## 0.1.8 — 2026-11-11
+
+* Add Orbit examples for Android Compose, SwiftUI, React Native, Vite React,
+  and Electron Vue, with a shared YAML smoke flow for native/CDP taps and text input.
+* Discover stopped Android emulators and Chrome sessions, boot them from device
+  control, and retain device lock ownership during local connection discovery.
+* Add desktop display selection and app-scoped screenshots, iOS signing
+  configuration, and per-step platform routing in YAML flows.
+* Improve Flutter field activation, positional controls, keyboard dismissal,
+  and independent prefix/suffix actions.
+* Update the MCP lifecycle regression to cover the display-listing tool.
+
 ## 0.1.7 — 2026-11-09
 
 * Rename the Flutter bridge to device_bot_flutter, retaining the uia_windows

@@ -135,7 +135,13 @@ async fn initialization_and_tools_list_follow_the_lifecycle() {
         .handle(request(2, "tools/list", json!({})))
         .await
         .unwrap();
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 17);
+    let advertised = tools["result"]["tools"].as_array().unwrap();
+    assert_eq!(advertised.len(), 18);
+    assert!(
+        advertised
+            .iter()
+            .any(|tool| tool["name"] == "mobile_list_displays")
+    );
 }
 
 #[tokio::test]

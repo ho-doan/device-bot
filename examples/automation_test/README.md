@@ -20,7 +20,8 @@ server/target/debug/robot-flow \
 ```
 
 SwiftUI uses [`targets-swiftui.yaml`](targets-swiftui.yaml), target `swift`.
-The other targets in `targets.yaml` are `android`, `rn-android`, `rn-ios`,
+Android Compose uses [`targets-compose.yaml`](targets-compose.yaml), target `android`.
+The other targets in `targets.yaml` are `rn-android`, `rn-ios`,
 `vite`, and `electron`.
 Override bundle IDs, executable paths or URLs with `--app-id` as needed.
 For web, start Vite and Chrome with a separate test profile and
@@ -66,3 +67,16 @@ Validated on iOS 27 Simulator: the dedicated profile completed email/password
 input, visibility toggles and Sign in. Captured screenshots showed the entered
 demo credentials and the resulting workspace. Full business assertions remain
 deferred. This confirms a ready-helper run, not a cold-helper startup guarantee.
+
+## Android Compose fields
+
+The example root enables `testTagsAsResourceId`, exposing the existing Compose
+`testTag` values to UI Automator. Without it, the native editors have no resource
+ID and their visible labels are separate nodes. Compose buttons similarly expose
+the clickable `android.view.View` separately from label and role children. The
+Compose profile selects the resource ID on that clickable node, without requiring
+its class to normalize as `button` or its label to be present on the same node.
+
+Validated on a physical Samsung SM-G960F, Android 10, over USB using the checksum
+verified 0.1.9 native release: credential input, visibility toggles and Sign in
+completed, and the final screenshot showed the workspace.

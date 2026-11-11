@@ -1,0 +1,18 @@
+version: 1
+# Compose exports testTag through testTagsAsResourceId at the app root.
+# Button IDs belong to the clickable android.view.View, not its label/role child.
+selectors:
+  email: {resource_id: email-field, element_type: textField}
+  password: {resource_id: password-field, element_type: textField}
+  show_password: {resource_id: password-visibility-control}
+  hide_password: {resource_id: password-visibility-control}
+  sign_in: {resource_id: submit-button}
+targets:
+  android:
+    device: {platform: android, state: available}
+    app_id: com.example.android_app
+    preconditions: [fixture_ready]
+    recipes:
+      open_fixture:
+        - launch_app: {app_id: '${app_id}'}
+        - wait: {ms: 1500}

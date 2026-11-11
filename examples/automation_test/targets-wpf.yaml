@@ -1,0 +1,17 @@
+version: 1
+# Candidate native UIA selectors: validate on Windows with the built fixture.
+selectors:
+  email: {resource_id: email-field}
+  password: {resource_id: password-field}
+  show_password: {resource_id: password-visibility-control, label: Show password}
+  hide_password: {resource_id: password-visibility-control, label: Hide password}
+  sign_in: {resource_id: submit-button}
+targets:
+  wpf:
+    device: {id: windows-host, platform: windows, state: available}
+    app_id: win-app.exe
+    preconditions: [fixture_ready]
+    recipes:
+      open_fixture:
+        - launch_app: {app_id: '${app_id}'}
+        - wait: {ms: 1500}

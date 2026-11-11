@@ -1,0 +1,45 @@
+version: 2
+name: orbit_react_native_control_smoke
+description: Tap/input with explicit scrolling above the Android keyboard.
+steps:
+  - select_device: '${device}'
+  - run: {recipe: open_fixture}
+  - screenshot: {path: login.png}
+  - tap_element: {target: email}
+  # The first character dismisses Samsung's suggestion popup. Let that window
+  # close before sending the remaining key events to the controlled RN editor.
+  - type_text: {text: a}
+  - wait: {ms: 600}
+  - type_text: {text: lex@orbit.demo}
+  - assert_value: {target: email, expected: alex@orbit.demo}
+  - wait: {ms: 600}
+  - gesture:
+      target: viewport
+      from: {x: 0.5, y: 0.45}
+      to: {x: 0.5, y: 0.1}
+      duration_ms: 450
+  - tap_element: {target: password}
+  - type_text: {text: 'Orbit123!'}
+  - tap_element: {target: show_password}
+  # A ScrollView can consume the first tap to dismiss the keyboard. Retry only
+  # if the native label proves that the control has not changed state.
+  - if_element:
+      target: show_password
+      then:
+        - tap_element: {target: show_password}
+      else: []
+  - screenshot: {path: input.png}
+  - tap_element: {target: hide_password}
+  - if_element:
+      target: hide_password
+      then:
+        - tap_element: {target: hide_password}
+      else: []
+  - gesture:
+      target: viewport
+      from: {x: 0.5, y: 0.45}
+      to: {x: 0.5, y: 0.1}
+      duration_ms: 450
+  - tap_element: {target: sign_in}
+  - wait: {ms: 1500}
+  - screenshot: {path: submitted.png}

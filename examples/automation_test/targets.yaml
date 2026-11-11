@@ -13,13 +13,6 @@ recipes:
     - open_url: {url: '${app_id}'}
     - wait: {ms: 1500}
 targets:
-  rn-android:
-    device: {platform: android, state: available}
-    app_id: com.rnapp
-    preconditions: [fixture_ready]
-    recipes:
-      open_fixture:
-        - run: {recipe: open_native}
   rn-ios:
     device: {platform: ios, state: available}
     app_id: org.reactjs.native.example.rnApp

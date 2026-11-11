@@ -21,8 +21,9 @@ server/target/debug/robot-flow \
 
 SwiftUI uses [`targets-swiftui.yaml`](targets-swiftui.yaml), target `swift`.
 Android Compose uses [`targets-compose.yaml`](targets-compose.yaml), target `android`.
-The other targets in `targets.yaml` are `rn-android`, `rn-ios`,
-`vite`, and `electron`.
+React Native Android uses [`targets-react-native.yaml`](targets-react-native.yaml),
+target `rn-android`, with [`control-smoke-react-native.yaml`](control-smoke-react-native.yaml).
+The other targets in `targets.yaml` are `rn-ios`, `vite`, and `electron`.
 Override bundle IDs, executable paths or URLs with `--app-id` as needed.
 For web, start Vite and Chrome with a separate test profile and
 `--remote-debugging-port=9222`, then pass the exact `chrome:TARGET_ID` from
@@ -80,3 +81,33 @@ its class to normalize as `button` or its label to be present on the same node.
 Validated on a physical Samsung SM-G960F, Android 10, over USB using the checksum
 verified 0.1.9 native release: credential input, visibility toggles and Sign in
 completed, and the final screenshot showed the workspace.
+
+## React Native Android fields and keyboard
+
+Build a self-contained ARM64 APK for a physical ARM64 phone (the fixture's
+release build uses its demo debug signing configuration):
+
+```sh
+cd examples/rnApp
+npm ci --no-audit --no-fund
+cd android
+./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --max-workers=2 --no-daemon
+```
+
+Install that APK and cold-stop `com.rnapp`. From the repository root, use the
+same robot-flow command above with `--profiles examples/automation_test/targets-react-native.yaml`,
+`--target rn-android`, the USB device ID, and
+`examples/automation_test/control-smoke-react-native.yaml` as the scenario.
+This APK embeds the JS bundle and does not need Metro.
+
+The profile selects React Native `testID` resource IDs, which can differ from
+`nativeID`. On the tested Samsung, an email/autofill suggestion popup becomes
+the active accessibility window after focusing the email editor. The flow types
+the first character, waits for that popup to close, then sends the remainder and
+checks the entered email. Password focus is confirmed before typing. Explicit
+gestures keep password/buttons above the keyboard; a conditional retry handles
+a visibility-control tap consumed while dismissing the keyboard.
+
+Validated on Samsung SM-G960F, Android 10, USB, using Device Bot 0.1.9: the input
+screenshot showed the correct credentials in separate fields, and the final
+screenshot showed the workspace. RN application code was unchanged.

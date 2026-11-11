@@ -1,90 +1,86 @@
-# Chuyển scenario sang YAML gọi MCP
+# Chuyển behavior sang flow MCP và evidence
 
-## Khám phá helper và capability
+## Nguồn và capability
 
-Tìm `automation_test`, helper MCP, README và schema hiện tại trong repo.
-Với device-bot, đọc `server/README.md` và implementation tool liên quan khi có.
-Nếu repo có `QUY_TAC_INTEGRATION_TEST_SANG_MCP.md`, đọc các giới hạn còn lại;
-tài liệu đó là backlog, không phải danh sách capability đã hoàn tất.
+Tìm behavior, `automation_test`, helper và schema binary thực sự chạy.
+Trong repo device-bot:
 
-Mẫu tham khảo của repo device-bot:
+- `server/docs/yaml-mcp-client.md`: contract YAML/client và tool mapping.
+- `examples/automation_test/control-smoke.yaml`: flow điều khiển cơ bản dùng chung.
+- `examples/automation_test/targets-*.yaml`: profile riêng theo framework.
+- `examples/automation_test/control-smoke-react-native.yaml`: ví dụ khác sequence
+  do popup/keyboard, có guard thao tác tối thiểu.
+- `examples/flutter_app/automation_test/`: suite verify đầy đủ và Bash baseline;
+  đọc khi cần tái dùng hành động hoặc khi người dùng yêu cầu chế độ verify.
 
-- `server/docs/yaml-mcp-client.md`: contract YAML/client và giới hạn hiện tại.
-- `examples/flutter_app/automation_test/targets.yaml`: selector/recipe dùng chung
-  và override theo platform; đây là candidate migration, cần live evidence.
-- `it-03.yaml`: focus/password và IME; `it-06.yaml`: số field/reset;
-  `it-08.yaml`: checked và điều hướng.
-- `support/mcp.sh` và các `.sh`: baseline/evidence khi đối chiếu migration.
-- `examples/flutter_app/automation_test/README.md`: coverage và kết quả theo platform.
+Đường dẫn tính từ root package device-bot. Nếu không có source đó, dùng helper
+và schema của dự án đích. Code server mới hoặc tài liệu backlog không chứng
+minh binary cài sẵn có capability. Giữ đường automation đã chọn, không tự mở
+rộng server/tool schema để hoàn tất một flow evidence.
 
-Các đường dẫn trên tính từ root package device-bot. Nếu không có source đó,
-khám phá transport/helper của dự án đích và schema binary đang cài; không phụ
-thuộc đường dẫn máy tác giả hoặc tải nguồn chỉ để sao chép helper.
+## Mapping điều khiển
 
-Helper baseline là code cần kiểm tra trước khi chuyển recipe sang YAML. Ví dụ
-`tap_account_avatar` từng query nhãn chính rồi query lại trong `tap_control`;
-fallback còn có thể bỏ qua disabled. Chỉnh trong phạm vi công việc khi cần,
-không khẳng định helper đã tuân thủ mọi quy tắc sau đây. Scenario mới dùng logical
-selector; nhãn/role/native editing khác biệt nằm trong profile/recipe. YAML runner
-gọi MCP, không dựng driver và không fallback sang CLI để thao tác UI.
+Ưu tiên một sequence cho behavior chung và profile chứa selector/recipe khác
+nhau. Tách sequence khi có khác biệt thao tác quan sát được; không ép một flow
+chung bằng cách bỏ qua popup, keyboard hoặc lỗi input.
 
-## Query và thao tác
+1. Query theo filter/type được hỗ trợ; kiểm tra lại ID/label, enabled và bounds.
+   `resource_id` có thể chỉ lọc ở client; thêm native filter/type khi schema và
+   evidence hỗ trợ. Query lỗi khác với kết quả rỗng; kết quả chạm cap có thể bị cắt.
+2. Chọn đúng control actionable. Thu hẹp ambiguity bằng ID/loại/phạm vi có căn
+   cứ. Native tap và coordinate tap phải dùng theo capability target thực tế.
+3. Chờ readiness với giới hạn rồi lấy bounds mới khi layout thay đổi. Native
+   tree có thể còn node bị keyboard/overlay che; bounds khác zero chưa đủ để tap.
+4. Nếu mất field, phân biệt app/agent chưa ready, sai màn, popup đang giữ active
+   window và control ngoài viewport trước khi retry hoặc sửa selector.
 
-1. Query filter cụ thể và type nếu hỗ trợ. Kết quả có thể khớp substring:
-   kiểm tra lại label/role, enabled, bounds và phạm vi phù hợp.
-2. Một control hợp lệ: dùng bounds vừa nhận nếu UI chưa thay đổi. Nếu driver
-   cần native element tap, dùng capability được probe và ghi lý do query bổ sung.
-3. Không có đúng control: mới query fallback tiếp theo có căn cứ; query từng
-   filter riêng. Nhiều control hợp lệ phải thu hẹp hoặc fail; disabled thì chờ
-   trạng thái đúng với giới hạn, không dùng alias để bỏ qua.
-4. Sau navigation, swipe, keyboard hoặc layout thay đổi, lấy bounds mới.
-   Với animation, chờ trạng thái/bounds ổn định theo probe thay vì cố tap tọa độ cũ.
+Trong repo này, Compose cần expose testTag thành resource ID; các label/role
+con có thể không clickable. React Native testID có thể khác nativeID. SwiftUI
+TextField/SecureField có thể cùng normalize thành textField. Đây là điểm bắt
+đầu để probe, không phải bảo đảm mọi app/framework version expose như vậy.
 
-`mobile_list_elements_on_screen` của device-bot hiện có `elementType`, `filter`
-theo AND rồi mới `maxResults`. Xác nhận schema binary trước khi dùng. Kiểm tra
-đúng một textbox bằng `elementType: "textField", maxResults: 2`; password cũng
-thuộc textField. Query lỗi không tương đương danh sách rỗng. Thuộc tính
-focused/checked/selected/value vắng mặt nghĩa là chưa biết, không mặc định false.
+## Popup, keyboard và input
 
-Fallback cần nguồn code/test và native evidence theo platform. Tooltip,
-ValueKey và nhãn native có thể khác nhau. Ví dụ avatar Orbit có thể expose `AL`,
-nhưng Account cũng có `AL`; phải giới hạn đúng avatar. Flutter checkbox trên
-iOS có thể là native `switch`; xác minh bằng query rồi kiểm tra checked thật.
+Swipe trong vùng app thực sự nhìn thấy, rồi query lại trước tap. Giới hạn số
+lần và tổng thời gian; dừng retry khi không tiến triển. XCTest dùng point,
+screenshot iOS có thể dùng pixel. Control cố định không tự được sửa bằng swipe.
 
-Chỉ query rộng để lấy geometry hoặc dữ liệu chưa có query hẹp tương đương.
-Ghi lý do và cap; kết quả chạm cap có thể bị cắt. Android lọc type vẫn có thể
-dump toàn tree trên thiết bị, nên response nhỏ chưa chứng minh query native nhanh hơn.
+Nếu popup autofill xuất hiện sau focus, dùng thao tác có căn cứ để dismiss rồi
+mới tiếp tục. Guard focus ở thời điểm popup đang giữ accessibility window có
+thể không tìm thấy editor dù editor đang nhận phím. Nhịp chờ hoặc chia input
+chỉ áp dụng khi probe chứng minh cần; không hard-code một workaround thiết bị
+cho mọi profile. Giữ credential thật khỏi artifact.
 
-## ensureVisible, keyboard và nhập liệu
+Khi ScrollView tiêu thụ tap đầu để đóng keyboard, có thể retry có giới hạn nếu
+native state chứng minh control chưa đổi. Giữ mục tiêu thao tác: nhập textbox
+khác với nút demo tự điền; tap Sign in khác với IME Done. Thay text hoặc IME chỉ
+cần recipe riêng khi behavior yêu cầu.
 
-Query trước. Nếu chưa tiếp cận được, xác định do tải, viewport, keyboard,
-overlay, sai màn hay selector. Chờ hoặc swipe có căn cứ trong app viewport,
-query lại và xác minh kết quả. Giới hạn query/swipe/tổng thời gian; dừng khi
-không tiến triển. Log lần query, lý do, hướng swipe và kết quả. Control cố định
-không mặc định được xử lý bằng swipe. Vắng khỏi viewport chưa chứng minh absent.
+## Ghi evidence và sanity của thao tác
 
-Probe nhánh cuộn với control thực sự ngoài viewport; nếu flow mở keyboard,
-probe ở trạng thái đó. XCTest dùng point, ảnh iOS có thể là pixel; tap dùng native
-bounds, swipe dùng geometry phù hợp. Swipe theo screenshot có thể trúng keyboard.
+Recording bao phủ chuỗi cần QC xem, kèm ảnh mốc và log/query theo case. Cleanup
+dừng recording cả khi lỗi và giữ phần đã thu được. Nếu recording không được
+hỗ trợ, báo artifact thay thế và phần evidence còn thiếu.
 
-Thay text bằng thao tác native đã xác minh. Nếu Cut giá trị đang chọn, kiểm tra
-field rỗng trước khi nhập lại. Đối chiếu giá trị khi kiểm tra whitespace, case
-hoặc giữ password. Phím IME phải dùng action hỗ trợ và kiểm tra focus/submit;
-tap Sign in không tương đương Done. Giữ credential thật khỏi artifact.
+Dry-run chỉ kiểm tra cấu hình. Một probe không chứng minh cả flow đã chạy;
+Simulator không đại diện máy thật. Giữ status runner riêng với kết quả QC.
+Xem lại artifact để phát hiện sai target/input hay flow bị ngắt trước khi gọi
+là thực thi hoàn tất. Kết quả mong đợi từ behavior được bàn giao cho QC đánh giá.
 
-## Coverage và chạy thật
+## Verify tự động — chỉ khi được yêu cầu
 
-Giữ assertion nội bộ Flutter trong test gốc khi native chưa quan sát được.
-700 ms busy/disabled cần evidence đúng trạng thái; polling chậm có thể bỏ lỡ.
-Một banner không chứng minh chỉ có một request. Counter UI không chứng minh
-chính xác LinearProgressIndicator.value hoặc TextDecoration.lineThrough.
+Giữ/tái sử dụng test đã có; thêm assertion có nguồn behavior và cách quan sát
+phù hợp target. Khi chuyển từ evidence sang verify, coverage gap mới trở thành
+các assertion cần thực hiện hoặc giới hạn cần ghi rõ.
 
-Thiết lập thay thế phải ghi khác biệt: sign-out từ Account không chứng minh
-cold launch route bảo vệ hoặc query GoRouter `from`. Chỉ đánh giá assertion
-thuộc scope; với Orbit, deep link ngoài scope, không thêm tính năng deep link
-để gỡ PARTIAL cho assertion router nội bộ.
-
-Lưu MCP response, query, screenshot và limitation theo case. Exit khác 0 khi
-lỗi thao tác/assertion. Chạy cú pháp hoặc probe một thao tác không chứng minh
-toàn scenario PASS. Kết quả Simulator không đại diện iPhone thật; test trực
-tiếp command dispatcher cũng chưa chứng minh bridge MCP end-to-end.
+- Giữ assertion framework trong test gốc nếu native không quan sát tương đương.
+  Ví dụ router, request count và progress/style không được chứng minh chỉ bằng
+  banner hoặc counter UI.
+- Loading ngắn/disabled cần quan sát đúng trạng thái; polling chậm có thể bỏ lỡ.
+- Luồng thay thế phải ghi khác biệt; sign-out không chứng minh cold-launch
+  protected route. Chỉ gỡ limitation khi assertion đó đã chạy có evidence.
+- Thêm test recipe/selector bằng fake MCP khi cần kiểm chứng logic mới; fake
+  response không thay thế live evidence. Giữ Bash baseline nếu đang đối chiếu
+  migration hoặc người dùng yêu cầu duy trì.
+- Trong chế độ này, PASS cần đủ assertion trong scope; PARTIAL liệt kê phần
+  chưa phủ; lỗi assertion/thực thi là FAIL; chưa chạy live là NOT RUN.

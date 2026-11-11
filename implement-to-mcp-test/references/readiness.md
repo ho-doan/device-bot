@@ -1,62 +1,55 @@
-# Chuẩn bị code để sinh automation thuận tiện
+# Chuẩn bị flow điều khiển và evidence
 
-Đây là bước bàn giao sau implement. Chuẩn bị các contract có ý nghĩa với app;
-không yêu cầu mọi feature phải thêm test bridge hoặc sửa production timing.
+Mục tiêu mặc định là đủ điều kiện tap/input/scroll và ghi evidence cho QC.
+Chuẩn bị contract có ý nghĩa với app; không đòi full assertion suite, test
+bridge hay thay đổi production timing để bắt đầu quay flow.
 
-## Hoàn thiện scenario trước khi chọn tọa độ
+## Behavior và setup
 
-Với mỗi acceptance criterion, xác định trạng thái bắt đầu, dữ liệu đầu vào,
-hành động và kết quả mong đợi độc lập với implementation. Bao gồm nhánh lỗi
-liên quan và sửa lỗi rồi thử lại khi feature có validation. Giữ scenario ID
-giữa integration test, file `.sh` và bảng coverage.
+Từ behavior được cung cấp, xác định trạng thái đầu, dữ liệu demo, đường đi,
+nhánh cần quay và kết quả QC sẽ đối chiếu. Integration test/helper giúp tìm
+các bước ẩn như focus, IME, scroll hoặc navigation khi có; giữ ID flow và nguồn.
+Nhánh chưa rõ expected behavior được ghi riêng cho QC làm rõ.
 
-Đọc cả helper integration test: `ensureVisible`, enter text, IME, navigation
-và việc chờ UI có thể bị ẩn trong helper. Bấm nút demo tự điền credentials chỉ
-kiểm tra đường demo; nó không xác minh tìm và nhập textbox.
+Ghi app ID, build/entrypoint, platform, cách cold-stop/reset/fixture startup và
+cleanup theo cơ chế có sẵn. Chọn thiết bị khi chạy thay vì hard-code serial.
+Kiểm tra app/agent/bridge tương ứng trước thao tác UI. Một helper chưa có
+heartbeat không phải bằng chứng rằng field của app không tồn tại.
 
-## UI có thể nhận diện và quan sát
+## Control có thể nhận diện và thao tác
 
-- Control có tên accessibility đúng mục đích, role và trạng thái phù hợp.
-  Nút chỉ có icon cần nhãn có nghĩa; label động cần quy tắc nhận diện có căn cứ.
-- Với Flutter, dùng Semantics/tooltip/label và ValueKey phù hợp nhu cầu thật.
-  ValueKey phục vụ Flutter test; chỉ dùng làm selector MCP nếu query native
-  thực sự expose nó và schema hỗ trợ truy vấn. Xem label/widget tree là ứng viên.
-- Khi nhiều control cùng chữ, xác định thêm loại control, phạm vi hoặc thuộc
-  tính phân biệt mà MCP quan sát được. Tránh đặt nhãn chỉ để né ambiguity nhưng
-  làm sai trải nghiệm screen reader.
-- Form có expected behavior rõ: nhập mới hay thay thế; giữ nguyên khoảng trắng,
-  password và dữ liệu khi toggle; IME Next chuyển field nào, Done gọi hành động nào.
-- Màn thành công/lỗi có dấu hiệu observable. Thuộc tính framework chính xác
-  vẫn được kiểm tra ở integration test nếu native không biểu diễn tương đương.
+- Chọn selector từ cây native, lấy bounds mới sau scroll/navigation/keyboard.
+  Dùng label/role/ID đúng ngữ nghĩa và thu hẹp khi có nhiều control giống nhau.
+- Flutter ValueKey, Compose testTag, React Native testID/nativeID và SwiftUI
+  accessibilityIdentifier không tự có ánh xạ giống nhau. Query xác nhận
+  thuộc tính thực sự được expose trước khi dùng chung profile.
+- Label hoặc role có thể nằm ở node con không clickable, còn parent mới nhận
+  tap. Chọn đúng node actionable thay vì đổi nhãn hoặc ép role cho test xanh.
+- Thử nhập vào đúng editor. Guard focus/giá trị tối thiểu chỉ dùng khi cần
+  phát hiện gõ nhầm; mật khẩu, IME hay thay text chỉ probe nếu flow cần thao tác đó.
+- Popup/autofill và keyboard có thể đổi active accessibility window hoặc che
+  control dù query vẫn có bounds. Xử lý theo evidence trước khi tap tiếp.
 
-## Dữ liệu và trạng thái tái lập
+Có thể bổ sung accessibility phục vụ thao tác khi được giao sửa fixture/UI;
+không thêm tính năng nghiệp vụ chỉ để mở đường automation.
 
-Xác định cách vào màn hình, login, tạo fixture, reset dữ liệu và cleanup theo
-cơ chế có sẵn. Nêu app ID, build/entrypoint, platform và cấu hình cần chạy;
-tránh gắn scenario với một serial thiết bị.
+## Evidence sẵn sàng cho QC
 
-App fixture Flutter chạy MCP bằng entrypoint app thông thường sau khi chạy
-integration test. Với iPhone thật, dùng build được ký và chạy độc lập được;
-kiểm tra app/agent/bridge trước khi kết luận lỗi nghiệp vụ.
+Xác định recording/screenshot mà target hỗ trợ và các mốc QC cần xem. Dùng
+credential demo; video/ảnh cũng có thể chứa dữ liệu đang hiện trên thiết bị.
+Ghi rõ khi video thiếu, bị ngắt hoặc chưa có thiết bị chạy. Chỉ setup và dry-run
+thì kết quả vẫn là chưa chạy live.
 
-Trạng thái loading ngắn cần chiến lược quan sát riêng. Nếu assertion bắt buộc
-về số request, router hoặc timing không thể quan sát native, giữ test framework
-và ghi gap. Chỉ thêm instrumentation khi cần và được phép; mô tả khác biệt của
-bản test nếu điều khiển response/timing.
-
-## Bàn giao ngắn gọn
-
-Ghi cùng tài liệu coverage/test hiện có thay vì tạo nhiều tài liệu trùng lặp.
+Bàn giao cùng tài liệu kết quả hiện có:
 
 | Trường | Nội dung |
 | --- | --- |
-| Scenario và nguồn | ID, acceptance criterion, đường dẫn test/code |
-| Setup/reset | Build/app ID, trạng thái đầu, fixture, cleanup |
-| Steps và expected | Hành động cùng kết quả độc lập với code mới |
-| Selector | Ứng viên chính/fallback, role, căn cứ, platform |
-| Native evidence | Query/probe, app/agent build, trạng thái xác minh |
-| Coverage gap | Assertion chưa quan sát được và nơi test gốc giữ nó |
-| Run | Script, env cần thiết, kết quả và artifact |
+| Behavior | Nguồn, ID flow, expected behavior cho QC |
+| Setup/reset | App/build, trạng thái đầu, dữ liệu và cleanup |
+| Điều khiển | YAML/profile, selector đã probe, bước bị chặn nếu có |
+| Evidence | Video/ảnh/log theo case/step, giới hạn artifact |
+| Chạy lại | Lệnh, target, binary/agent và cấu hình cần thiết |
+| QC | Chờ review; danh sách điểm cần kiểm tra thủ công |
 
-Chưa có native evidence thì ghi `Chờ xác minh`. Khi probe bác bỏ selector hoặc
-thao tác, sửa ánh xạ native theo evidence và giữ mục tiêu kiểm thử ban đầu.
+Chi tiết request count, router, loading ngắn và thuộc tính framework được giữ
+trong test gốc/checklist QC tới khi người dùng mở giai đoạn verify tự động.

@@ -1,92 +1,102 @@
 ---
 name: implement-to-mcp-test
-description: Prepare implemented mobile UI changes for automation and generate shared YAML scenarios and target profiles through a device-bot MCP client. Use for post-implementation automation handoff or integration-test-to-MCP conversion.
+description: Generate device-bot YAML control flows from implemented UI behavior and capture evidence for manual QC review. Use for post-implementation automation handoff or integration-test conversion; automated behavior verification is a later, explicitly requested mode.
 ---
 
 # Implement to MCP test
 
-Đưa thay đổi UI đã implement thành scenario YAML chạy qua device-bot MCP client,
-giữ traceability từ yêu cầu đến hành động và assertion. Áp dụng cho app mobile
-có device-bot hỗ trợ; xác minh capability trên từng platform cần chạy.
+Mặc định tạo flow điều khiển từ behavior đã implement: mở màn hình, tap, input,
+scroll và ghi video/screenshot để QC verify thủ công. Hoàn thành flow và thu
+được evidence là kết quả của automation; kết luận behavior đúng thuộc QC.
+Áp dụng cho app/framework mà device-bot có thể điều khiển trên target được yêu cầu.
 
-## 1. Xác định phần cần kiểm thử
+## 1. Chốt behavior và phạm vi
 
-Đọc diff, yêu cầu được cung cấp, màn hình liên quan, integration test và phần
-thân helper của test. Ưu tiên context local; chỉ mở tracker khi cần và tuân thủ
-quy tắc tracker của môi trường. Giữ ID scenario hiện có.
+Đọc behavior/acceptance criteria được cung cấp, màn hình liên quan và code cần
+để tìm đường thao tác. Integration test và helper là nguồn bổ sung khi có,
+không phải điều kiện bắt buộc. Khi cần đọc code, dùng Serena hoặc codegraph
+nếu môi trường có hỗ trợ. Ưu tiên context local; tracker tuân theo quy tắc môi trường.
 
-Nếu chưa có integration test, rút scenario từ acceptance criteria và hành vi
-đã implement, ghi rõ nguồn. Với lỗi hồi quy, thêm tình huống tái hiện lỗi.
-Chỗ thiếu expected behavior phải ghi là chưa rõ; không dùng chính output của
-code mới làm expected result.
+Mỗi flow ghi nguồn behavior, trạng thái đầu, dữ liệu demo, chuỗi thao tác và
+kết quả mong đợi để QC đối chiếu. Giữ ID flow hiện có. Chỗ chưa rõ ghi là chưa
+rõ; output của code mới không tự trở thành expected behavior.
 
-Đầu ra bước này: mỗi scenario có precondition, data, hành động, expected result,
-platform và nguồn yêu cầu/code/test. Phân biệt kiểm tra UI native với assertion
-router, request count hoặc thuộc tính framework nội bộ.
+**Chế độ mặc định: evidence cho QC.** Chuyển behavior thành bước điều khiển
+cơ bản; để validation nghiệp vụ, router, request count, timing, checked/value
+chi tiết vào checklist QC hoặc test gốc. Giữ nguyên các suite verify đã có;
+flow evidence có thể tái dùng hành động của chúng và ghi rõ phạm vi rút gọn.
 
-## 2. Chuẩn bị sau implement
+**Chế độ verify tự động:** chỉ mở khi người dùng yêu cầu bước verify sau khi
+flow điều khiển cơ bản đã ổn định. Khi đó ánh xạ assertion theo nguồn behavior,
+capability và evidence thực tế; đọc phần verify trong
+[mcp-conversion.md](references/mcp-conversion.md).
 
-Đọc [readiness.md](references/readiness.md) khi chuẩn bị code cho automation
-hoặc chưa có bàn giao đủ để sinh script. Chỉ sửa code UI/test trong phạm vi
-được giao; giữ đúng ngữ nghĩa accessibility và hành vi sản phẩm.
+## 2. Chuẩn bị target và đường điều khiển
 
-Hoàn tất khi scenario có đường setup/reset tái lập được, dữ liệu kiểm thử,
-selector ứng viên có căn cứ, expected result và assertion chưa quan sát được
-đã ghi rõ. Thiếu thiết bị vẫn có thể sinh script dự kiến; đánh dấu chưa xác minh.
+Đọc [readiness.md](references/readiness.md) khi setup/reset hoặc selector chưa
+rõ. Xác định app/build, thiết bị, binary/agent và khả năng recording. Chỉ sửa
+fixture/accessibility trong phạm vi được giao, giữ hành vi và ngữ nghĩa UI.
 
-## 3. Kiểm chứng ánh xạ native
+Dùng probe nhỏ cho control chưa có evidence: query đúng target, tap/focus,
+nhập dữ liệu và scroll nếu cần. Giữ các guard tối thiểu để điều khiển đúng,
+ví dụ chờ control sẵn sàng hoặc xác nhận focus khi có nguy cơ gõ nhầm ô.
+Các guard này không phải kết luận pass acceptance criteria.
 
-Đọc [mcp-conversion.md](references/mcp-conversion.md) trước khi sinh hoặc sửa
-script/helper. Khám phá schema của binary MCP sẽ chạy và kiểm tra phiên bản
-app/agent tương ứng; code server mới chưa chứng minh binary cài sẵn hỗ trợ nó.
+Phân biệt helper chưa ready, popup, bàn phím che control và selector không khớp
+trước khi đổi selector. Thiếu thiết bị/capability vẫn sinh được flow dự kiến,
+nhưng ghi rõ phần chưa chạy. Lỗi setup không được báo thành flow thành công.
 
-Với selector hoặc loại thao tác chưa có evidence phù hợp, chạy probe nhỏ trên
-platform đích trước khi nhân rộng: tìm field, nhập rỗng/thay giá trị, masked
-password, IME hoặc cuộn khi bàn phím mở tùy scenario. Lưu kết quả query và
-assertion sau thao tác. Evidence chỉ tái sử dụng khi thao tác, app và driver
-liên quan vẫn tương thích.
+## 3. Sinh YAML và profile
 
-Không có thiết bị hoặc thiếu capability: ghi cụ thể phần chưa xác minh/chưa
-bao phủ, tiếp tục tạo phần script có căn cứ. Lỗi môi trường khi chạy phải được
-báo là chưa chạy hoặc lỗi thực thi, không đổi thành PASS/PARTIAL thành công.
+Đọc [mcp-conversion.md](references/mcp-conversion.md) trước khi sinh/sửa flow.
+Với source device-bot, xem `server/docs/yaml-mcp-client.md` và các profile trong
+`examples/automation_test/`; chỉ đọc suite Flutter đầy đủ khi cần tái dùng hành động.
 
-## 4. Sinh YAML chung và kiểm tra
+Một flow một `.yaml`; ưu tiên sequence chung, tách profile cho app/framework
+hoặc platform có selector khác. Khi popup/keyboard làm khác chuỗi thao tác,
+tạo flow/recipe riêng có căn cứ từ lần chạy. App khác dùng behavior/selector
+của app đó, không sao chép nhãn Orbit.
 
-Một scenario một `.yaml`; target/profile khai báo app/device, selector và recipe
-khác biệt theo platform. Chọn profile khi chạy, giữ cùng sequence/assertion cho
-các platform. Với source device-bot, đọc `server/docs/yaml-mcp-client.md` và
-`examples/flutter_app/automation_test/targets.yaml` trước khi sinh YAML.
-App khác phải có selector/setup riêng có evidence, không sao chép nhãn Orbit.
+Runner gọi MCP của binary thực sự chạy. Setup/reset chưa có tool nằm ngoài
+flow và phải được ghi trong lệnh chạy. Giữ nguyên server/tool schema trong
+phạm vi sinh automation. Dùng dữ liệu demo; dữ liệu thật qua biến môi trường
+và giữ khỏi video, screenshot, log.
 
-Runner dùng MCP initialize/initialized, tools/list và tools/call của binary sẽ
-chạy. Query/wait/retry/assert/evidence thuộc runner; driver routing thuộc server.
-Cold-stop/reset/fixture startup chưa có MCP tool phải là setup bên ngoài được
-xác minh và ghi nhận. Capability thiếu được báo rõ; giữ nguyên server/tool schema
-trong phạm vi chuẩn hóa YAML. `${env:NAME}` hoặc `text_from_env` lấy dữ liệu thật.
+Flow evidence tập trung tap/input/scroll với wait/retry có giới hạn. Query và
+quan sát tối thiểu giúp thao tác tới đúng control; không cần dựng bộ assertion
+nghiệp vụ hoặc fake-MCP test cho mỗi flow trong chế độ mặc định. Sinh/duy trì
+Bash chỉ khi người dùng yêu cầu hoặc dự án đã chọn đường đó.
 
-Giữ hành động và assertion tương ứng từng scenario. Mỗi thao tác cần expected
-result quan sát được; tool trả thành công chưa chứng minh nghiệp vụ đúng.
-Thêm giới hạn thời gian/retry, cleanup và artifact theo case. Tránh ghi token
-và credential thật vào script/log; dùng dữ liệu demo hoặc biến môi trường.
+## 4. Chạy và thu evidence
 
-Chạy runner `--dry-run` cho mỗi profile và test recipe/selector bằng MCP fixture
-responses. Sau đó chạy scenario trên platform được yêu cầu khi có môi trường.
-Ghi riêng dry-run, fake-MCP test và live evidence. Giữ Bash baseline cho tới khi
-case YAML tương đương được xác minh; chỉ sửa/sinh Bash khi người dùng yêu cầu
-duy trì đường legacy đó.
-Không tự thay expected result, bỏ assertion hoặc mở rộng tính năng app chỉ để
-test xanh. Lỗi ngoài phạm vi được báo với evidence.
+Chạy `--dry-run` cho profile được sinh/sửa, rồi chạy live trên target được yêu
+cầu khi có môi trường. Dry-run chỉ chứng minh cấu hình hợp lệ.
 
-## Bàn giao
+Bắt đầu recording trước chuỗi thao tác cần QC xem, chụp các mốc có ích và dừng
+recording cả khi lỗi để lưu phần đã chạy. Giữ query/log/report theo từng case.
+Nếu platform thiếu recording, ghi rõ giới hạn, bàn giao ảnh/log sẵn có và
+đánh dấu evidence còn thiếu; không gọi screenshot là video.
 
-Trả đường dẫn YAML/profile, lệnh chạy thực tế, bảng coverage và artifact.
-Mỗi assertion liên kết với nguồn và cách quan sát native hoặc lý do chưa phủ.
+Xem lại ngắn video/ảnh để phát hiện lỗi điều khiển rõ ràng: gõ nhầm ô, tap lên
+keyboard/popup, thao tác không tới target hoặc flow bị ngắt. Tool/runner báo
+PASS chưa đủ để kết luận đã thực hiện đúng chuỗi điều khiển. Sửa flow trong
+phạm vi hoặc ghi bước bị chặn; QC vẫn quyết định kết quả nghiệp vụ.
 
-- `PASS`: đã chạy, đạt đủ assertion trong scope được khai báo.
-- `PARTIAL`: phần UI đã chạy đạt, còn assertion thuộc scenario chưa được phủ;
-  liệt kê từng phần thiếu. Không che lỗi assertion đã thực thi.
-- `FAIL`: lỗi thực thi hoặc assertion, exit khác 0.
-- `NOT RUN`: mới sinh script/kiểm tra cú pháp hoặc môi trường chưa cho phép chạy.
+## Bàn giao và hoàn tất
 
-Phân biệt phạm vi native và integration test gốc. Chỉ gỡ limitation khi đúng
-assertion đã được chạy và có evidence trên platform tương ứng.
+Bàn giao YAML/profile, nguồn behavior, setup/reset và lệnh chạy thực tế, thiết
+bị/build/binary, đường dẫn video/ảnh/log, các bước đã chạy và phần bị chặn.
+Kèm checklist ngắn các expected behavior để QC xem evidence và đánh dấu thủ công.
+
+Giữ status thô của runner, báo riêng ba kết quả:
+
+| Mục | Cách kết luận |
+| --- | --- |
+| Thực thi flow | Hoàn tất / lỗi tại bước cụ thể / chưa chạy |
+| Evidence | Đủ cho phạm vi đã thống nhất / thiếu, kèm artifact và lý do |
+| QC behavior | Chờ QC; chỉ ghi pass/fail khi có kết quả QC xác nhận |
+
+Chế độ evidence hoàn tất khi flow điều khiển trong scope đã chạy, artifact mở
+được và truy được tới behavior/step, cùng checklist QC. Nếu bị chặn, bàn giao
+đúng giới hạn thay vì chờ có full automated verification. Dọn cache/build tạm
+sau khi giữ evidence, theo yêu cầu và phạm vi đã được cho phép.

@@ -1,4 +1,4 @@
 interface:
   display_name: "Implement to MCP Test"
-  short_description: "Turn mobile UI changes into MCP shell tests"
-  default_prompt: "Dùng $implement-to-mcp-test để chuẩn bị phần code vừa implement cho automation, sinh các file .sh qua device-bot MCP và kiểm chứng coverage trên platform yêu cầu."
+  short_description: "Create MCP control flows and capture evidence for QC"
+  default_prompt: "Dùng $implement-to-mcp-test để dựa vào behavior đã implement, tạo flow YAML tap/input/scroll qua device-bot MCP và quay evidence cho QC verify thủ công; để verify nghiệp vụ tự động cho giai đoạn được yêu cầu sau."

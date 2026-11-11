@@ -206,10 +206,12 @@ present in `checksums.txt`; `--upgrade` then reruns the verified installer for
 the current installation directory.
 
 ```bash
-device-bot --version
+device-bot -v
 device-bot --check-update
-device-bot --upgrade
+device-bot -u
 ```
+
+`-v` is `--version`, `-h` is `--help`, and `-u` is `--upgrade`.
 
 On Windows, `--upgrade` schedules the PowerShell installer, exits the running
 server, waits for that process to release the `.exe`, and then replaces it.

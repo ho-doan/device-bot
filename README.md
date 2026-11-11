@@ -14,6 +14,9 @@ device-bot                       # Start the background web app and open localho
 device-bot start                 # Start the web app only when it is not running
 device-bot mcp                   # Run the MCP server over stdio
 device-bot run scenario.yaml     # Execute a YAML scenario
+device-bot -h                    # Show commands
+device-bot -v                    # Print the installed version
+device-bot -u                    # Install the latest verified release
 ```
 
 The web app keeps running after the terminal closes. Its history lives in

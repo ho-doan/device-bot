@@ -47,6 +47,36 @@ fn explicit_mcp_serves_stdio_without_launcher_output() {
 }
 
 #[test]
+fn short_flags_print_version_help_and_reject_extra_upgrade_arguments() {
+    let version = Command::new(env!("CARGO_BIN_EXE_device-bot"))
+        .arg("-v")
+        .output()
+        .unwrap();
+    assert!(version.status.success());
+    let version = String::from_utf8(version.stdout).unwrap();
+    assert!(
+        version.trim().chars().next().is_some_and(|c| c.is_ascii_digit()),
+        "{version}"
+    );
+
+    let help = Command::new(env!("CARGO_BIN_EXE_device-bot"))
+        .arg("-h")
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    let help = String::from_utf8(help.stdout).unwrap();
+    assert!(help.contains("-v, --version"), "{help}");
+    assert!(help.contains("-u, --upgrade"), "{help}");
+
+    let invalid = Command::new(env!("CARGO_BIN_EXE_device-bot"))
+        .args(["-u", "extra"])
+        .output()
+        .unwrap();
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("--upgrade accepts no arguments"));
+}
+
+#[test]
 fn help_and_invalid_start_do_not_start_services() {
     let help = Command::new(env!("CARGO_BIN_EXE_device-bot"))
         .arg("--help")

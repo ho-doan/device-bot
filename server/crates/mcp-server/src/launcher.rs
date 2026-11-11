@@ -14,11 +14,12 @@ device-bot start                   Ensure the background web app is running
 device-bot mcp                     Run the MCP server over stdio
 device-bot mcp --listen HOST:PORT  Run the MCP server over HTTP
 device-bot run <scenario.yaml> ... Run scenarios (see: device-bot run --help)
-device-bot --version
+device-bot -v, --version
+device-bot -h, --help
 device-bot --configure-ios-signing  Detect the signing team and update the iOS helper project
 device-bot --check-install
 device-bot --check-update
-device-bot --upgrade
+device-bot -u, --upgrade            Install the latest verified release
 
 The web app survives closing the terminal. Repeated starts reuse the running service.
 History defaults to ~/.device-bot/reports; override with DEVICE_BOT_REPORT_DATA_DIR.

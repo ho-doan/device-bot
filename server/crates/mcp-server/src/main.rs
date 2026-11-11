@@ -293,7 +293,7 @@ async fn main() -> std::io::Result<()> {
         }
         _ => {}
     }
-    if matches!(command.as_deref(), Some("--version")) {
+    if matches!(command.as_deref(), Some("--version" | "-v")) {
         if arguments.next().is_some() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -385,7 +385,7 @@ async fn main() -> std::io::Result<()> {
         }
         return Ok(());
     }
-    if matches!(command.as_deref(), Some("--upgrade")) {
+    if matches!(command.as_deref(), Some("--upgrade" | "-u")) {
         if arguments.next().is_some() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,

@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "device-bot"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "axum",
@@ -714,7 +714,7 @@ dependencies = [
 
 [[package]]
 name = "robot-flow"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "base64",
@@ -779,7 +779,7 @@ dependencies = [
 
 [[package]]
 name = "robot-report"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "axum",
  "serde",

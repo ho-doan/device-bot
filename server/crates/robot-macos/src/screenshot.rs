@@ -51,7 +51,7 @@ function run() {
 impl MacosRobot {
     pub(super) async fn focus_command(&self, mode: &str, value: &str) -> Result<i32, RobotError> {
         let output = tokio::time::timeout(
-            Duration::from_secs(8),
+            std::time::Duration::from_secs(8),
             self.run(
                 &self.osascript_path,
                 &[

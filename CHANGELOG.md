@@ -1,5 +1,11 @@
 ## Unreleased
 
+## 0.1.9 — 2026-11-11
+
+* Fix Windows compilation of the shared screenshot module by qualifying its
+  timeout type independently of macOS-only imports.
+* Reissue the native tools after the 0.1.8 release workflow failed before publishing.
+
 ## 0.1.8 — 2026-11-11
 
 * Add Orbit examples for Android Compose, SwiftUI, React Native, Vite React,

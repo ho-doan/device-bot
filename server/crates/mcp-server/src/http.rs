@@ -48,6 +48,10 @@ pub fn router(robot: Arc<dyn Robot>, bearer_token: Option<String>) -> Router {
     Router::new()
         .route("/mcp", post(handle_post).delete(handle_delete))
         .route("/health", get(handle_health))
+        .route(
+            "/health/live",
+            get(|| async { axum::Json(json!({"service":"device-bot","status":"ok"})) }),
+        )
         .route("/reboot", post(handle_reboot))
         .with_state(state)
         .merge(device_admin_api::router(AdminState::new(
@@ -514,6 +518,26 @@ mod tests {
             "text/event-stream"
         );
     }
+    #[tokio::test]
+    async fn liveness_is_available_without_authentication_or_device_checks() {
+        let response = router(Arc::new(NoopRobot::default()), Some("secret".into()))
+            .oneshot(
+                Request::builder()
+                    .uri("/health/live")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["service"], "device-bot");
+        assert_eq!(body["status"], "ok");
+    }
+
     #[tokio::test]
     async fn health_is_read_only_and_reboot_is_authenticated_and_device_scoped() {
         let robot = Arc::new(NoopRobot::default());

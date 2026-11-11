@@ -55,7 +55,11 @@ fn short_flags_print_version_help_and_reject_extra_upgrade_arguments() {
     assert!(version.status.success());
     let version = String::from_utf8(version.stdout).unwrap();
     assert!(
-        version.trim().chars().next().is_some_and(|c| c.is_ascii_digit()),
+        version
+            .trim()
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit()),
         "{version}"
     );
 
@@ -88,6 +92,7 @@ fn help_and_invalid_start_do_not_start_services() {
         "device-bot mcp",
         "device-bot run",
         "device-bot start",
+        "device-bot qc",
         "8765",
     ] {
         assert!(help.contains(command), "{help}");
@@ -106,6 +111,29 @@ fn help_and_invalid_start_do_not_start_services() {
         .unwrap();
     assert!(!invalid.status.success());
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("invalid listen address"));
+}
+
+#[test]
+fn qc_rejects_invalid_arguments_or_missing_app_before_starting_services() {
+    for (arguments, message) in [
+        (vec!["qc", "extra"], "qc accepts no arguments"),
+        (vec!["qc"], "DEVICE_BOT_QC_APP does not exist"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_device-bot"))
+            .args(arguments)
+            .env(
+                "DEVICE_BOT_QC_APP",
+                std::env::temp_dir().join(uuid::Uuid::new_v4().to_string()),
+            )
+            .env("DEVICE_BOT_IOS_AGENT_BIND", "invalid-if-server-started")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(message),
+            "{output:?}"
+        );
+    }
 }
 
 #[test]

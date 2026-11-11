@@ -2,6 +2,60 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 
 #[tokio::test]
+#[ignore = "requires an interactive macOS session"]
+async fn real_focus_restores_the_foreground_pid_without_applescript_coercion() {
+    let robot = MacosRobot::new(std::env::temp_dir());
+    let previous = robot.focus_command("frontmost", "").await.unwrap();
+    let restored = robot.focus_command("restore", &previous.to_string()).await;
+    assert_eq!(restored.unwrap(), previous);
+}
+
+#[tokio::test]
+#[ignore = "requires an interactive macOS session and Screen Recording permission"]
+async fn real_screenshot_returns_png_and_restores_the_foreground_app() {
+    let directory =
+        std::env::temp_dir().join(format!("real-macos-screenshot-{}", std::process::id()));
+    let robot = MacosRobot::new(&directory);
+    let previous = robot.focus_command("frontmost", "").await.unwrap();
+    let app = robot.run("osascript", &[
+        "-l".into(), "JavaScript".into(),
+        "-e".into(),
+        "ObjC.import('AppKit'); ObjC.unwrap($.NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier);".into(),
+    ]).await.unwrap();
+    *robot.active_application.lock().await =
+        Some(String::from_utf8(app).unwrap().trim().to_owned());
+    let image = robot.take_screenshot(DEVICE_ID).await;
+    let foreground = robot.focus_command("frontmost", "").await.unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+    assert_eq!(foreground, previous);
+    assert!(image.unwrap().starts_with(b"\x89PNG\r\n\x1a\n"));
+}
+
+#[tokio::test]
+#[ignore = "requires DEVICE_BOT_MACOS_TEST_QC_APP, an interactive session and Screen Recording"]
+async fn real_screenshot_switches_from_qc_to_finder_and_restores_qc() {
+    let qc =
+        std::env::var("DEVICE_BOT_MACOS_TEST_QC_APP").expect("set the path to a built QC .app");
+    let directory = std::env::temp_dir().join(format!("qc-focus-roundtrip-{}", std::process::id()));
+    let robot = MacosRobot::new(&directory);
+    robot.launch_app(DEVICE_ID, &qc).await.unwrap();
+    let qc_pid = robot.active_process_id.lock().await.unwrap();
+    let image = robot
+        .take_screenshot_with_options(
+            DEVICE_ID,
+            &robot_core::ScreenshotOptions {
+                app_id: Some("com.apple.finder".into()),
+                display_id: None,
+            },
+        )
+        .await;
+    let foreground = robot.focus_command("frontmost", "").await.unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+    assert_eq!(foreground, qc_pid, "screenshot must return focus to QC");
+    assert!(image.unwrap().starts_with(b"\x89PNG\r\n\x1a\n"));
+}
+
+#[tokio::test]
 async fn screenshot_focuses_target_then_restores_qc_even_on_capture_error() {
     let dir = std::env::temp_dir().join(format!("desktop-focus-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

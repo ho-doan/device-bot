@@ -14,14 +14,6 @@ pub fn publish(address: SocketAddr, token: &str) -> io::Result<()> {
         .ok_or_else(|| io::Error::other("user home directory is unavailable"))?;
     let home = PathBuf::from(home);
     write_connection(&home.join(".device-bot/mcp"), address, token)?;
-    #[cfg(target_os = "macos")]
-    {
-        // QC keeps App Sandbox enabled and reads its own private container.
-        let container = home.join("Library/Containers/com.example.mobileMcpCompanion/Data");
-        if container.is_dir() {
-            write_connection(&container.join(".device-bot/mcp"), address, token)?;
-        }
-    }
     Ok(())
 }
 

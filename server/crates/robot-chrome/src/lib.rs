@@ -388,6 +388,8 @@ impl Robot for ChromeRobot {
                 "-i",
                 "-",
                 "-an",
+                "-vf",
+                "pad=ceil(iw/2)*2:ceil(ih/2)*2",
                 "-c:v",
                 "libx264",
                 "-pix_fmt",
@@ -586,9 +588,20 @@ impl Robot for ChromeRobot {
                 json!({
                     "expression": expression,
                     "returnByValue": true,
+                    "awaitPromise": true,
                 }),
             )
             .await?;
+        if let Some(exception) = result.get("exceptionDetails") {
+            let detail = exception
+                .pointer("/exception/description")
+                .or_else(|| exception.get("text"))
+                .and_then(Value::as_str)
+                .unwrap_or("JavaScript evaluation failed");
+            return Err(RobotError::CommandFailed(format!(
+                "Chrome DOM/accessibility query failed: {detail}"
+            )));
+        }
         let values = result
             .pointer("/result/value")
             .and_then(Value::as_array)
@@ -712,6 +725,7 @@ mod tests {
                 serde_json::from_str(&socket.next().await.unwrap().unwrap().into_text().unwrap())
                     .unwrap();
             assert_eq!(request["method"], "Runtime.evaluate");
+            assert_eq!(request["params"]["awaitPromise"], true);
             socket
                 .send(Message::Text(
                     json!({"id":request["id"],"result":{"result":{"value":[

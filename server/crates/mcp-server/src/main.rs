@@ -16,6 +16,7 @@ use robot_windows::WindowsRobot;
 
 mod assets;
 mod launcher;
+mod qc;
 mod qc_connection;
 mod update;
 
@@ -270,6 +271,15 @@ async fn main() -> std::io::Result<()> {
     let mut command = arguments.next();
     match command.as_deref() {
         None => return launcher::start(true),
+        Some("qc") => {
+            if arguments.next().is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "qc accepts no arguments",
+                ));
+            }
+            return qc::open();
+        }
         Some("start") => {
             if arguments.next().is_some() {
                 return Err(std::io::Error::new(

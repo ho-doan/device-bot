@@ -35,6 +35,7 @@ The installed suite has one entry point:
 ```sh
 device-bot                       # Start the web app if needed, then open the browser
 device-bot start                 # Ensure the background web app is running
+device-bot qc                    # Open the QC desktop app; ensure local MCP is running
 device-bot run scenario.yaml     # Run a YAML scenario
 device-bot mcp                   # MCP over stdio, for MCP clients
 device-bot mcp --listen 127.0.0.1:3337
@@ -49,6 +50,56 @@ directory. Set `DEVICE_BOT_REPORT_DATA_DIR` to override it before starting the
 service. Startup diagnostics are written to `server.log` in that directory.
 Set `DEVICE_BOT_REPORT_PORT` before starting to use another loopback port;
 the default is 8765.
+
+### QC desktop app
+
+For a standalone macOS QC build, unzip `device-bot-qc-v<VERSION>-aarch64-apple-darwin.zip`,
+move **Device Bot QC.app** to Applications, and open it. This package includes
+QC, the native MCP server, the YAML/report tools, and XCTest assets; Flutter and
+Rust are not needed on the receiving Mac. The current local build supports
+Apple Silicon and macOS 12 or newer. Windows packaging will follow separately.
+The app is ad-hoc signed, not notarized: if macOS blocks the first launch, use
+System Settings → Privacy & Security → Open Anyway for this app.
+
+`device-bot qc` opens the optional Flutter QC desktop app. It starts a detached
+MCP server at `http://127.0.0.1:3337` if needed and reuses a running server.
+Credentials are discovered locally; no manual Bearer token entry is needed.
+MCP logs are written to `~/.device-bot/mcp/server.log`. The server keeps running
+after the terminal or QC closes. An unrelated service or older Device Bot on
+port 3337 must be stopped first.
+
+The CLI release bundle currently does not include the QC app. Build it once
+from this repository on a machine with Flutter and the platform build tools:
+
+```sh
+cd server/flutter_app
+flutter pub get
+flutter build macos       # On Windows: flutter build windows
+cd ../..
+device-bot qc
+```
+
+QC is found beside the CLI, in `/Applications` or `~/Applications` on macOS,
+or in the local Flutter project's Release/Debug build output. For a custom
+location, set `DEVICE_BOT_QC_APP` to the `.app` bundle on macOS or the executable
+on Windows. Keep the Windows executable together with its Flutter bundle files.
+`DEVICE_BOT_FLUTTER_APP` can point to a different companion source directory.
+The command opens the existing build and does not download Flutter or build QC.
+
+To produce the standalone app on a build machine (Python 3.12+ required for
+packaging):
+
+```sh
+cargo build --manifest-path server/Cargo.toml --release --locked \
+  -p device-bot -p robot-flow -p robot-report
+(cd server/flutter_app && FLUTTER_XCODE_ARCHS=arm64 flutter build macos --release --build-name=0.1.9)
+python3 scripts/package_qc_macos.py --binary-dir server/target/release \
+  --qc-app server/flutter_app/build/macos/Build/Products/Release/mobile_mcp_companion.app \
+  --target aarch64-apple-darwin --version 0.1.9 --output artifacts/qc-release
+```
+
+The ZIP includes a launcher that starts MCP before opening QC. A SHA-256 file
+is generated beside it. Launch failures are recorded in `~/.device-bot/qc-launch.log`.
 
 From source, build all three bundled executables before using the launcher:
 
@@ -237,8 +288,9 @@ available. Set `DEVICE_BOT_FLUTTER_AUTOSTART=0` for headless or CI runs.
 
 QC does not require manual Bearer token entry for a local server. The HTTP
 server publishes an owner-private connection profile at
-`~/.device-bot/mcp/connection-<port>.json` and, on macOS, in the existing QC app
-sandbox container. QC discovers credentials only for a matching loopback URL,
+`~/.device-bot/mcp/connection-<port>.json`. The standalone QC desktop app runs
+without App Sandbox; MCP does not access QC's old sandbox container.
+QC discovers credentials only for a matching loopback URL,
 scheme and port. Other MCP clients continue to use the normal Bearer header.
 
 QC checks device readiness every five seconds using a separate read-only MCP
@@ -246,6 +298,13 @@ session. A locked iPhone is reported as `device_locked` both by health checks an
 blocked UI tool calls. QC shows an unlock warning and a Check after unlocking
 action; it does not replay the interrupted tool automatically. Unknown lock
 state is not treated as evidence that the phone is locked.
+
+For macOS desktop control, App Sandbox and privacy permissions are separate.
+Launching apps and changing focus use AppKit without Apple Events. Screenshots
+and recordings still require [Screen Recording permission](https://support.apple.com/en-gb/guide/mac-help/mchl592e5686/mac),
+and inspecting or controlling other apps requires [Accessibility permission](https://support.apple.com/en-mn/guide/mac-help/mh43185/mac).
+Keyboard input still uses System Events and may require [Automation permission](https://support.apple.com/en-nz/guide/mac-help/mchl108e1718/mac).
+Removing App Sandbox does not grant these permissions automatically.
 
 `POST /mcp` implements the `2025-11-25` session lifecycle. Send the token as
 `Authorization: Bearer <token>`. An
@@ -316,6 +375,14 @@ The intended end-to-end sequence is:
 3. Use the platform accessibility tree for Chrome's native controls such as
    **New Tab** and the address bar; use the Chrome robot for page DOM elements,
    search results, links, playback controls, and Chrome recording.
+
+When querying a Flutter Web page, the Chrome driver automatically activates
+Flutter's standard **Enable accessibility** placeholder and waits up to 1.5 seconds
+for the semantic DOM. This runs inside MCP on each query, including after
+navigation, so CI does not need a separate CDP script or manual click. Queries on
+ordinary HTML pages and already-enabled Flutter pages do not click anything.
+An activation error or timeout is reported as a driver error, rather than a
+successful empty tree.
 
 ## Device tools
 

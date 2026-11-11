@@ -224,6 +224,12 @@ semantics; v2 paths stay under the case artifact directory.
 
 ## Evidence and adoption
 
+Execute scenario UI steps through YAML and MCP. If a step cannot execute,
+report its step ID, error and missing capability. Do not substitute an external
+CDP script, manual UI action or app-code change to make a failing run pass.
+Required driver initialization, such as automatic Flutter Web accessibility,
+belongs inside MCP and must report initialization errors explicitly.
+
 Each live case creates a fresh directory with `report.json`, `junit.xml`,
 method/tool-only `mcp-calls.jsonl`, redacted `query-N.json`, requested screenshots
 and `video.mp4` after recording stop. Input arguments/server stderr are not

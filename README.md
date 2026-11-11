@@ -12,6 +12,7 @@ The installed native suite uses `device-bot` as its entry point:
 ```sh
 device-bot                       # Start the background web app and open localhost:8765
 device-bot start                 # Start the web app only when it is not running
+device-bot qc                    # Open the QC desktop app and start local MCP if needed
 device-bot mcp                   # Run the MCP server over stdio
 device-bot run scenario.yaml     # Execute a YAML scenario
 device-bot -h                    # Show commands
@@ -22,6 +23,9 @@ device-bot -u                    # Install the latest verified release
 The web app keeps running after the terminal closes. Its history lives in
 `~/.device-bot/reports`; set `DEVICE_BOT_REPORT_DATA_DIR` before startup to use
 another store. MCP clients must pass `mcp` as an argument.
+
+QC is a separate optional desktop app. See the [QC setup](server/README.md#qc-desktop-app)
+to build or locate it before using `device-bot qc`.
 
 Build the native suite from the repository root:
 

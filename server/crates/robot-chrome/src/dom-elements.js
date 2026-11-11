@@ -1,4 +1,18 @@
-Array.from(document.querySelectorAll('body *')).slice(0, 500).map((element) => {
+(async () => {
+    // Flutter Web exposes its semantic DOM only after this standard opt-in.
+    // Run on every query so fresh pages and navigations need no external setup.
+    const placeholder = document.querySelector('flt-semantics-placeholder[aria-label="Enable accessibility"]');
+    if (placeholder && !document.querySelector('flt-semantics')) {
+        placeholder.click();
+        const deadline = Date.now() + 1500;
+        while (!document.querySelector('flt-semantics')) {
+            if (Date.now() >= deadline) {
+                throw new Error('Flutter Web accessibility did not become ready within 1500 ms');
+            }
+            await new Promise(resolve => setTimeout(resolve, 25));
+        }
+    }
+    return Array.from(document.querySelectorAll('body *')).slice(0, 500).map((element) => {
             const bounds = element.getBoundingClientRect();
             const tag = element.tagName.toLowerCase();
             const type = (element.getAttribute('type') || '').toLowerCase();
@@ -26,4 +40,5 @@ Array.from(document.querySelectorAll('body *')).slice(0, 500).map((element) => {
               checked: selectable ? !!element.checked : null,
               selected: element.getAttribute('aria-selected') === 'true' ? true : (element.getAttribute('aria-selected') === 'false' ? false : null)
             };
-        })
+        });
+})()

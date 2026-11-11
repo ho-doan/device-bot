@@ -11,6 +11,7 @@ use std::{
 pub const HELP: &str =
     "device-bot                         Start the background web app and open http://127.0.0.1:8765
 device-bot start                   Ensure the background web app is running
+device-bot qc                      Open the QC desktop app and ensure local MCP is running
 device-bot mcp                     Run the MCP server over stdio
 device-bot mcp --listen HOST:PORT  Run the MCP server over HTTP
 device-bot run <scenario.yaml> ... Run scenarios (see: device-bot run --help)
@@ -107,7 +108,7 @@ fn report_ready(address: SocketAddr) -> io::Result<bool> {
     Ok(true)
 }
 
-fn detach(command: &mut Command) {
+pub(crate) fn detach(command: &mut Command) {
     command.stdin(Stdio::null());
     #[cfg(windows)]
     {

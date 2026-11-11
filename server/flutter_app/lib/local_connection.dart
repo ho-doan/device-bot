@@ -11,8 +11,9 @@ Future<String?> localBearerToken(Uri endpoint, {String? directory}) async {
   final roots = directory != null
       ? [directory]
       : [
-          if (Platform.isMacOS)
-            '$home/Library/Containers/com.example.mobileMcpCompanion/Data/.device-bot/mcp',
+          if (Platform.environment['DEVICE_BOT_QC_CONNECTION_DIR']
+              case final String root)
+            root,
           '$home/.device-bot/mcp',
         ];
   for (final root in roots) {

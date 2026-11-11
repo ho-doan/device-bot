@@ -1125,32 +1125,25 @@ impl Robot for MacosRobot {
 
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
-        let mut launch_args = vec!["-a".into(), app_id.into()];
         if let Ok(arguments) = std::env::var("DEVICE_BOT_MACOS_APP_ARGS") {
             let arguments = arguments.split_whitespace().collect::<Vec<_>>();
             if !arguments.is_empty() {
                 // `open -a` ignores `--args` when the application is already
                 // running. Start a fresh instance so flags such as Chrome's
                 // `--force-renderer-accessibility` take effect.
-                launch_args.insert(0, "-n".into());
-                launch_args.push("--args".into());
+                let mut launch_args =
+                    vec!["-n".into(), "-a".into(), app_id.into(), "--args".into()];
                 launch_args.extend(arguments.into_iter().map(str::to_owned));
+                self.run(&self.open_path, &launch_args).await?;
             }
         }
-        self.run(&self.open_path, &launch_args).await?;
+        // AppKit resolves bundle IDs, app names and paths without Apple Events.
         let mut last_error = None;
         for _ in 0..20 {
-            match self
-                .apple_script(
-                    "on run argv\n tell application (item 1 of argv) to activate\nend run",
-                    &[app_id.into()],
-                )
-                .await
-            {
-                Ok(()) => {
+            match self.focus_command("activate", app_id).await {
+                Ok(pid) => {
                     *self.active_application.lock().await = Some(app_id.into());
-                    *self.active_process_id.lock().await =
-                        Some(self.focus_command("frontmost", "").await?);
+                    *self.active_process_id.lock().await = Some(pid);
                     return Ok(());
                 }
                 Err(error) => last_error = Some(error),

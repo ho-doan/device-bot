@@ -1,37 +1,69 @@
 use super::*;
 use robot_core::{DesktopDisplay, ScreenshotOptions};
 
-const FOCUS: &str = r#"on run argv
-set mode to item 1 of argv
-if mode is "activate" then
-    set targetApp to item 2 of argv
-    tell application targetApp to activate
-    set targetId to id of application targetApp
-    repeat 60 times
-        tell application "System Events"
-            set frontProcess to first application process whose frontmost is true
-            if bundle identifier of frontProcess is targetId then return unix id of frontProcess
-        end tell
-        delay 0.05
-    end repeat
-    error "Could not focus target app; screenshot was not taken."
-else if mode is "restore" then
-    set targetPid to item 2 of argv as integer
-    tell application "System Events"
-        set targetProcess to first application process whose unix id is targetPid
-        set frontmost of targetProcess to true
-    end tell
-    repeat 60 times
-        tell application "System Events"
-            if unix id of first application process whose frontmost is true is targetPid then return targetPid
-        end tell
-        delay 0.05
-    end repeat
-    error "Could not restore the previous foreground app."
-else
-    tell application "System Events" to return unix id of first application process whose frontmost is true
-end if
-end run"#;
+// AppKit focus control does not send Apple Events to System Events or the target app.
+const FOCUS: &str = r#"ObjC.import('AppKit');
+function run(argv) {
+  var workspace = $.NSWorkspace.sharedWorkspace;
+  function missing(value) { return !value || value.isNil(); }
+  function frontPid() {
+    var app = workspace.frontmostApplication;
+    if (missing(app)) throw new Error('No foreground macOS application.');
+    return Number(app.processIdentifier);
+  }
+  function waitFor(pid, message) {
+    for (var i = 0; i < 60; i++) {
+      if (frontPid() === pid) return String(pid);
+      $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));
+    }
+    throw new Error(message);
+  }
+  if (argv[0] === 'frontmost') return String(frontPid());
+  var app, pid;
+  if (argv[0] === 'restore') {
+    pid = Number(argv[1]);
+    // Some menu-bar apps cannot be activated; leave them alone when already foreground.
+    if (frontPid() === pid) return String(pid);
+    app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+    if (missing(app)) throw new Error('Previous foreground application has exited.');
+  } else if (argv[0] === 'activate') {
+    var target = String(argv[1]);
+    function matches(candidate) {
+      return ObjC.unwrap(candidate.bundleIdentifier) === target ||
+          ObjC.unwrap(candidate.localizedName) === target ||
+          (!missing(candidate.bundleURL) && ObjC.unwrap(candidate.bundleURL.path) === target);
+    }
+    // Multiple instances may share a bundle ID (for example Chrome or VNC).
+    var foreground = workspace.frontmostApplication;
+    if (!missing(foreground) && matches(foreground)) return String(foreground.processIdentifier);
+    var running = workspace.runningApplications;
+    for (var j = 0; j < running.count; j++) {
+      var candidate = running.objectAtIndex(j);
+      if (matches(candidate)) {
+        app = candidate;
+        break;
+      }
+    }
+    if (missing(app)) {
+      var url = workspace.URLForApplicationWithBundleIdentifier($(target));
+      if (missing(url)) {
+        var path = target.charAt(0) === '/' ? $(target) : workspace.fullPathForApplication($(target));
+        if (missing(path)) throw new Error('Could not find target application: ' + target);
+        url = $.NSURL.fileURLWithPath(path);
+      }
+      app = workspace.launchApplicationAtURLOptionsConfigurationError(url, 0, $({}), null);
+      if (missing(app)) throw new Error('Could not launch target application: ' + target);
+    }
+    pid = Number(app.processIdentifier);
+  } else {
+    throw new Error('Unsupported focus operation: ' + argv[0]);
+  }
+  if (frontPid() === pid) return String(pid);
+  app.activateWithOptions(3);
+  return waitFor(pid, argv[0] === 'restore'
+    ? 'Could not restore the previous foreground app.'
+    : 'Could not focus target app; screenshot was not taken.');
+}"#;
 
 const DISPLAYS: &str = r#"ObjC.import('AppKit');
 function run() {
@@ -55,6 +87,8 @@ impl MacosRobot {
             self.run(
                 &self.osascript_path,
                 &[
+                    "-l".into(),
+                    "JavaScript".into(),
                     "-e".into(),
                     FOCUS.into(),
                     "--".into(),

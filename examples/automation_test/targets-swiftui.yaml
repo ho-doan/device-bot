@@ -1,0 +1,42 @@
+version: 1
+# SwiftUI TextField/SecureField expose accessibilityIdentifier through XCTest.
+# Send that identifier as a native filter as well as checking resource_id locally.
+selectors:
+  email:
+    filter: email-field
+    resource_id: email-field
+    element_type: textField
+    native_tap: true
+  password:
+    filter: password-field
+    resource_id: password-field
+    element_type: textField
+    native_tap: true
+  show_password:
+    filter: password-visibility-control
+    resource_id: password-visibility-control
+    label: Show password
+    element_type: button
+    native_tap: true
+  hide_password:
+    filter: password-visibility-control
+    resource_id: password-visibility-control
+    label: Hide password
+    element_type: button
+    native_tap: true
+  sign_in:
+    filter: submit-button
+    resource_id: submit-button
+    element_type: button
+    native_tap: true
+targets:
+  swift:
+    device: {platform: ios, state: available}
+    app_id: com.hodoan.swift-app
+    preconditions: [fixture_ready]
+    recipes:
+      open_fixture:
+        - launch_app: {app_id: '${app_id}'}
+        # Query outside the tap's 30s search deadline so a cold helper's error
+        # is reported as setup/query failure instead of a missing-field error.
+        - list_elements: {target: email}

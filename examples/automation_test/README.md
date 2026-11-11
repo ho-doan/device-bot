@@ -12,14 +12,16 @@ The smoke requires empty login fields and literal disposable demo credentials.
 
 ```sh
 server/target/debug/robot-flow \
-  --profiles examples/automation_test/targets.yaml --target swift \
+  --profiles examples/automation_test/targets-swiftui.yaml --target swift \
   --device SIMULATOR_UDID \
   --server server/target/debug/device-bot --server-arg mcp \
   --confirm fixture_ready --artifacts artifacts/control-smoke/swift \
   examples/automation_test/control-smoke.yaml
 ```
 
-Targets: `swift`, `android`, `rn-android`, `rn-ios`, `vite`, `electron`.
+SwiftUI uses [`targets-swiftui.yaml`](targets-swiftui.yaml), target `swift`.
+The other targets in `targets.yaml` are `android`, `rn-android`, `rn-ios`,
+`vite`, and `electron`.
 Override bundle IDs, executable paths or URLs with `--app-id` as needed.
 For web, start Vite and Chrome with a separate test profile and
 `--remote-debugging-port=9222`, then pass the exact `chrome:TARGET_ID` from
@@ -42,3 +44,25 @@ Run MCP sessions sequentially. Use `--dry-run` to validate a profile without
 touching devices. Successful smoke execution means the driver accepted all
 tap/input calls and captured screenshots; it does not assert application
 business behavior. Reports, queries and PNGs are written under `--artifacts`.
+
+## SwiftUI setup and field differences
+
+Keep the Simulator's XCTest helper ready on the same bridge address before a
+control run. A cold helper can take longer than the tap search's 30-second
+deadline. An unfinished first query then appears as a missing/disabled/unstable
+element even when the field ID is correct. A failed `/health` heartbeat is a
+helper-readiness problem; changing a field label does not repair that problem.
+
+The SwiftUI profile sends both `filter` and `element_type` to XCTest. A
+`resource_id` alone is checked locally by robot-flow and does not narrow the
+native query. Email uses `email-field`; both SwiftUI `SecureField` and visible
+`TextField` use `password-field`, normalized as `textField`. The email editor's
+native label is not the separate `Email address` static text. Buttons use their
+own identifiers, and `native_tap` targets XCTest elements rather than cached
+screen coordinates. The initial `list_elements` query runs outside the tap
+deadline and exposes helper setup/query errors directly.
+
+Validated on iOS 27 Simulator: the dedicated profile completed email/password
+input, visibility toggles and Sign in. Captured screenshots showed the entered
+demo credentials and the resulting workspace. Full business assertions remain
+deferred. This confirms a ready-helper run, not a cold-helper startup guarantee.

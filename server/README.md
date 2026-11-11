@@ -570,8 +570,12 @@ Chrome pages are exposed when a DevTools endpoint is available. If it has no
 controllable page, discovery returns an offline `chrome:browser` row. Choose
 QC **Start** or call `mobile_boot_device` with `chrome:browser` to open a local
 Chrome automation session, then refresh to select a `chrome:<target-id>` page.
-The server uses a separate profile under `~/.device-bot/chrome/<port>` and leaves
-Chrome running. Set `DEVICE_BOT_CHROME_PATH` to override its executable.
+By default, each MCP session starts its own Chrome on a free loopback port with
+a new private temporary profile. It does not attach to an old browser on port
+9222. The browser and profile are removed when the MCP session ends, including
+after a YAML case fails. `device-bot run` creates and closes its MCP subprocess
+per case, so the next case starts a new Chrome. Startup logs/session metadata
+remain in the artifact directory. Set `DEVICE_BOT_CHROME_PATH` to override its executable.
 Only loopback DevTools endpoints can be started automatically.
 You can also start Chrome manually with a separate profile, for example:
 
@@ -579,9 +583,23 @@ You can also start Chrome manually with a separate profile, for example:
 google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/device-bot-chrome
 ```
 
-Set `DEVICE_BOT_CHROME_DEBUG_ADDRESS` to use a different endpoint. Each debuggable
+Setting `DEVICE_BOT_CHROME_DEBUG_ADDRESS` explicitly opts into attaching to that
+endpoint; an already-running external Chrome is not owned or closed by MCP.
+Unset this variable for a fresh browser per case. Each debuggable
 page appears as a `chrome:<target-id>` device and supports screenshots, mouse/keyboard
 input, URL navigation, and DOM-backed element discovery.
+
+Fresh-session YAML starts Chrome before selecting its runtime page; do not
+hardcode a previous run's `chrome:<target-id>`:
+
+```yaml
+steps:
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser'}
+  - select_device: {platform: chrome, state: available}
+  - open_url: {url: 'https://example.com'}
+```
 
 `mobile_start_screen_recording` on macOS writes an MP4 from AVFoundation and
 requests Screen Recording permission automatically. The first request can require

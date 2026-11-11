@@ -495,8 +495,11 @@ fn expand(
         }
         let mut args = resolve(&template, vars)?;
         validate_action_keys(action, &args)?;
+        // Boot accepts a device ID, not credential/text input. Environment-sourced
+        // profile settings must not disable recording before this initialization.
+        let boot_only = action == "call_tool" && args["name"] == "mobile_boot_device";
         if ["fill_field", "type_text", "call_tool"].contains(&action.as_str())
-            && (vars.get("__sensitive_inputs") == Some(&json!(true))
+            && ((vars.get("__sensitive_inputs") == Some(&json!(true)) && !boot_only)
                 || args.get("text_from_env").is_some()
                 || args.get("sensitive") == Some(&json!(true)))
         {
@@ -693,4 +696,33 @@ fn check_keys(args: &Value, allowed: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod browser_boot_tests {
+    use super::*;
+
+    #[test]
+    fn boot_does_not_block_recording_but_text_tools_remain_sensitive() {
+        let flow: FlowDocument = serde_json::from_value(json!({
+            "version":2,"name":"boot and input","steps":[
+                {"call_tool":{"name":"mobile_boot_device","arguments":{"deviceId":"chrome:browser"}}},
+                {"type_text":{"text":"fixture"}},
+                {"call_tool":{"name":"mobile_type_keys","arguments":{"deviceId":"fixture","text":"fixture"}}},
+                {"call_tool":{"name":"mobile_boot_device","arguments":{"deviceId":"chrome:browser"},"sensitive":true}}
+            ]
+        })).unwrap();
+        let mut profile = Profile::default();
+        profile
+            .variables
+            .insert("environment_setting".into(), json!("${env:PATH}"));
+        let steps = compile(&flow, &profile).unwrap();
+        assert_ne!(
+            steps[0].action["call_tool"].get("sensitive"),
+            Some(&json!(true))
+        );
+        assert_eq!(steps[1].action["type_text"]["sensitive"], true);
+        assert_eq!(steps[2].action["call_tool"]["sensitive"], true);
+        assert_eq!(steps[3].action["call_tool"]["sensitive"], true);
+    }
 }

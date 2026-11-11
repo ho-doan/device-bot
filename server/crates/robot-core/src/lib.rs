@@ -573,7 +573,10 @@ impl RobotRegistry {
             let Ok(devices) = driver.list_devices().await else {
                 continue;
             };
-            if devices.iter().any(|device| device.id == device_id) {
+            if devices.iter().any(|device| {
+                device.id == device_id
+                    || (device_id == "chrome:browser" && device.platform == Platform::Chrome)
+            }) {
                 return Ok(Arc::clone(driver));
             }
         }
@@ -935,6 +938,24 @@ mod tests {
         let json = serde_json::to_value(&element).unwrap();
         assert!(json.get("focused").is_none());
         assert!(json.get("checked").is_none());
+    }
+
+    #[tokio::test]
+    async fn chrome_boot_alias_routes_to_driver_with_an_available_page() {
+        let driver: Arc<dyn Robot> = Arc::new(StubRobot {
+            device: Some(RobotDevice {
+                id: "chrome:page".into(),
+                name: "Page".into(),
+                platform: Platform::Chrome,
+                state: DeviceState::Available,
+            }),
+            list_error: false,
+        });
+        let registry = RobotRegistry::new(vec![Arc::clone(&driver)]);
+        assert!(Arc::ptr_eq(
+            &registry.driver_for("chrome:browser").await.unwrap(),
+            &driver
+        ));
     }
 
     #[tokio::test]

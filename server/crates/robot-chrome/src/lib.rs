@@ -50,6 +50,9 @@ pub struct ChromeRobot {
     ffmpeg_path: String,
     recordings: Arc<Mutex<HashMap<String, ActiveRecording>>>,
     boot_lock: Arc<Mutex<()>>,
+    fresh_browser: bool,
+    managed_address: Arc<std::sync::RwLock<Option<String>>>,
+    managed_browser: Arc<Mutex<Option<startup::ManagedBrowser>>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -74,14 +77,20 @@ impl ChromeRobot {
             ffmpeg_path: "ffmpeg".into(),
             recordings: Arc::new(Mutex::new(HashMap::new())),
             boot_lock: Arc::default(),
+            fresh_browser: false,
+            managed_address: Arc::default(),
+            managed_browser: Arc::default(),
         }
     }
 
     pub fn from_env() -> Self {
+        let explicit_address = std::env::var("DEVICE_BOT_CHROME_DEBUG_ADDRESS").ok();
         let mut robot = Self::new(
-            std::env::var("DEVICE_BOT_CHROME_DEBUG_ADDRESS")
-                .unwrap_or_else(|_| "127.0.0.1:9222".into()),
+            explicit_address
+                .clone()
+                .unwrap_or_else(|| "127.0.0.1:9222".into()),
         );
+        robot.fresh_browser = explicit_address.is_none();
         robot.artifact_dir = std::env::var("DEVICE_BOT_ARTIFACT_DIR")
             .unwrap_or_else(|_| "artifacts".into())
             .into();
@@ -98,17 +107,16 @@ impl ChromeRobot {
     }
 
     async fn http_get(&self, path: &str) -> Result<Vec<u8>, RobotError> {
-        let mut stream = TcpStream::connect(&self.debug_address)
-            .await
-            .map_err(|error| {
-                RobotError::CommandFailed(format!(
-                    "Chrome DevTools is not reachable at {}: {error}",
-                    self.debug_address
-                ))
-            })?;
+        let address = self.debug_address();
+        let mut stream = TcpStream::connect(&address).await.map_err(|error| {
+            RobotError::CommandFailed(format!(
+                "Chrome DevTools is not reachable at {}: {error}",
+                address
+            ))
+        })?;
         let request = format!(
             "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-            self.debug_address
+            address
         );
         stream
             .write_all(request.as_bytes())
@@ -197,6 +205,25 @@ impl ChromeRobot {
     }
 
     async fn cdp(
+        &self,
+        target: &ChromeTarget,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, RobotError> {
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            self.cdp_request(target, method, params),
+        )
+        .await
+        .map_err(|_| {
+            RobotError::CommandFailed(format!(
+                "Chrome command {method} timed out after 5 seconds on target {}",
+                target.id
+            ))
+        })?
+    }
+
+    async fn cdp_request(
         &self,
         target: &ChromeTarget,
         method: &str,
@@ -314,6 +341,9 @@ fn value_i32(value: &Value, key: &str) -> i32 {
 #[async_trait]
 impl Robot for ChromeRobot {
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
+        if self.fresh_browser && self.managed_address.read().unwrap().is_none() {
+            return Ok(vec![self.offline_browser()]);
+        }
         // Chrome is optional. An inactive DevTools endpoint must not stop the
         // mobile and desktop drivers from listing their own devices.
         let targets = match self.targets().await {
@@ -416,18 +446,28 @@ impl Robot for ChromeRobot {
             frames.set_missed_tick_behavior(MissedTickBehavior::Skip);
             let mut capture_error = None;
             loop {
-                tokio::select! {
+                tokio::select! { _ = &mut stopped => break, _ = frames.tick() => {} }
+                let frame = tokio::select! {
                     _ = &mut stopped => break,
-                    _ = frames.tick() => match robot.capture_screenshot(&target).await {
-                        Ok(frame) => if let Err(error) = stdin.write_all(&frame).await {
-                            capture_error = Some(RobotError::CommandFailed(format!("could not send a Chrome frame to ffmpeg: {error}")));
-                            break;
-                        },
-                        Err(error) => {
-                            capture_error = Some(error);
+                    result = robot.capture_screenshot(&target) => result,
+                };
+                match frame {
+                    Ok(frame) => {
+                        let result = tokio::select! {
+                            _ = &mut stopped => break,
+                            result = stdin.write_all(&frame) => result,
+                        };
+                        if let Err(error) = result {
+                            capture_error = Some(RobotError::CommandFailed(format!(
+                                "could not send a Chrome frame to ffmpeg: {error}"
+                            )));
                             break;
                         }
-                    },
+                    }
+                    Err(error) => {
+                        capture_error = Some(error);
+                        break;
+                    }
                 }
             }
             drop(stdin);

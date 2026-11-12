@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:file_selector/file_selector.dart';
+import 'flow_import.dart';
 import 'live_recording.dart';
 import 'live_recording_review.dart';
 import 'dart:async';
@@ -381,23 +382,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
 
   Future<String> _runRecording() async {
     await _inputs;
-    final report = await widget.onRunFlow!(_recording.toYaml());
-    final status = report['status']?.toString() ?? 'finished';
-    final error = report['error']?.toString();
-    final steps = report['steps'];
-    var failed = 0;
-    if (steps is List) {
-      for (final step in steps) {
-        if (step is Map && step['status'] == 'failed') failed++;
-      }
-    }
-    final directory = report['artifactDirectory']?.toString();
-    return [
-      'Run $status',
-      if (failed > 0) '$failed failed step${failed == 1 ? '' : 's'}',
-      if (error != null && error.isNotEmpty) error,
-      if (directory != null && directory.isNotEmpty) directory,
-    ].join('\n');
+    return formatFlowReport(await widget.onRunFlow!(_recording.toYaml()));
   }
 
   Future<void> _reviewRecording() async {

@@ -13,7 +13,26 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def package(binary, target, version, output):
+def stage_qc(stage, target, qc):
+    if qc is None:
+        return
+    if not qc.exists():
+        raise ValueError(f'Missing QC app: {qc}')
+    destination = stage / 'qc'
+    destination.mkdir()
+    if 'windows' in target:
+        executable = qc / 'mobile_mcp_companion.exe'
+        if not executable.is_file():
+            raise ValueError(f'Missing QC executable: {executable}')
+        shutil.copytree(qc, destination, dirs_exist_ok=True, symlinks=True)
+        return
+    app = qc if qc.suffix == '.app' else qc / 'mobile_mcp_companion.app'
+    if not app.is_dir():
+        raise ValueError(f'Missing QC app bundle: {app}')
+    shutil.copytree(app, destination / 'mobile_mcp_companion.app', symlinks=True)
+
+
+def package(binary, target, version, output, qc=None):
     expected = re.search(r'^version\s*=\s*"([^"]+)"',
                          (ROOT / 'server/crates/mcp-server/Cargo.toml').read_text(), re.M)[1]
     if version != expected:
@@ -50,6 +69,7 @@ def package(binary, target, version, output):
                 files.append(relative.as_posix())
         if not files:
             raise ValueError('No tracked XCTest assets were found')
+        stage_qc(stage, target, qc)
         (assets / 'manifest.json').write_text(json.dumps({
             'version': version, 'files': sorted(files),
         }, indent=2) + '\n')
@@ -75,5 +95,6 @@ if __name__ == '__main__':
     parser.add_argument('--target', required=True)
     parser.add_argument('--version', required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--qc', type=Path)
     args = parser.parse_args()
-    package(args.binary, args.target, args.version.removeprefix('v'), args.output)
+    package(args.binary, args.target, args.version.removeprefix('v'), args.output, args.qc)

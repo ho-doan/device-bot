@@ -17,9 +17,12 @@ fn app() -> io::Result<PathBuf> {
     }
     let flavor = super::flavor::FLAVOR;
     let mut candidates = Vec::new();
-    let executable_dir = std::env::current_exe()?;
-    for name in flavor.qc_bundle_names() {
-        candidates.push(executable_dir.with_file_name(name));
+    if let Some(directory) = std::env::current_exe()?.parent() {
+        for name in flavor.qc_bundle_names() {
+            // Release installers copy the QC bundle into this directory.
+            candidates.push(directory.join("qc").join(name));
+            candidates.push(directory.join(name));
+        }
     }
     if flavor == super::flavor::Flavor::Prod && cfg!(target_os = "macos") {
         let name = flavor.qc_bundle_names()[0];
@@ -56,13 +59,23 @@ fn app() -> io::Result<PathBuf> {
             if flavor == super::flavor::Flavor::Dev {
                 "QC dev app not found. From server/flutter_app run `flutter run -d macos` (Windows: `flutter run -d windows`). The installed device-bot stays on prod."
             } else {
-                "QC app not found. The CLI bundle does not include QC. Build server/flutter_app with `flutter build macos` (Windows: `flutter build windows`), or set DEVICE_BOT_QC_APP to an existing app bundle/executable."
+                "QC app not found. The release installer places it in the qc directory next to device-bot. Build server/flutter_app with `flutter build macos` (Windows: `flutter build windows`), or set DEVICE_BOT_QC_APP to an existing app bundle/executable."
             },
         )
     })
 }
 
-fn ready(address: SocketAddr) -> io::Result<bool> {
+const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Debug, PartialEq, Eq)]
+enum LiveState {
+    Down,
+    Current,
+    /// Device Bot is listening, but it is older than this executable or omits its version.
+    Stale,
+}
+
+fn live_state(address: SocketAddr) -> io::Result<LiveState> {
     let mut stream = match TcpStream::connect_timeout(&address, Duration::from_millis(300)) {
         Ok(stream) => stream,
         Err(error)
@@ -71,7 +84,7 @@ fn ready(address: SocketAddr) -> io::Result<bool> {
                 io::ErrorKind::ConnectionRefused | io::ErrorKind::TimedOut
             ) =>
         {
-            return Ok(false);
+            return Ok(LiveState::Down);
         }
         Err(error) => return Err(error),
     };
@@ -81,33 +94,162 @@ fn ready(address: SocketAddr) -> io::Result<bool> {
         stream,
         "GET /health/live HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"
     )?;
-    let mut response = String::new();
-    stream.take(8192).read_to_string(&mut response)?;
-    if response
-        .split_once("\r\n\r\n")
-        .is_some_and(|(headers, body)| {
-            headers
-                .lines()
-                .next()
-                .is_some_and(|line| line.split_whitespace().nth(1) == Some("200"))
-                && serde_json::from_str::<serde_json::Value>(body)
-                    .is_ok_and(|body| body["service"] == "device-bot" && body["status"] == "ok")
-        })
+    let response = read_http_response(&mut stream)?;
+    let Some((headers, body)) = response.split_once("\r\n\r\n") else {
+        return Err(occupied(address));
+    };
+    if !headers
+        .lines()
+        .next()
+        .is_some_and(|line| line.split_whitespace().nth(1) == Some("200"))
     {
-        return Ok(true);
+        return Err(occupied(address));
+    }
+    let Ok(body) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Err(occupied(address));
+    };
+    if body["service"] != "device-bot" || body["status"] != "ok" {
+        return Err(occupied(address));
+    }
+    if body["version"].as_str() == Some(SERVER_VERSION) {
+        Ok(LiveState::Current)
+    } else {
+        Ok(LiveState::Stale)
+    }
+}
+
+fn read_http_response(stream: &mut TcpStream) -> io::Result<String> {
+    let mut bytes = Vec::new();
+    let mut chunk = [0; 1024];
+    loop {
+        if bytes.len() >= 8192 {
+            break;
+        }
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => bytes.extend_from_slice(&chunk[..count]),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            // A peer can deliver the response and then abort the socket.
+            Err(error) if error.kind() == io::ErrorKind::ConnectionReset && !bytes.is_empty() => {
+                break;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn occupied(address: SocketAddr) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::AddrInUse,
+        format!("{address} is occupied by another service. Stop it before running device-bot qc."),
+    )
+}
+
+fn connection_pid(directory: &Path, port: u16) -> Option<u32> {
+    let path = directory.join(format!("connection-{port}.json"));
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    u32::try_from(value.get("pid")?.as_u64()?).ok()
+}
+
+fn command_is_device_bot(command: &str) -> bool {
+    command.split_whitespace().any(|token| {
+        let name = token
+            .trim_matches('"')
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(token);
+        let name = name.trim_matches('"').to_ascii_lowercase();
+        name == "device-bot" || name == "device-bot.exe"
+    })
+}
+
+fn process_command(pid: u32) -> io::Result<String> {
+    let output = if cfg!(windows) {
+        Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!("(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine"),
+            ])
+            .output()?
+    } else {
+        Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "args="])
+            .output()?
+    };
+    if !output.status.success() {
+        return Err(io::Error::other(format!("could not inspect process {pid}")));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn signal_process(pid: u32, force: bool) -> io::Result<()> {
+    let status = if cfg!(windows) {
+        Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .status()?
+    } else if force {
+        Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()?
+    } else {
+        Command::new("kill").arg(pid.to_string()).status()?
+    };
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "could not stop process {pid}: {status}"
+        )))
+    }
+}
+
+fn stop_stale_server(address: SocketAddr) -> io::Result<()> {
+    let directory = super::flavor::mcp_dir()?;
+    let pid = connection_pid(&directory, address.port()).ok_or_else(|| {
+        io::Error::other(format!(
+            "{address} is an older Device Bot. Stop it, then run device-bot qc again."
+        ))
+    })?;
+    let command = process_command(pid).unwrap_or_default();
+    if !command_is_device_bot(&command) {
+        return Err(io::Error::other(format!(
+            "{address} is owned by process {pid}, which is not device-bot. Stop it before running device-bot qc."
+        )));
+    }
+    eprintln!(
+        "Stopping Device Bot on {address} (pid {pid}) so QC can use version {SERVER_VERSION}."
+    );
+    signal_process(pid, false)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if matches!(live_state(address), Ok(LiveState::Down)) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    signal_process(pid, true)?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        if matches!(live_state(address), Ok(LiveState::Down)) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
     }
     Err(io::Error::new(
-        io::ErrorKind::AddrInUse,
-        format!(
-            "{address} is occupied by another service or an older Device Bot. Stop it before running device-bot qc."
-        ),
+        io::ErrorKind::TimedOut,
+        format!("{address} did not stop after replacing the older Device Bot"),
     ))
 }
 
 fn ensure_server() -> io::Result<()> {
     let address = super::flavor::FLAVOR.mcp_address().parse().unwrap();
-    if ready(address)? {
-        return Ok(());
+    match live_state(address)? {
+        LiveState::Current => return Ok(()),
+        LiveState::Down => {}
+        LiveState::Stale => stop_stale_server(address)?,
     }
     let directory = super::flavor::mcp_dir()?;
     fs::create_dir_all(&directory)?;
@@ -130,7 +272,7 @@ fn ensure_server() -> io::Result<()> {
     let mut child = command.spawn()?;
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
-        if ready(address).unwrap_or(false) {
+        if matches!(live_state(address), Ok(LiveState::Current)) {
             return Ok(());
         }
         if let Some(status) = child.try_wait()? {
@@ -198,36 +340,45 @@ mod tests {
     use super::*;
     use std::net::TcpListener;
 
+    fn probe(body: &str) -> io::Result<LiveState> {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let body = body.to_owned();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 1024];
+            let count = stream.read(&mut request).unwrap();
+            assert!(String::from_utf8_lossy(&request[..count]).starts_with("GET /health/live "));
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+        });
+        let result = live_state(address);
+        server.join().unwrap();
+        result
+    }
+
     #[test]
-    fn readiness_reuses_only_device_bot_without_device_discovery() {
-        for (body, valid) in [
-            (r#"{"service":"device-bot","status":"ok"}"#, true),
-            (r#"{"service":"robot-report","status":"ok"}"#, false),
-        ] {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let address = listener.local_addr().unwrap();
-            let server = std::thread::spawn(move || {
-                let (mut stream, _) = listener.accept().unwrap();
-                let mut request = [0; 1024];
-                let count = stream.read(&mut request).unwrap();
-                assert!(
-                    String::from_utf8_lossy(&request[..count]).starts_with("GET /health/live ")
-                );
-                write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                )
-                .unwrap();
-            });
-            let result = ready(address);
-            server.join().unwrap();
-            if valid {
-                assert!(result.unwrap());
-            } else {
-                assert_eq!(result.unwrap_err().kind(), io::ErrorKind::AddrInUse);
-            }
-        }
+    fn readiness_reuses_only_the_current_device_bot() {
+        let current = format!(
+            r#"{{"service":"device-bot","status":"ok","version":"{}"}}"#,
+            env!("CARGO_PKG_VERSION")
+        );
+        assert_eq!(probe(&current).unwrap(), LiveState::Current);
+        assert_eq!(
+            probe(r#"{"service":"device-bot","status":"ok"}"#).unwrap(),
+            LiveState::Stale
+        );
+        assert_eq!(
+            probe(r#"{"service":"robot-report","status":"ok"}"#)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::AddrInUse
+        );
     }
 
     #[test]
@@ -235,6 +386,34 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         drop(listener);
-        assert!(!ready(address).unwrap());
+        assert_eq!(live_state(address).unwrap(), LiveState::Down);
+    }
+
+    #[test]
+    fn only_the_device_bot_executable_can_be_replaced() {
+        assert!(command_is_device_bot(
+            "/usr/local/bin/device-bot mcp --listen 127.0.0.1:3337"
+        ));
+        assert!(command_is_device_bot(
+            r#""C:\Users\qc\.device-bot\bin\device-bot.exe" mcp --listen 127.0.0.1:3337"#
+        ));
+        assert!(!command_is_device_bot(
+            "/Applications/SomeApp.app/Contents/MacOS/SomeApp"
+        ));
+        assert!(!command_is_device_bot(""));
+    }
+
+    #[test]
+    fn connection_file_records_the_server_pid() {
+        let root = std::env::temp_dir().join(format!("qc-pid-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("connection-3337.json"),
+            r#"{"pid":4242,"url":"http://127.0.0.1:3337"}"#,
+        )
+        .unwrap();
+        assert_eq!(connection_pid(&root, 3337), Some(4242));
+        assert_eq!(connection_pid(&root, 3338), None);
+        fs::remove_dir_all(root).unwrap();
     }
 }

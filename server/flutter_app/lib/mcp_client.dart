@@ -400,8 +400,18 @@ class McpClient {
 
   /// Runs a robot-flow YAML scenario in a separate case session.
   Future<Map<String, dynamic>> runFlow(String yaml) async {
-    final result = await callTool('mobile_run_flow', {'yaml': yaml});
-    return result.structuredContent ?? const {};
+    try {
+      final result = await callTool('mobile_run_flow', {'yaml': yaml});
+      return result.structuredContent ?? const {};
+    } on McpException catch (error) {
+      if (error.message.contains('Unknown tool')) {
+        throw McpException(
+          '${error.message}\nThe running Device Bot is older than this QC app. '
+          'Stop it and run `device-bot qc` from the matching release.',
+        );
+      }
+      rethrow;
+    }
   }
 
   Future<McpToolResult> callTool(

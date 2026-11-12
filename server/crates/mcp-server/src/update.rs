@@ -202,8 +202,11 @@ fn current_release_target() -> io::Result<&'static str> {
 #[cfg(target_os = "windows")]
 fn fetch_url(url: &str) -> io::Result<String> {
     let escaped_url = url.replace('\'', "''");
+    // GitHub release assets are application/octet-stream. Windows PowerShell 5.1
+    // then returns Content as a byte array, and the pipeline prints decimal
+    // bytes instead of checksums.txt. Decode both shapes as UTF-8 text.
     let command = format!(
-        "$ProgressPreference='SilentlyContinue'; (Invoke-WebRequest -UseBasicParsing -Headers @{{'Cache-Control'='no-cache'; Pragma='no-cache'}} -Uri '{escaped_url}').Content"
+        "$ProgressPreference='SilentlyContinue'; $response = Invoke-WebRequest -UseBasicParsing -Headers @{{'Cache-Control'='no-cache'; Pragma='no-cache'}} -Uri '{escaped_url}'; if ($response.Content -is [byte[]]) {{ [System.Text.Encoding]::UTF8.GetString($response.Content) }} else {{ [string]$response.Content }}"
     );
     let output = Command::new("powershell.exe")
         .args([

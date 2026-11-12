@@ -159,9 +159,16 @@ for binary in $BINARIES; do
   install -m 0755 "${TEMP_DIR}/${binary}" "${INSTALL_DIR}/.${binary}-install.$$"
   mv "${INSTALL_DIR}/.${binary}-install.$$" "${INSTALL_DIR}/${binary}"
 done
+if [ -d "${TEMP_DIR}/qc" ]; then
+  rm -rf "${INSTALL_DIR}/qc"
+  cp -R "${TEMP_DIR}/qc" "${INSTALL_DIR}/qc"
+fi
 env -u DEVICE_BOT_ASSET_DIR "${INSTALL_DIR}/${BINARY_NAME}" --check-install
 
 echo "Installed ${BINARIES} ${VERSION} to ${INSTALL_DIR}"
+if [ -d "${INSTALL_DIR}/qc" ]; then
+  echo "Installed QC to ${INSTALL_DIR}/qc"
+fi
 case ":${PATH:-}:" in
   *:"${INSTALL_DIR}":*)
     ;;

@@ -1,5 +1,15 @@
 ## Unreleased
 
+## 0.1.11 — 2026-11-12
+
+* Replace an older local MCP server from `device-bot qc` when its `/health/live`
+  version does not match this build, so QC can call `mobile_run_flow`.
+* Import an exported flow YAML in the QC app and run it on the device.
+* Install the QC desktop app next to the CLI from the macOS and Windows release
+  archives.
+* Publish Windows release checksums as `text/plain`, and read checksum bytes in
+  the Windows upgrader, so `x86_64-pc-windows-msvc` upgrades can verify.
+
 ## 0.1.10 — 2026-11-12
 
 * Add `device-bot qc` to open the optional QC desktop app against the local MCP

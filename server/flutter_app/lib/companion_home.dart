@@ -7,11 +7,13 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'android_live.dart';
+import 'flow_import.dart';
 import 'dashboard.dart';
 import 'desktop_capture.dart';
 import 'mcp_client.dart';
@@ -124,6 +126,25 @@ class _CompanionHomeState extends State<CompanionHome> {
     return _mcpClient ??= McpClient(
       baseUrl: _baseUrlController.text,
       bearerToken: _defaultAuthToken,
+    );
+  }
+
+  Future<void> _importFlow() async {
+    final file = await openFile(
+      acceptedTypeGroups: const [
+        XTypeGroup(label: 'Flow YAML', extensions: ['yaml', 'yml']),
+      ],
+    );
+    if (file == null || !mounted) return;
+    final yaml = await file.readAsString();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => FlowYamlRunDialog(
+        fileName: file.name,
+        yaml: yaml,
+        onRun: () async => formatFlowReport(await _client().runFlow(yaml)),
+      ),
     );
   }
 
@@ -496,6 +517,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                     _ConnectionForm(
                       baseUrlController: _baseUrlController,
                       onRefresh: _refresh,
+                      onImportFlow: _importFlow,
                       activityStatus: _activityStatus,
                     ),
                     const SizedBox(height: 20),
@@ -543,11 +565,13 @@ class _ConnectionForm extends StatelessWidget {
   const _ConnectionForm({
     required this.baseUrlController,
     required this.onRefresh,
+    required this.onImportFlow,
     required this.activityStatus,
   });
 
   final TextEditingController baseUrlController;
   final VoidCallback onRefresh;
+  final VoidCallback onImportFlow;
   final String activityStatus;
 
   @override
@@ -572,6 +596,12 @@ class _ConnectionForm extends StatelessWidget {
               onPressed: onRefresh,
               icon: const Icon(Icons.refresh),
               label: const Text('Refresh'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('import-flow-yaml'),
+              onPressed: onImportFlow,
+              icon: const Icon(Icons.file_open),
+              label: const Text('Import flow'),
             ),
             SizedBox(
               width: 340,

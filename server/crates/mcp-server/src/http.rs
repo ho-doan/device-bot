@@ -50,7 +50,13 @@ pub fn router(robot: Arc<dyn Robot>, bearer_token: Option<String>) -> Router {
         .route("/health", get(handle_health))
         .route(
             "/health/live",
-            get(|| async { axum::Json(json!({"service":"device-bot","status":"ok"})) }),
+            get(|| async {
+                axum::Json(json!({
+                    "service": "device-bot",
+                    "status": "ok",
+                    "version": env!("CARGO_PKG_VERSION"),
+                }))
+            }),
         )
         .route("/reboot", post(handle_reboot))
         .with_state(state)
@@ -545,6 +551,7 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["service"], "device-bot");
         assert_eq!(body["status"], "ok");
+        assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
     }
 
     #[tokio::test]

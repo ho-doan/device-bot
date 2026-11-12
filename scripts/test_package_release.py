@@ -54,12 +54,12 @@ esac
         deploy.mkdir(exist_ok=True)
         (deploy / 'README.md').write_text('Production deployment guide\n')
 
-    def package(self, target='aarch64-apple-darwin'):
+    def package(self, target='aarch64-apple-darwin', qc=None):
         suffix = '.exe' if 'windows' in target else ''
         def tracked(args, **_):
             return args[-1] + 'Runner.swift\n'
         with patch.object(release, 'ROOT', self.repo), patch.object(release.subprocess, 'check_output', tracked), contextlib.redirect_stdout(io.StringIO()):
-            return release.package(self.bins / ('device-bot' + suffix), target, self.version, self.out)
+            return release.package(self.bins / ('device-bot' + suffix), target, self.version, self.out, qc)
 
     def test_mac_bundle_contains_all_tools_and_versioned_assets(self):
         archive = self.package()
@@ -75,6 +75,20 @@ esac
         with zipfile.ZipFile(self.package('x86_64-pc-windows-msvc')) as bundle:
             for name in ['device-bot.exe', 'robot-flow.exe', 'robot-report.exe', 'bundle.json']:
                 self.assertIn(name, bundle.namelist())
+
+    def test_release_archive_includes_the_qc_bundle(self):
+        app = self.root / 'mobile_mcp_companion.app'
+        (app / 'Contents').mkdir(parents=True)
+        (app / 'Contents' / 'Info.plist').write_text('qc')
+        with tarfile.open(self.package(qc=app)) as bundle:
+            self.assertIn('qc/mobile_mcp_companion.app/Contents/Info.plist', bundle.getnames())
+        windows = self.root / 'Release'
+        (windows / 'data').mkdir(parents=True)
+        (windows / 'mobile_mcp_companion.exe').write_bytes(b'MZ')
+        (windows / 'data' / 'icudtl.dat').write_bytes(b'icu')
+        with zipfile.ZipFile(self.package('x86_64-pc-windows-msvc', windows)) as bundle:
+            self.assertIn('qc/mobile_mcp_companion.exe', bundle.namelist())
+            self.assertIn('qc/data/icudtl.dat', bundle.namelist())
 
     def test_missing_companion_binary_and_mismatched_version_fail_packaging(self):
         (self.bins / 'robot-report').unlink()
@@ -123,6 +137,16 @@ cp "$TEST_DOWNLOAD_ROOT/${url##*/}" "$output"
             version = subprocess.check_output([str(self.install_dir / name), '--version'], text=True)
             self.assertEqual(version.strip(), '0.1.4')
         self.assertTrue((self.install_dir / 'robot-report-assets/0.1.4/deploy/README.md').is_file())
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
+    def test_mac_installer_installs_qc_next_to_the_cli(self):
+        app = self.root / 'mobile_mcp_companion.app'
+        (app / 'Contents').mkdir(parents=True)
+        (app / 'Contents' / 'Info.plist').write_text('qc')
+        result = self.install(self.package(qc=app))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.install_dir / 'qc/mobile_mcp_companion.app/Contents/Info.plist').is_file())
+        self.assertIn('Installed QC', result.stdout)
 
     @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
     def test_mac_installer_rejects_incomplete_new_bundle_before_install(self):

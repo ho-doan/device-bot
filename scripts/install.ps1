@@ -42,7 +42,9 @@ function Invoke-TextWithRetry([string] $Uri, [string] $Description) {
                 if ($LASTEXITCODE -ne 0) { throw "curl.exe exited with status $LASTEXITCODE." }
                 return ($response -join [Environment]::NewLine)
             }
-            return (Invoke-WebRequest -UseBasicParsing -Headers @{ "Cache-Control" = "no-cache"; Pragma = "no-cache" } -TimeoutSec 120 -Uri $Uri).Content
+            $content = (Invoke-WebRequest -UseBasicParsing -Headers @{ "Cache-Control" = "no-cache"; Pragma = "no-cache" } -TimeoutSec 120 -Uri $Uri).Content
+            if ($content -is [byte[]]) { return [System.Text.Encoding]::UTF8.GetString($content) }
+            return [string]$content
         } catch {
             $lastError = $_.Exception.Message
             if ($attempt -eq $RetryAttempts) { break }
@@ -160,6 +162,12 @@ try {
     foreach ($name in $Binaries) {
         Copy-Item -Path (Join-Path $TempDir $name) -Destination (Join-Path $InstallDir $name) -Force
     }
+    $qcSource = Join-Path $TempDir "qc"
+    if (Test-Path $qcSource) {
+        $qcDestination = Join-Path $InstallDir "qc"
+        if (Test-Path $qcDestination) { Remove-Item -Recurse -Force $qcDestination }
+        Copy-Item -Path $qcSource -Destination $qcDestination -Recurse -Force
+    }
     & (Join-Path $InstallDir $BinaryName) --check-install
     if ($LASTEXITCODE -ne 0) { throw "Installed Device Bot verification failed." }
 
@@ -169,6 +177,8 @@ try {
         [Environment]::SetEnvironmentVariable("Path", (($pathEntries + $InstallDir) | Where-Object { $_ }) -join ";", "User")
         Write-Host "Added $InstallDir to the user PATH. Open a new terminal to use device-bot."
     }
+    $qcInstalled = Join-Path $InstallDir "qc"
+    if (Test-Path $qcInstalled) { Write-Host "Installed QC to $qcInstalled" }
     Write-Host "Installed $($Binaries -join ", ") $Version to $InstallDir"
 } finally {
     if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }

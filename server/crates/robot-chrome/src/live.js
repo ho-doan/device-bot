@@ -11,8 +11,14 @@
   window[key] = state;
   (async () => {
     try {
-      if (!navigator.mediaDevices?.getDisplayMedia || !window.CropTarget)
-        throw new Error('Web Live requires HTTPS or localhost and Chrome tab capture support.');
+      if (!window.isSecureContext) {
+        const page = location.href === 'about:blank' ? 'about:blank' : location.origin;
+        throw new Error(`Open an HTTPS or localhost page in this Chrome case before starting Live (current page: ${page}). This is a page capture restriction, not a server build error.`);
+      }
+      if (typeof navigator.mediaDevices?.getDisplayMedia !== 'function')
+        throw new Error('Screen sharing is unavailable in this Chrome page. Check browser screen-sharing support and permissions.');
+      if (!window.CropTarget)
+        throw new Error('This Chrome environment does not support Region Capture (CropTarget). Web Live needs a Chrome version with tab Region Capture support.');
       state.media = await navigator.mediaDevices.getDisplayMedia({audio:false,
         video:{displaySurface:'browser',frameRate:30}, preferCurrentTab:true,
         selfBrowserSurface:'include', surfaceSwitching:'exclude'});

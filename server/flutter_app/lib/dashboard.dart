@@ -143,7 +143,9 @@ class _DevicesPanel extends StatelessWidget {
                             label: const Text('Restart web session'),
                           ),
                         IconButton(
-                          tooltip: 'Launch app',
+                          tooltip: device.platform == 'chrome'
+                              ? 'Open URL'
+                              : 'Launch app',
                           onPressed:
                               busyDevices.contains(device.id) ||
                                   device.state != 'available'

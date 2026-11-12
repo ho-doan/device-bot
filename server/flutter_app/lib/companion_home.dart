@@ -1,3 +1,4 @@
+import 'web_navigation.dart';
 import 'inspector_yaml.dart';
 export 'inspector_yaml.dart' show InspectorFlowAction, buildInspectorFlowYaml;
 import 'android_video.dart';
@@ -370,6 +371,18 @@ class _CompanionHomeState extends State<CompanionHome> {
   }
 
   Future<void> _launchApp(AdminDevice device) async {
+    if (device.platform == 'chrome') {
+      final opened = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => WebUrlDialog(
+          deviceName: device.name,
+          onOpen: (url) => _client().openUrl(device.id, url),
+        ),
+      );
+      if (mounted && opened == true) _refresh();
+      return;
+    }
     final installedApps = _client().listInstalledApps(device.id);
     final appId = await showDialog<String>(
       context: context,

@@ -327,11 +327,18 @@ only this MCP client's private case context, then creates a new one in the same
 browser. Other case contexts and personal browser windows remain open. Closed or
 stale case contexts are also recovered by the normal Start/YAML boot path.
 
+For Chrome devices, the QC launch button is **Open URL**. Enter the target HTTP(S)
+URL in QC to navigate the current private case through `mobile_open_url`; no manual
+address entry in Chrome is required. Other platforms retain the Launch app picker.
+
 Web **Live control** uses browser-native `getDisplayMedia` and WebRTC with SDP and
 lifecycle managed by Rust. Unlike Android's H.264 adapter, browser video travels
 directly to the Flutter peer; Rust does not decode or re-encode it. There is no
 screenshot polling. In Chrome, choose **This Tab** and allow sharing. The source
-must be HTTPS or localhost. Region Capture binds the stream to the controlled
+must be HTTPS or localhost. A newly started case is `about:blank`: first navigate
+that Chrome window to the target HTTPS or localhost URL, then open Live. Capture
+is unavailable on that blank page; rebuilding the server does not change this.
+Region Capture binds the stream to the controlled
 document, rejecting a mismatched tab selection. Reopen Live after navigation or
 resizing. Sharing ends on Stop, session shutdown, navigation, resize, or peer loss.
 

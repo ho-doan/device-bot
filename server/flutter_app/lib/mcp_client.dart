@@ -98,6 +98,10 @@ class McpClient {
     }
   }
 
+  Future<void> openUrl(String deviceId, String url) async {
+    await callTool('mobile_open_url', {'deviceId': deviceId, 'url': url});
+  }
+
   Future<void> launchApp(String deviceId, String appId) async {
     await callTool('mobile_launch_app', {'deviceId': deviceId, 'appId': appId});
   }

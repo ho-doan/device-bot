@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
+
+import 'package:http/http.dart' as http;
 
 import 'models.dart';
 import 'local_connection.dart';
@@ -277,14 +278,14 @@ class McpClient {
     if (_disposed) {
       throw const McpException('MCP client is closed.');
     }
-    final client = HttpClient();
+    final client = http.Client();
     try {
-      final request = await client.getUrl(_adminUri(deviceId, 'live'));
-      request.headers.set(HttpHeaders.acceptHeader, 'text/event-stream');
-      _setBearer(request);
-      final response = await request.close();
+      final request = http.Request('GET', _adminUri(deviceId, 'live'));
+      request.headers['accept'] = 'text/event-stream';
+      _setBearer(request.headers);
+      final response = await client.send(request);
       if (response.statusCode != 200) {
-        final body = await utf8.decodeStream(response);
+        final body = await response.stream.bytesToString();
         throw McpException(
           _adminError(body, response.statusCode),
           httpStatus: response.statusCode,
@@ -293,7 +294,9 @@ class McpClient {
       var name = 'message';
       final data = StringBuffer();
       await for (final line
-          in response.transform(utf8.decoder).transform(const LineSplitter())) {
+          in response.stream
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())) {
         if (line.isEmpty) {
           if (data.isNotEmpty) {
             final update = decodeAndroidLiveEvent(name, data.toString());
@@ -316,7 +319,7 @@ class McpClient {
     } on Object catch (error) {
       throw McpException('Android live mirror stopped: $error');
     } finally {
-      client.close(force: true);
+      client.close();
     }
   }
 
@@ -330,19 +333,18 @@ class McpClient {
     if (_disposed) {
       throw const McpException('MCP client is closed.');
     }
-    final client = HttpClient();
+    final client = http.Client();
     try {
-      final request = await client.postUrl(_adminUri(deviceId, 'input'));
-      request.headers.contentType = ContentType.json;
-      _setBearer(request);
-      request.add(utf8.encode(jsonEncode(input)));
-      final response = await request.close().timeout(
-        const Duration(seconds: 30),
-      );
-      final body = await utf8.decodeStream(response);
+      final response = await client
+          .post(
+            _adminUri(deviceId, 'input'),
+            headers: {'content-type': 'application/json', ..._bearerHeaders()},
+            body: jsonEncode(input),
+          )
+          .timeout(const Duration(seconds: 30));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw McpException(
-          _adminError(body, response.statusCode),
+          _adminError(response.body, response.statusCode),
           httpStatus: response.statusCode,
         );
       }
@@ -351,7 +353,7 @@ class McpClient {
     } on Object catch (error) {
       throw McpException('Android input failed: $error');
     } finally {
-      client.close(force: true);
+      client.close();
     }
   }
 
@@ -361,11 +363,14 @@ class McpClient {
     );
   }
 
-  void _setBearer(HttpClientRequest request) {
+  void _setBearer(Map<String, String> headers) {
+    headers.addAll(_bearerHeaders());
+  }
+
+  Map<String, String> _bearerHeaders() {
     final token = bearerToken.trim();
-    if (token.isNotEmpty) {
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-    }
+    if (token.isEmpty) return const {};
+    return {'authorization': 'Bearer $token'};
   }
 
   Future<List<AdminElement>> listElements(
@@ -593,7 +598,7 @@ class McpClient {
     Map<String, dynamic> body, {
     bool expectResponse = true,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    final client = http.Client();
     final preparing =
         body['method'] == 'tools/call' &&
         (body['params'] as Map?)?['name'] == 'mobile_get_ui_runner_status' &&
@@ -608,39 +613,33 @@ class McpClient {
       seconds: preparing || starting ? 300 : (negotiatingVideo ? 60 : 30),
     );
     try {
-      final request = await client.postUrl(_baseUri.resolve('/mcp'));
-      request.headers.contentType = ContentType.json;
-      request.headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType);
-      if (bearerToken.trim().isNotEmpty) {
-        request.headers.set(
-          HttpHeaders.authorizationHeader,
-          'Bearer ${bearerToken.trim()}',
-        );
-      }
-      if (_sessionId != null) {
-        request.headers.set('mcp-session-id', _sessionId!);
-      }
-      request.write(jsonEncode(body));
-      final response = await request.close().timeout(timeout);
-      final bytes = await response.fold<BytesBuilder>(
-        BytesBuilder(copy: false),
-        (builder, data) => builder..add(data),
-      );
-      final raw = bytes.takeBytes();
+      final headers = <String, String>{
+        'content-type': 'application/json',
+        'accept': 'application/json',
+        ..._bearerHeaders(),
+        if (_sessionId != null) 'mcp-session-id': _sessionId!,
+      };
+      final response = await client
+          .post(
+            _baseUri.resolve('/mcp'),
+            headers: headers,
+            body: jsonEncode(body),
+          )
+          .timeout(timeout);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw McpException(
           'MCP ${body['method']} failed with HTTP ${response.statusCode}: '
-          '${utf8.decode(raw)}',
+          '${response.body}',
           httpStatus: response.statusCode,
         );
       }
-      if (!expectResponse || raw.isEmpty) {
+      if (!expectResponse || response.body.isEmpty) {
         return _McpResponse(
           body: const {},
-          sessionId: response.headers.value('mcp-session-id'),
+          sessionId: response.headers['mcp-session-id'],
         );
       }
-      final decoded = jsonDecode(utf8.decode(raw));
+      final decoded = jsonDecode(response.body);
       if (decoded is! Map<String, dynamic>) {
         throw const McpException('MCP response was not a JSON object.');
       }
@@ -652,14 +651,14 @@ class McpClient {
       }
       return _McpResponse(
         body: decoded,
-        sessionId: response.headers.value('mcp-session-id'),
+        sessionId: response.headers['mcp-session-id'],
       );
     } on McpException {
       rethrow;
     } on Object catch (error) {
       throw McpException('Could not reach MCP server: $error');
     } finally {
-      client.close(force: true);
+      client.close();
     }
   }
 
@@ -680,22 +679,14 @@ class McpClient {
     _sessionId = null;
     try {
       if (session != null) {
-        final client = HttpClient();
+        final client = http.Client();
         try {
-          final request = await client
-              .deleteUrl(_baseUri.resolve('/mcp'))
+          final response = await client
+              .delete(
+                _baseUri.resolve('/mcp'),
+                headers: {'mcp-session-id': session, ..._bearerHeaders()},
+              )
               .timeout(const Duration(seconds: 10));
-          request.headers.set('mcp-session-id', session);
-          if (bearerToken.trim().isNotEmpty) {
-            request.headers.set(
-              HttpHeaders.authorizationHeader,
-              'Bearer ${bearerToken.trim()}',
-            );
-          }
-          final response = await request.close().timeout(
-            const Duration(seconds: 10),
-          );
-          await response.drain<void>();
           if (response.statusCode != 204 && response.statusCode != 404) {
             _record(
               'error',
@@ -708,7 +699,7 @@ class McpClient {
             'Could not release the MCP session; server connection unavailable',
           );
         } finally {
-          client.close(force: true);
+          client.close();
         }
       }
     } finally {

@@ -1,8 +1,7 @@
 import 'dart:convert';
-import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'inspector_yaml.dart';
 import 'models.dart';
+import 'recording_store.dart';
 
 /// One device/platform per recording. Prepared steps are committed only after success.
 class LiveRecording {
@@ -13,7 +12,7 @@ class LiveRecording {
   });
   final String deviceId;
   final String platform;
-  final Directory? directory;
+  final String? directory;
   final String name =
       'live_${DateTime.now().toUtc().toIso8601String().replaceAll(RegExp(r'[^0-9]'), '')}';
   final List<String> _steps = [];
@@ -107,12 +106,7 @@ class LiveRecording {
 
   Future<void> _save() async {
     if (directory == null || !canExport) return;
-    await directory!.create(recursive: true);
-    final file = File('${directory!.path}/$name.yaml');
-    final temporary = File('${file.path}.tmp');
-    await temporary.writeAsString(toYaml(), flush: true);
-    await temporary.rename(file.path);
-    savedPath = file.path;
+    savedPath = await saveRecordingYaml(directory!, name, toYaml());
   }
 
   String toYaml() {
@@ -146,12 +140,5 @@ class LiveRecording {
     return 'version: 2\nname: ${jsonEncode(name)}\ndescription: ${jsonEncode('Recorded live actions for $platform only.')}\nsteps:\n${steps.join('\n')}\n';
   }
 
-  static Directory defaultDirectory() {
-    final home =
-        Platform.environment[Platform.isWindows ? 'USERPROFILE' : 'HOME'];
-    if (home == null) throw StateError('Home directory is unavailable');
-    return Directory(
-      '$home/${kDebugMode ? '.device-bot-dev' : '.device-bot'}/recordings',
-    );
-  }
+  static String? defaultDirectory() => recordingHomePath();
 }

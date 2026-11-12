@@ -245,7 +245,10 @@ fn stop_stale_server(address: SocketAddr) -> io::Result<()> {
 }
 
 fn ensure_server() -> io::Result<()> {
-    let address = super::flavor::FLAVOR.mcp_address().parse().unwrap();
+    let address = super::flavor::FLAVOR
+        .mcp_loopback_address()
+        .parse()
+        .unwrap();
     match live_state(address)? {
         LiveState::Current => return Ok(()),
         LiveState::Down => {}
@@ -258,7 +261,7 @@ fn ensure_server() -> io::Result<()> {
         .create(true)
         .append(true)
         .open(&log_path)?;
-    let listen = super::flavor::FLAVOR.mcp_address();
+    let listen = super::flavor::FLAVOR.mcp_listen_address();
     let mut command = Command::new(std::env::current_exe()?);
     command
         .arg("mcp")
@@ -327,10 +330,10 @@ pub fn open() -> io::Result<()> {
     ensure_server()?;
     launch(&app)?;
     println!(
-        "QC {}: {} (MCP http://{})",
+        "QC {}: {} (MCP http://{} ; LAN QC /qc/ and reports /reports/)",
         super::flavor::FLAVOR.name(),
         app.display(),
-        super::flavor::FLAVOR.mcp_address()
+        super::flavor::FLAVOR.mcp_loopback_address()
     );
     Ok(())
 }
@@ -349,12 +352,12 @@ mod tests {
             let mut request = [0; 1024];
             let count = stream.read(&mut request).unwrap();
             assert!(String::from_utf8_lossy(&request[..count]).starts_with("GET /health/live "));
-            write!(
-                stream,
+            let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
-            )
-            .unwrap();
+            );
+            // live_state may close after the body; BrokenPipe is the expected peer.
+            let _ = write!(stream, "{response}");
             let _ = stream.shutdown(std::net::Shutdown::Write);
         });
         let result = live_state(address);

@@ -518,6 +518,7 @@ dependencies = [
  "robot-ios-real",
  "robot-ios-sim",
  "robot-macos",
+ "robot-report",
  "robot-stream",
  "robot-windows",
  "serde",

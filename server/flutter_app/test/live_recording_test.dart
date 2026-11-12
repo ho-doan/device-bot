@@ -86,7 +86,7 @@ void main() {
       final recording = LiveRecording(
         deviceId: 'phone-1',
         platform: 'android',
-        directory: directory,
+        directory: directory.path,
       )..context = {'appId': 'com.example.form'};
       final step = recording.prepare(
         {'action': 'tap', 'x': 100, 'y': 20},

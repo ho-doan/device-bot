@@ -1,8 +1,8 @@
 //! Release binaries are prod. Debug binaries are dev so both can run together.
 //!
-//! Prod keeps the installed layout: `~/.device-bot`, MCP `127.0.0.1:3337`, and
+//! Prod keeps the installed layout: `~/.device-bot`, MCP `0.0.0.0:3337`, and
 //! reports on `8765`. Dev uses `~/.device-bot-dev`, MCP `3338`, and reports on
-//! `8766`.
+//! `8766`. Loopback remains the probe/discovery address.
 
 use std::{io, path::PathBuf};
 
@@ -61,7 +61,11 @@ impl Flavor {
         }
     }
 
-    pub fn mcp_address(self) -> String {
+    pub fn mcp_listen_address(self) -> String {
+        format!("0.0.0.0:{}", self.mcp_port())
+    }
+
+    pub fn mcp_loopback_address(self) -> String {
         format!("127.0.0.1:{}", self.mcp_port())
     }
 
@@ -118,7 +122,7 @@ device-bot                         Start the background web app and open http://
 device-bot start                   Ensure the background web app is running
 device-bot qc                      Open the QC desktop app and ensure local MCP is running
 device-bot mcp                     Run the MCP server over stdio
-device-bot mcp --listen HOST:PORT  Run the MCP server over HTTP
+device-bot mcp --listen HOST:PORT  Run the MCP server over HTTP (default listen is 0.0.0.0)
 device-bot run <scenario.yaml> ... Run scenarios (see: device-bot run --help)
 device-bot -v, --version
 device-bot -h, --help
@@ -128,9 +132,10 @@ device-bot --check-update
 device-bot -u, --upgrade            Install the latest verified release
 
 This process is the {name} flavor.
-Prod: ~/.device-bot, MCP 127.0.0.1:3337, reports http://127.0.0.1:8765.
-Dev: ~/.device-bot-dev, MCP 127.0.0.1:3338, reports http://127.0.0.1:8766.
+Prod: ~/.device-bot, MCP 0.0.0.0:3337, QC /qc/, reports /reports/ and http://127.0.0.1:8765.
+Dev: ~/.device-bot-dev, MCP 0.0.0.0:3338, QC /qc/, reports /reports/ and http://127.0.0.1:8766.
 A debug build is dev. A release build, including the installed device-bot, is prod.
+LAN browsers open http://<LAN-IP>:<mcp-port>/qc/ and /reports/. Keep bearer auth. Writes to reports stay on localhost.
 The web app survives closing the terminal. Repeated starts reuse the running service.
 History override: DEVICE_BOT_REPORT_DATA_DIR. Report port override: DEVICE_BOT_REPORT_PORT.
 ",
@@ -163,9 +168,12 @@ mod tests {
         );
         assert_eq!(Flavor::Dev.qc_build_modes(), ["Debug"]);
         assert_eq!(Flavor::Prod.qc_build_modes(), ["Release", "Debug"]);
+        assert_eq!(Flavor::Prod.mcp_listen_address(), "0.0.0.0:3337");
+        assert_eq!(Flavor::Prod.mcp_loopback_address(), "127.0.0.1:3337");
         let help = help();
         assert!(help.contains("8765"), "{help}");
         assert!(help.contains("3338"), "{help}");
+        assert!(help.contains("/qc/"), "{help}");
         assert!(help.contains(&format!("This process is the {} flavor", FLAVOR.name())));
     }
 

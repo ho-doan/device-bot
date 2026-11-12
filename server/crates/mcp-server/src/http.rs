@@ -3,13 +3,14 @@
 //! HTTP session state is kept here, leaving the protocol dispatcher and tool
 //! handlers unaware of transport details.
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use axum::{
     Router,
     body::Bytes,
-    extract::{Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    extract::{Query, Request, State},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
+    middleware,
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -38,6 +39,16 @@ struct HttpState {
 /// Clients receive JSON by default. When `Accept: text/event-stream` is sent,
 /// the same response is emitted as a single SSE `message` event.
 pub fn router(robot: Arc<dyn Robot>, bearer_token: Option<String>) -> Router {
+    lan_router(robot, bearer_token, None, None)
+}
+
+/// MCP, admin, optional QC web (`/qc`), and optional reports (`/reports`) on one origin.
+pub fn lan_router(
+    robot: Arc<dyn Robot>,
+    bearer_token: Option<String>,
+    qc_root: Option<PathBuf>,
+    reports: Option<robot_report::Store>,
+) -> Router {
     let activity_log = ActivityLog::new(200);
     let state = HttpState {
         robot: Arc::clone(&robot),
@@ -45,7 +56,7 @@ pub fn router(robot: Arc<dyn Robot>, bearer_token: Option<String>) -> Router {
         bearer_token: bearer_token.clone().map(Arc::from),
         activity_log: activity_log.clone(),
     };
-    Router::new()
+    let mut app = Router::new()
         .route("/mcp", post(handle_post).delete(handle_delete))
         .route("/health", get(handle_health))
         .route(
@@ -64,7 +75,23 @@ pub fn router(robot: Arc<dyn Robot>, bearer_token: Option<String>) -> Router {
             robot,
             activity_log,
             bearer_token,
-        )))
+        )));
+    if let Some(store) = reports {
+        app = app.nest("/reports", robot_report::router(store));
+    }
+    if let Some(root) = qc_root {
+        app = app.nest("/qc", crate::lan::qc_router(root));
+    }
+    app.fallback(lan_options_fallback)
+        .layer(middleware::from_fn(crate::lan::cors))
+}
+
+async fn lan_options_fallback(request: Request) -> Response {
+    if request.method() == Method::OPTIONS {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -533,6 +560,59 @@ mod tests {
             "text/event-stream"
         );
     }
+    #[tokio::test]
+    async fn lan_preflight_allows_private_origins_and_exposes_the_session_header() {
+        let response = router(Arc::new(NoopRobot::default()), Some("secret".into()))
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/mcp")
+                    .header(header::ORIGIN, "http://192.168.1.20:3337")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .header(
+                        header::ACCESS_CONTROL_REQUEST_HEADERS,
+                        "authorization,mcp-session-id",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            "http://192.168.1.20:3337"
+        );
+        let allowed = response.headers()[header::ACCESS_CONTROL_ALLOW_HEADERS]
+            .to_str()
+            .unwrap();
+        assert!(allowed.to_ascii_lowercase().contains("authorization"));
+        assert!(allowed.contains("mcp-session-id"));
+        assert!(
+            response.headers()[header::ACCESS_CONTROL_EXPOSE_HEADERS]
+                .to_str()
+                .unwrap()
+                .contains("mcp-session-id")
+        );
+        let denied = router(Arc::new(NoopRobot::default()), Some("secret".into()))
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/mcp")
+                    .header(header::ORIGIN, "http://example.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            denied
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
+        );
+    }
+
     #[tokio::test]
     async fn liveness_is_available_without_authentication_or_device_checks() {
         let response = router(Arc::new(NoopRobot::default()), Some("secret".into()))

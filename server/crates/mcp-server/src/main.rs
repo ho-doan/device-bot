@@ -658,9 +658,25 @@ async fn main() -> std::io::Result<()> {
                 flavor::FLAVOR.name()
             );
             let mut flutter_companion = launch_flutter_companion(listen_address, &bearer_token);
+            let reports = robot_report::Store::open(flavor::reports_dir()?).ok();
+            if reports.is_none() {
+                eprintln!("robot-report history is unavailable; /reports will not be served");
+            }
+            let qc_root = device_bot::qc_web_root();
+            if qc_root.is_none() {
+                eprintln!(
+                    "QC web assets were not found; build server/flutter_app with `flutter build web --base-href /qc/` or set DEVICE_BOT_QC_WEB_DIR"
+                );
+            }
+            let lan_hosts = discovered_lan_hosts().unwrap_or_default();
+            for url in device_bot::advertise(listen_address, &lan_hosts) {
+                eprintln!("QC: {url}/qc/");
+                eprintln!("Reports: {url}/reports/");
+            }
             let result = axum::serve(
                 listener,
-                device_bot::http::router(robot, Some(bearer_token)),
+                device_bot::http::lan_router(robot, Some(bearer_token), qc_root, reports)
+                    .into_make_service_with_connect_info::<SocketAddr>(),
             )
             .await;
             if let Some(mut child) = flutter_companion.take() {

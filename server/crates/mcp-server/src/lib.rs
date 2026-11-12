@@ -6,7 +6,10 @@
 //! - [`stdio`] owns newline-delimited stdio I/O.
 
 pub mod http;
+mod lan;
 mod lifecycle;
+
+pub use lan::{advertise, qc_web_root};
 mod response;
 mod server;
 pub mod stdio;

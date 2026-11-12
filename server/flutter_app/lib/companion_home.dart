@@ -22,9 +22,12 @@ import 'models.dart';
 const _configuredMcpUrl = String.fromEnvironment('DEVICE_BOT_URL');
 
 /// Debug QC talks to the dev MCP. Release QC talks to the installed prod MCP.
-String get defaultMcpUrl => _configuredMcpUrl.isNotEmpty
-    ? _configuredMcpUrl
-    : (kDebugMode ? 'http://127.0.0.1:3338' : 'http://127.0.0.1:3337');
+/// A browser session uses this page's origin so a LAN host is not replaced by localhost.
+String get defaultMcpUrl {
+  if (_configuredMcpUrl.isNotEmpty) return _configuredMcpUrl;
+  if (kIsWeb) return Uri.base.origin;
+  return kDebugMode ? 'http://127.0.0.1:3338' : 'http://127.0.0.1:3337';
+}
 
 String get companionTitle =>
     kDebugMode ? 'Device Bot Dev' : 'Device Bot Companion';
@@ -92,6 +95,7 @@ class _CompanionHomeState extends State<CompanionHome> {
   final Map<String, LiveRecording> _recordings = {};
   final Map<String, DesktopCaptureSettings> _desktopCaptures = {};
   final _baseUrlController = TextEditingController(text: defaultMcpUrl);
+  final _tokenController = TextEditingController(text: _defaultAuthToken);
   late Future<DashboardSnapshot> _snapshot;
   McpClient? _mcpClient;
   String? _sessionBaseUrl;
@@ -116,6 +120,7 @@ class _CompanionHomeState extends State<CompanionHome> {
     _readinessTimer?.cancel();
     unawaited(_healthClient?.dispose() ?? Future<void>.value());
     _baseUrlController.dispose();
+    _tokenController.dispose();
     unawaited(_mcpEventSubscription?.cancel() ?? Future<void>.value());
     unawaited(_mcpClient?.dispose() ?? Future<void>.value());
     super.dispose();
@@ -125,7 +130,7 @@ class _CompanionHomeState extends State<CompanionHome> {
     _sessionBaseUrl ??= _baseUrlController.text;
     return _mcpClient ??= McpClient(
       baseUrl: _baseUrlController.text,
-      bearerToken: _defaultAuthToken,
+      bearerToken: _tokenController.text,
     );
   }
 
@@ -164,7 +169,7 @@ class _CompanionHomeState extends State<CompanionHome> {
     final previousHealthClient = _healthClient;
     final client = McpClient(
       baseUrl: _baseUrlController.text,
-      bearerToken: _defaultAuthToken,
+      bearerToken: _tokenController.text,
       onDeviceReadiness: (deviceId, readiness) {
         if (mounted && generation == _connectionGeneration) {
           setState(() => _deviceReadiness[deviceId] = readiness);
@@ -175,7 +180,7 @@ class _CompanionHomeState extends State<CompanionHome> {
     // waiting for XCTest in the interactive session.
     _healthClient = McpClient(
       baseUrl: _baseUrlController.text,
-      bearerToken: _defaultAuthToken,
+      bearerToken: _tokenController.text,
     );
     unawaited(previousHealthClient?.dispose() ?? Future<void>.value());
     _mcpClient = client;
@@ -528,6 +533,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                     const SizedBox(height: 24),
                     _ConnectionForm(
                       baseUrlController: _baseUrlController,
+                      tokenController: _tokenController,
                       onRefresh: _refresh,
                       onImportFlow: _importFlow,
                       activityStatus: _activityStatus,
@@ -576,12 +582,14 @@ class _CompanionHomeState extends State<CompanionHome> {
 class _ConnectionForm extends StatelessWidget {
   const _ConnectionForm({
     required this.baseUrlController,
+    required this.tokenController,
     required this.onRefresh,
     required this.onImportFlow,
     required this.activityStatus,
   });
 
   final TextEditingController baseUrlController;
+  final TextEditingController tokenController;
   final VoidCallback onRefresh;
   final VoidCallback onImportFlow;
   final String activityStatus;
@@ -616,6 +624,27 @@ class _ConnectionForm extends StatelessWidget {
                 ),
               ),
             ),
+            if (kIsWeb)
+              SizedBox(
+                width: 280,
+                child: ListenableBuilder(
+                  listenable: tokenController,
+                  builder: (context, child) => Semantics(
+                    textField: true,
+                    identifier: 'mcp-bearer-token',
+                    label: 'Bearer token',
+                    value: tokenController.text,
+                    child: child,
+                  ),
+                  child: TextField(
+                    controller: tokenController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Bearer token',
+                    ),
+                  ),
+                ),
+              ),
             FilledButton.icon(
               onPressed: onRefresh,
               icon: const Icon(Icons.refresh),

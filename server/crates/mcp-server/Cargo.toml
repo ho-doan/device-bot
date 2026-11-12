@@ -19,6 +19,7 @@ robot-core = { path = "../robot-core" }
 robot-ios-real = { path = "../robot-ios-real" }
 robot-ios-sim = { path = "../robot-ios-sim" }
 robot-macos = { path = "../robot-macos" }
+robot-report = { path = "../robot-report" }
 robot-windows = { path = "../robot-windows" }
 serde.workspace = true
 serde_json.workspace = true

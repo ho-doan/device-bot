@@ -38,10 +38,18 @@ device-bot start                 # Ensure the background web app is running
 device-bot qc                    # Open the QC desktop app; ensure local MCP is running
 device-bot run scenario.yaml     # Run a YAML scenario
 device-bot mcp                   # MCP over stdio, for MCP clients
-device-bot mcp --listen 127.0.0.1:3337
+device-bot mcp --listen 0.0.0.0:3337
 ```
 
-The web app listens at `http://127.0.0.1:8765`. It runs independently of the
+HTTP MCP binds every interface by default (`0.0.0.0`). Same-origin UI lives at
+`/qc/` (Flutter web, when `flutter build web --base-href /qc/` assets are present)
+and `/reports/` (robot-report). A browser on another LAN machine should open
+`http://<LAN-IP>:3337/qc/` and paste the bearer token; do not point that browser
+at `127.0.0.1`. CORS allows private LAN origins when the UI is hosted separately.
+Report writes (add project / import history) stay on localhost.
+
+The standalone report service also binds `0.0.0.0` and remains at
+`http://127.0.0.1:8765` on the host. It runs independently of the
 terminal, so closing PowerShell does not stop it. Repeating `start` reuses a
 healthy report service; if it has stopped, `start` launches it again. Running
 `device-bot` always opens the browser, including when the service is already up.
@@ -62,8 +70,9 @@ The app is ad-hoc signed, not notarized: if macOS blocks the first launch, use
 System Settings → Privacy & Security → Open Anyway for this app.
 
 `device-bot qc` opens the optional Flutter QC desktop app. It starts a detached
-MCP server at `http://127.0.0.1:3337` if needed and reuses a running server.
-Credentials are discovered locally; no manual Bearer token entry is needed.
+MCP server on `0.0.0.0:3337` if needed and reuses a running server.
+The desktop app discovers credentials from the local connection file. A browser
+on the LAN uses the page origin plus the token field instead.
 MCP logs are written to `~/.device-bot/mcp/server.log`. The server keeps running
 after the terminal or QC closes. An unrelated service or older Device Bot on
 port 3337 must be stopped first.

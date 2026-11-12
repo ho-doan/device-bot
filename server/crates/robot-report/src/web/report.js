@@ -1,4 +1,5 @@
 'use strict';
+const ROOT = location.pathname.startsWith('/reports') ? '/reports' : '';
 const $ = id => document.getElementById(id);
 const state = { projects: [], project: null, runs: [], run: null, selectedCase: null, canManage: false, tab: 'steps', kind: 'video', busy: false, generation: 0 };
 const labels = { PASS: 'PASS', PARTIAL: 'PARTIAL', FAIL: 'FAIL', DRY_RUN: 'CHƯA CHẠY', 'NOT RUN': 'CHƯA CHẠY' };
@@ -21,7 +22,7 @@ function size(bytes) { return bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)}
 function duration(seconds) { if (seconds == null) return 'Chưa có thời lượng'; return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s` : `${seconds.toFixed(1)}s`; }
 function notice(message) { $('notice').textContent = message; $('notice').hidden = !message; }
 async function api(path, body) {
-  const response = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const response = await fetch(ROOT + path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || `Yêu cầu thất bại (${response.status})`);
   return data;
@@ -84,7 +85,7 @@ async function chooseRun(id, requestedCase) {
   $('run-content').hidden = false;
   $('run-title').textContent = run.name;
   $('run-meta').textContent = `Kết quả: ${date(run.lastReportAt)} · Lưu vào history: ${date(run.importedAt)} · ${run.cases.length} case`;
-  $('download-run').href = `/api/projects/${projectId}/runs/${id}`;
+  $('download-run').href = `${ROOT}/api/projects/${projectId}/runs/${id}`;
   renderHistory(); renderStats(); renderCaseList(); renderCase(); remember(); notice('');
 }
 function renderStats() {
@@ -111,7 +112,7 @@ function renderCaseList() {
   }));
   if (!cases.length) $('case-list').append(node('p', 'empty-inline', 'Không có case khớp bộ lọc.'));
 }
-function fileUrl(c, file, download = false) { return `/api/projects/${state.project.id}/runs/${state.run.id}/cases/${c.id}/files/${file.id}${download ? '?download=true' : ''}`; }
+function fileUrl(c, file, download = false) { return `${ROOT}/api/projects/${state.project.id}/runs/${state.run.id}/cases/${c.id}/files/${file.id}${download ? '?download=true' : ''}`; }
 function downloadLink(c, file, text = 'Tải xuống') { const a = node('a', '', text); a.href = fileUrl(c, file, true); a.download = file.name.split('/').pop(); return a; }
 function renderCase() {
   const detail = $('case-detail'); detail.replaceChildren();

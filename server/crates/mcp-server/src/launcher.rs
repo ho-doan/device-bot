@@ -128,9 +128,10 @@ pub fn start(open: bool) -> io::Result<()> {
         Err(std::env::VarError::NotPresent) => crate::flavor::FLAVOR.report_port(),
         Err(error) => return Err(io::Error::new(io::ErrorKind::InvalidInput, error)),
     };
-    let address = SocketAddr::from(([127, 0, 0, 1], port));
-    let url = format!("http://{address}");
-    if !report_ready(address)? {
+    let listen = SocketAddr::from(([0, 0, 0, 0], port));
+    let probe = SocketAddr::from(([127, 0, 0, 1], port));
+    let url = format!("http://{probe}");
+    if !report_ready(probe)? {
         let binary = sibling("robot-report")?;
         let data = report_directory()?;
         let log_path = data.join("server.log");
@@ -140,7 +141,7 @@ pub fn start(open: bool) -> io::Result<()> {
             .open(&log_path)?;
         let mut command = Command::new(binary);
         command
-            .args(["start", "--listen", &address.to_string(), "--data-dir"])
+            .args(["start", "--listen", &listen.to_string(), "--data-dir"])
             .arg(&data)
             .current_dir(&data)
             .stdout(Stdio::from(log.try_clone()?))
@@ -149,12 +150,12 @@ pub fn start(open: bool) -> io::Result<()> {
         let mut child = command.spawn()?;
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            if report_ready(address).unwrap_or(false) {
+            if report_ready(probe).unwrap_or(false) {
                 break;
             }
             if let Some(status) = child.try_wait()? {
                 // Another simultaneous start may have won the port race.
-                if report_ready(address).unwrap_or(false) {
+                if report_ready(probe).unwrap_or(false) {
                     break;
                 }
                 return Err(io::Error::other(format!(
@@ -177,7 +178,7 @@ pub fn start(open: bool) -> io::Result<()> {
         }
         // Dropping Child leaves the detached service running.
     }
-    println!("Device Bot web: {url}");
+    println!("Device Bot web: {url} (LAN bind {listen})");
     if open {
         open_browser(&url)?;
     }

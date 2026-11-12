@@ -136,9 +136,16 @@ async fn initialization_and_tools_list_follow_the_lifecycle() {
         .await
         .unwrap();
     let advertised = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(advertised.len(), 21);
-    for name in ["mobile_start_stream", "mobile_stop_stream"] {
-        assert!(advertised.iter().any(|tool| tool["name"] == name));
+    assert_eq!(advertised.len(), 25);
+    for name in [
+        "mobile_start_stream",
+        "mobile_stop_stream",
+        "mobile_list_running_apps",
+        "mobile_list_windows",
+        "mobile_activate_app",
+        "mobile_run_flow",
+    ] {
+        assert!(advertised.iter().any(|tool| tool["name"] == name), "{name}");
     }
     assert!(
         advertised

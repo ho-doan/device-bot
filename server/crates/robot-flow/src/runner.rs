@@ -59,7 +59,6 @@ pub struct FlowRunner {
     limitations: Vec<String>,
     version: u32,
     active_step: Option<(String, String)>,
-    visuals_blocked: bool,
 }
 
 impl FlowRunner {
@@ -80,7 +79,6 @@ impl FlowRunner {
             limitations: Vec::new(),
             version: 2,
             active_step: None,
-            visuals_blocked: false,
         }
     }
 
@@ -414,10 +412,6 @@ impl FlowRunner {
                         "failed"
                     } else if self.client.is_none() {
                         "validated"
-                    } else if self.visuals_blocked
-                        && ["screenshot", "stop_screen_recording"].contains(&action.as_str())
-                    {
-                        "omitted"
                     } else {
                         "passed"
                     }
@@ -438,9 +432,6 @@ impl FlowRunner {
     async fn execute(&mut self, action: &str, args: &Value) -> Result<()> {
         if self.client.is_none() {
             return Ok(());
-        }
-        if args.get("sensitive") == Some(&json!(true)) {
-            self.suspend_visuals().await?;
         }
         match action {
             "select_device" => {
@@ -518,9 +509,6 @@ impl FlowRunner {
                 self.call(required(args, "name")?, arguments).await?;
             }
             "start_screen_recording" => {
-                if self.visuals_blocked {
-                    return Err("visual recording is disabled after sensitive input".into());
-                }
                 if self.recording {
                     return Err("recording already started".into());
                 }
@@ -533,22 +521,16 @@ impl FlowRunner {
                 self.recording = true;
             }
             "stop_screen_recording" => {
-                if !self.visuals_blocked {
-                    if self.step_device.is_some()
-                        && self.recording_device.as_deref() != Some(self.device_id()?)
-                    {
-                        return Err(
-                            "stop_screen_recording platform does not match the recording device"
-                                .into(),
-                        );
-                    }
-                    self.stop_recording().await?;
+                if self.step_device.is_some()
+                    && self.recording_device.as_deref() != Some(self.device_id()?)
+                {
+                    return Err(
+                        "stop_screen_recording platform does not match the recording device".into(),
+                    );
                 }
+                self.stop_recording().await?;
             }
             "screenshot" => {
-                if self.visuals_blocked {
-                    return Ok(());
-                }
                 let path = self.artifact_path(required(args, "path")?)?;
                 let result = self
                     .call(
@@ -997,18 +979,6 @@ impl FlowRunner {
             return Err("recorded video is empty".into());
         }
         fs::copy(path, self.directory.join("video.mp4")).map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
-    async fn suspend_visuals(&mut self) -> Result<()> {
-        if self.visuals_blocked {
-            return Ok(());
-        }
-        if self.recording {
-            self.stop_recording().await?;
-        }
-        self.visuals_blocked = true;
-        self.limitations.push("Visual evidence stopped/omitted before sensitive or environment-sourced input; remaining actions have redacted query/report evidence only.".into());
         Ok(())
     }
 

@@ -41,6 +41,7 @@ struct State {
     schemas: Option<Vec<Value>>,
     source_selection: bool,
     devices: Option<Value>,
+    video_path: Option<PathBuf>,
 }
 struct Fake(Arc<Mutex<State>>);
 #[async_trait]
@@ -68,6 +69,18 @@ impl Mcp for Fake {
                 if name == "mobile_list_elements_on_screen" {
                     return Ok(
                         json!({"structuredContent":{"elements":s.queries.pop_front().unwrap_or(json!([]))}}),
+                    );
+                }
+                if name == "mobile_stop_screen_recording" {
+                    if let Some(path) = &s.video_path {
+                        return Ok(
+                            json!({"content":[{"type":"text","text":format!("Screen recording saved: {}", path.display())}]}),
+                        );
+                    }
+                }
+                if name == "mobile_take_screenshot" {
+                    return Ok(
+                        json!({"content":[{"type":"image","mimeType":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="}]}),
                     );
                 }
                 Ok(json!({"content":[]}))
@@ -739,26 +752,57 @@ fn recipe_parameters_are_opaque_data_not_templates() {
 }
 
 #[tokio::test]
-async fn sensitive_input_omits_visual_evidence_instead_of_leaking_it() {
+async fn sensitive_input_keeps_recording_until_yaml_stop() {
     let tmp = Temp::new();
-    let state = Arc::new(Mutex::new(State::default()));
+    std::fs::create_dir_all(&tmp.0).unwrap();
+    let video = tmp.0.join("source.mp4");
+    std::fs::write(&video, b"fixture video").unwrap();
+    let state = Arc::new(Mutex::new(State {
+        video_path: Some(video),
+        queries: VecDeque::from([json!([node("test-secret")])]),
+        ..State::default()
+    }));
     let f = flow(
-        "  - type_text: {text: test-secret, sensitive: true}\n  - screenshot: {path: result.png}",
+        "  - start_screen_recording: {}\n  - type_text: {text: test-secret, sensitive: true}\n  - assert_element: {label: test-secret}\n  - screenshot: {path: result.png}\n  - call_tool: {name: mobile_type_keys, arguments: {deviceId: '<selected>', text: test-secret}, sensitive: true}\n  - stop_screen_recording: {}",
     );
     let report = FlowRunner::new(Some(Box::new(Fake(state.clone()))), tmp.0.clone())
         .run(&f, &Profile::default(), &[], Duration::from_secs(2))
         .await;
-    assert_eq!(report.status, "PARTIAL");
-    assert!(!tmp.0.join("result.png").exists());
-    assert_eq!(report.steps.last().unwrap().status, "omitted");
-    assert!(
-        !state
-            .lock()
-            .unwrap()
-            .calls
-            .iter()
-            .any(|c| c["params"]["name"] == "mobile_take_screenshot")
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    assert!(report.limitations.is_empty());
+    assert!(report.steps.iter().all(|step| step.status == "passed"));
+    assert!(tmp.0.join("result.png").is_file());
+    assert_eq!(
+        std::fs::read(tmp.0.join("video.mp4")).unwrap(),
+        b"fixture video"
     );
+    let state = state.lock().unwrap();
+    let tools: Vec<_> = state
+        .calls
+        .iter()
+        .filter(|c| c["method"] == "tools/call")
+        .map(|c| c["params"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        tools,
+        vec![
+            "mobile_list_available_devices",
+            "mobile_start_screen_recording",
+            "mobile_type_keys",
+            "mobile_list_elements_on_screen",
+            "mobile_take_screenshot",
+            "mobile_type_keys",
+            "mobile_stop_screen_recording",
+        ]
+    );
+    for artifact in ["query-1.json", "mcp-calls.jsonl"] {
+        assert!(
+            !std::fs::read_to_string(tmp.0.join(artifact))
+                .unwrap()
+                .contains("test-secret"),
+            "{artifact} contains plaintext input"
+        );
+    }
 }
 
 #[tokio::test]
@@ -780,28 +824,49 @@ async fn assertion_failure_is_distinct_from_transport_error() {
 }
 
 #[tokio::test]
-async fn recipe_environment_input_disables_visual_evidence() {
+async fn environment_input_allows_recording_start_and_continues_until_yaml_stop() {
     let tmp = Temp::new();
-    let state = Arc::new(Mutex::new(State::default()));
+    std::fs::create_dir_all(&tmp.0).unwrap();
+    let video = tmp.0.join("source.mp4");
+    std::fs::write(&video, b"fixture video").unwrap();
+    let state = Arc::new(Mutex::new(State {
+        video_path: Some(video),
+        ..State::default()
+    }));
     let mut profile = Profile::default();
     // PATH is present without mutating process-global environment in parallel tests.
     profile.recipes.insert(
         "credential".into(),
         serde_yaml::from_str("- type_text: {text: '${env:PATH}'}").unwrap(),
     );
-    let f = flow("  - run: {recipe: credential}\n  - screenshot: {path: result.png}");
+    let f = flow(
+        "  - run: {recipe: credential}\n  - start_screen_recording: {}\n  - run: {recipe: credential}\n  - screenshot: {path: result.png}\n  - stop_screen_recording: {}",
+    );
     let report = FlowRunner::new(Some(Box::new(Fake(state.clone()))), tmp.0.clone())
         .run(&f, &profile, &[], Duration::from_secs(2))
         .await;
-    assert_eq!(report.status, "PARTIAL");
-    assert_eq!(report.steps.last().unwrap().status, "omitted");
-    assert!(
-        !state
-            .lock()
-            .unwrap()
-            .calls
-            .iter()
-            .any(|c| c["params"]["name"] == "mobile_take_screenshot")
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    assert!(report.limitations.is_empty());
+    assert!(report.steps.iter().all(|step| step.status == "passed"));
+    assert!(tmp.0.join("result.png").is_file());
+    assert!(tmp.0.join("video.mp4").is_file());
+    let state = state.lock().unwrap();
+    let tools: Vec<_> = state
+        .calls
+        .iter()
+        .filter(|c| c["method"] == "tools/call")
+        .map(|c| c["params"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        tools,
+        vec![
+            "mobile_list_available_devices",
+            "mobile_type_keys",
+            "mobile_start_screen_recording",
+            "mobile_type_keys",
+            "mobile_take_screenshot",
+            "mobile_stop_screen_recording",
+        ]
     );
 }
 

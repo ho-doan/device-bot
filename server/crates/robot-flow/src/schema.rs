@@ -229,20 +229,6 @@ pub(crate) fn compile_with_profile(
     resolved_profile.selectors = serde_json::from_value(resolve(&selector_source, &vars)?)
         .map_err(|e| format!("invalid resolved selectors: {e}"))?;
     let profile = &resolved_profile;
-    let source = serde_json::to_string(&flow.steps).unwrap();
-    let profile_source = serde_json::to_string(&profile.variables).unwrap();
-    let recipe_source = serde_json::to_string(&profile.recipes).unwrap();
-    vars.insert(
-        "__sensitive_inputs".into(),
-        json!(
-            source.contains("${env:")
-                || source.contains("text_from_env")
-                || profile_source.contains("${env:")
-                || recipe_source.contains("${env:")
-                || recipe_source.contains("text_from_env")
-                || selector_source.to_string().contains("${env:")
-        ),
-    );
     for (name, selector) in &profile.selectors {
         validate_selector(name, selector, profile, &mut Vec::new())?;
     }
@@ -495,16 +481,6 @@ fn expand(
         }
         let mut args = resolve(&template, vars)?;
         validate_action_keys(action, &args)?;
-        // Boot accepts a device ID, not credential/text input. Environment-sourced
-        // profile settings must not disable recording before this initialization.
-        let boot_only = action == "call_tool" && args["name"] == "mobile_boot_device";
-        if ["fill_field", "type_text", "call_tool"].contains(&action.as_str())
-            && ((vars.get("__sensitive_inputs") == Some(&json!(true)) && !boot_only)
-                || args.get("text_from_env").is_some()
-                || args.get("sensitive") == Some(&json!(true)))
-        {
-            args["sensitive"] = json!(true);
-        }
         if action == "run" {
             let name = args["recipe"]
                 .as_str()
@@ -697,11 +673,11 @@ fn check_keys(args: &Value, allowed: &str) -> Result<()> {
 }
 
 #[cfg(test)]
-mod browser_boot_tests {
+mod input_metadata_tests {
     use super::*;
 
     #[test]
-    fn boot_does_not_block_recording_but_text_tools_remain_sensitive() {
+    fn environment_configuration_does_not_inject_sensitive_flags() {
         let flow: FlowDocument = serde_json::from_value(json!({
             "version":2,"name":"boot and input","steps":[
                 {"call_tool":{"name":"mobile_boot_device","arguments":{"deviceId":"chrome:browser"}}},
@@ -719,8 +695,8 @@ mod browser_boot_tests {
             steps[0].action["call_tool"].get("sensitive"),
             Some(&json!(true))
         );
-        assert_eq!(steps[1].action["type_text"]["sensitive"], true);
-        assert_eq!(steps[2].action["call_tool"]["sensitive"], true);
+        assert!(steps[1].action["type_text"].get("sensitive").is_none());
+        assert!(steps[2].action["call_tool"].get("sensitive").is_none());
         assert_eq!(steps[3].action["call_tool"]["sensitive"], true);
     }
 }

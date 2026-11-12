@@ -240,13 +240,13 @@ and timeout failures. JUnit uses a failure for a failed assertion and an error
 for setup/transport/execution failures. A case deadline or interruption also
 records the active nested step as failed, even when execution was cancelled
 before that step could finish.
-Environment-sourced input (or `sensitive: true` on an input/tool step) stops active
-recording before input and omits subsequent screenshots. The report is PARTIAL
-with an explicit visual-evidence limitation. Environment interpolation anywhere
-in scenario steps/profile variables/recipes conservatively marks input/tool steps as
-sensitive; use CLI device/app overrides for non-sensitive target configuration.
-Native screenshots/video with literal demo input still show application content;
-use disposable demo data for those visual-evidence scenarios.
+Recording follows the YAML `start_screen_recording` and `stop_screen_recording`
+steps. Environment-sourced input and `sensitive: true` do not interrupt recording,
+block later recording starts, omit screenshots, or add a PARTIAL limitation.
+An active recording is still stopped during case cleanup on completion, failure,
+timeout or interruption. Text/asserted values remain redacted in query/error
+evidence and input arguments are not persisted in the MCP trace. Screenshots and
+video capture the application content visible between the YAML recording steps.
 
 `PASS` means the declared checks executed successfully. `PARTIAL` retains
 explicit limitations and is JUnit skipped. `DRY_RUN` means validation only;

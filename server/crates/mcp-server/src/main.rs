@@ -247,21 +247,23 @@ async fn install_chrome_recording_tools() -> std::io::Result<()> {
     }
     let brew = std::env::var("HOMEBREW_EXECUTABLE").unwrap_or_else(|_| "brew".into());
     let status = tokio::process::Command::new(&brew)
-        .args(["install", "ffmpeg"])
+        .args(["install", "ffmpeg-full"])
         .status()
         .await
         .map_err(|error| {
-            std::io::Error::other(format!("could not run {brew} install ffmpeg: {error}"))
+            std::io::Error::other(format!("could not run {brew} install ffmpeg-full: {error}"))
         })?;
     if !status.success() {
         return Err(std::io::Error::other(format!(
-            "{brew} install ffmpeg exited with {}",
+            "{brew} install ffmpeg-full exited with {}",
             status
                 .code()
                 .map_or_else(|| "unknown".into(), |code| code.to_string())
         )));
     }
-    println!("Chrome recording tools installed. Restart Device Bot to use ffmpeg.");
+    println!(
+        "Recording and video step-caption tools installed. Restart Device Bot to use ffmpeg-full."
+    );
     Ok(())
 }
 

@@ -218,9 +218,22 @@ async fn main() {
                 };
                 match client {
                     Ok(client) => {
-                        FlowRunner::new(client, dir.clone())
+                        let mut runner = FlowRunner::new(client, dir.clone());
+                        let mut report = runner
                             .run(&flow, &profile, &o.confirmed, Duration::from_secs(o.case))
-                            .await
+                            .await;
+                        if !o.dry {
+                            if let Err(error) = runner.annotate_video().await {
+                                report.status = "FAIL".into();
+                                if let Some(existing) = report.error.as_mut() {
+                                    existing.push_str(&format!("; {error}"));
+                                } else {
+                                    report.error = Some(error);
+                                    report.error_kind = Some("artifact".into());
+                                }
+                            }
+                        }
+                        report
                     }
                     Err(error) => setup_error(&flow.name, o.dry, error),
                 }

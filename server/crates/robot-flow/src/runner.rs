@@ -59,6 +59,7 @@ pub struct FlowRunner {
     limitations: Vec<String>,
     version: u32,
     active_step: Option<(String, String)>,
+    video_overlay: Option<crate::video::VideoOverlay>,
 }
 
 impl FlowRunner {
@@ -79,6 +80,7 @@ impl FlowRunner {
             limitations: Vec::new(),
             version: 2,
             active_step: None,
+            video_overlay: None,
         }
     }
 
@@ -386,6 +388,11 @@ impl FlowRunner {
             for step in steps {
                 let (action, args) = step.action.iter().next().unwrap();
                 self.active_step = Some((step.id.clone().unwrap_or_default(), action.clone()));
+                if self.recording && action != "stop_screen_recording" {
+                    if let Some(overlay) = self.video_overlay.as_mut() {
+                        overlay.mark(step.id.as_deref().unwrap_or(""), action, args);
+                    }
+                }
                 let previous_device = self.step_device.clone();
                 let result = timeout(
                     Duration::from_millis(
@@ -512,6 +519,10 @@ impl FlowRunner {
                 if self.recording {
                     return Err("recording already started".into());
                 }
+                let mut overlay = crate::video::VideoOverlay::new();
+                if let Some((id, action)) = &self.active_step {
+                    overlay.mark(id, action, args);
+                }
                 self.call(
                     "mobile_start_screen_recording",
                     json!({"deviceId":self.device_id()?}),
@@ -519,6 +530,7 @@ impl FlowRunner {
                 .await?;
                 self.recording_device = Some(self.device_id()?.to_owned());
                 self.recording = true;
+                self.video_overlay = Some(overlay);
             }
             "stop_screen_recording" => {
                 if self.step_device.is_some()
@@ -956,6 +968,9 @@ impl FlowRunner {
             return Err("no active recording".into());
         }
         self.recording = false;
+        if let Some(overlay) = self.video_overlay.as_mut() {
+            overlay.finish();
+        }
         let recording_device = self
             .recording_device
             .take()
@@ -979,6 +994,15 @@ impl FlowRunner {
             return Err("recorded video is empty".into());
         }
         fs::copy(path, self.directory.join("video.mp4")).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Render step/action/test-input captions into the finalized CLI video.
+    /// Caption input stays in memory and is not serialized into the flow report.
+    pub async fn annotate_video(&self) -> Result<()> {
+        if let Some(overlay) = &self.video_overlay {
+            overlay.render(&self.directory).await?;
+        }
         Ok(())
     }
 

@@ -248,6 +248,24 @@ timeout or interruption. Text/asserted values remain redacted in query/error
 evidence and input arguments are not persisted in the MCP trace. Screenshots and
 video capture the application content visible between the YAML recording steps.
 
+The CLI automatically burns step IDs and actions into a header above `video.mp4`;
+input steps also show their resolved test input, including environment-sourced
+values and steps marked `sensitive: true`. No YAML annotation steps are needed.
+The application image is preserved below the header. `video-original.mp4` keeps
+the unmodified recording. `video-steps.json` records step IDs/actions and runner
+and video timestamps, without input values. Caption text files are temporary
+and removed after rendering; the regular report/query/MCP trace redaction is
+unchanged. Caption times are scaled to the encoded video duration because some
+recorders drop frames instead of preserving wall-clock timestamps.
+
+Video captions require `ffmpeg` with `drawtext` and a sibling `ffprobe` binary.
+On macOS install `ffmpeg-full` (also used by
+`device-bot --install-chrome-recording-tools`). `DEVICE_BOT_FFMPEG_PATH` can select
+another compatible build. Caption generation errors fail the case with an
+artifact error and retain the original recording instead of silently omitting
+the captions. Library callers can render captions with `FlowRunner::annotate_video`
+after `run` returns.
+
 `PASS` means the declared checks executed successfully. `PARTIAL` retains
 explicit limitations and is JUnit skipped. `DRY_RUN` means validation only;
 it starts no subprocess and writes no artifacts. A live parse/setup/server-start

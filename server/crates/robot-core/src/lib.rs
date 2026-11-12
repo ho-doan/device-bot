@@ -303,6 +303,22 @@ pub struct NativeVideoStream {
 /// Async, platform-independent device control boundary.
 #[async_trait]
 pub trait Robot: Send + Sync {
+    async fn stream_context(&self, _id: &str) -> Result<Value, RobotError> {
+        Ok(Value::Null)
+    }
+    async fn scroll(&self, id: &str, at: Point, dx: f64, dy: f64) -> Result<(), RobotError> {
+        self.swipe(
+            id,
+            at,
+            Point {
+                x: at.x - dx,
+                y: at.y - dy,
+            },
+            Some(200),
+        )
+        .await
+    }
+
     async fn negotiate_native_video(
         &self,
         _id: &str,
@@ -638,6 +654,13 @@ impl RobotRegistry {
 
 #[async_trait]
 impl Robot for RobotRegistry {
+    async fn stream_context(&self, id: &str) -> Result<Value, RobotError> {
+        self.driver_for(id).await?.stream_context(id).await
+    }
+    async fn scroll(&self, id: &str, at: Point, dx: f64, dy: f64) -> Result<(), RobotError> {
+        self.driver_for(id).await?.scroll(id, at, dx, dy).await
+    }
+
     async fn negotiate_native_video(
         &self,
         id: &str,

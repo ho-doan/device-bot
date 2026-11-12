@@ -57,7 +57,7 @@ impl ChromeRobot {
         }
     }
 
-    async fn running_browser_endpoint(&self) -> Result<String, RobotError> {
+    pub(super) async fn running_browser_endpoint(&self) -> Result<String, RobotError> {
         if let Some(path) = &self.discovery_file {
             if let Ok(contents) = tokio::fs::read_to_string(path).await {
                 if let Ok(endpoint) = discovery_endpoint(&contents) {

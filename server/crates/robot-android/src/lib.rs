@@ -403,6 +403,25 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
         Ok(())
     }
 
+    async fn stream_context(&self, id: &str) -> Result<Value, RobotError> {
+        let output = self
+            .run_adb(&[
+                "-s".into(),
+                id.into(),
+                "shell".into(),
+                "dumpsys".into(),
+                "activity".into(),
+                "activities".into(),
+            ])
+            .await?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let app = text
+            .lines()
+            .find(|line| line.contains("mResumedActivity") || line.contains("topResumedActivity"))
+            .and_then(|line| line.split_whitespace().find(|part| part.contains('/')))
+            .and_then(|part| part.split('/').next());
+        Ok(json!({"appId":app}))
+    }
     async fn clear_text(&self, device_id: &str) -> Result<(), RobotError> {
         ensure_device_id(device_id)?;
         let elements = self.list_elements(device_id).await?;
@@ -415,7 +434,14 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
                 "Focus an editable Android field before clearing text".into(),
             ));
         }
-        self.video_controls.clear_text(device_id).await
+        let temporary = if self.video_controls.available(device_id).await {
+            None
+        } else {
+            Some(video::start(self.adb_path(), device_id, &self.video_controls).await?)
+        };
+        let result = self.video_controls.clear_text(device_id).await;
+        drop(temporary);
+        result
     }
 
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {

@@ -6,6 +6,7 @@ import 'package:mobile_mcp_companion/android_live.dart';
 import 'package:mobile_mcp_companion/dashboard.dart';
 import 'package:mobile_mcp_companion/mcp_client.dart';
 import 'package:mobile_mcp_companion/models.dart';
+import 'package:mobile_mcp_companion/live_recording.dart';
 
 void main() {
   test('maps a pointer on the fitted screenshot back to device pixels', () {
@@ -329,6 +330,61 @@ void main() {
       expect(inputs, [
         {'action': 'tap', 'x': 20, 'y': 40},
       ]);
+    },
+  );
+  testWidgets(
+    'scroll buttons send 50px deltas and only successful inputs are recorded',
+    (tester) async {
+      final recording = LiveRecording(deviceId: 'phone', platform: 'android');
+      final updates = StreamController<AndroidLiveUpdate>();
+      addTearDown(updates.close);
+      final inputs = <Map<String, dynamic>>[];
+      var fail = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AndroidLiveDialog(
+            deviceName: 'Phone',
+            recording: recording,
+            connect: () => updates.stream,
+            onInput: (input) async {
+              inputs.add(input);
+              if (fail) throw StateError('Device disconnected');
+            },
+          ),
+        ),
+      );
+      updates.add(
+        AndroidLiveElements(
+          source: 'native',
+          elements: const [
+            AdminElement(
+              className: 'View',
+              resourceId: null,
+              text: 'Content',
+              contentDescription: null,
+              bounds: AdminBounds(left: 0, top: 0, right: 400, bottom: 600),
+              clickable: false,
+              enabled: true,
+            ),
+          ],
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('live-scroll-down')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('live-scroll-up')));
+      await tester.pump();
+      expect(inputs.map((e) => e['deltaY']), [50, -50]);
+      expect(
+        inputs.every((e) => e['action'] == 'scroll' && e['deltaX'] == 0),
+        true,
+      );
+      expect(recording.count, 2);
+      fail = true;
+      await tester.tap(find.byKey(const Key('live-scroll-down')));
+      await tester.pump();
+      expect(recording.count, 2);
+      expect(find.textContaining('Device disconnected'), findsOneWidget);
     },
   );
 }

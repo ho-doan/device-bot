@@ -3,7 +3,7 @@ use super::*;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 pub(super) struct BrowserConnection {
-    socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    pub(super) socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
     pub poisoned: bool,
 }
 

@@ -213,6 +213,11 @@ class McpClient {
           'x': input['x'],
           'y': input['y'],
         });
+      case 'scroll':
+        await callTool('mobile_scroll', {
+          'deviceId': deviceId,
+          for (final key in ['x', 'y', 'deltaX', 'deltaY']) key: input[key],
+        });
       case 'swipe':
         await callTool('mobile_swipe_on_screen', {
           'deviceId': deviceId,

@@ -282,6 +282,7 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
             "mobile_stop_screen_recording",
             "mobile_start_stream",
             "mobile_stop_stream",
+            "mobile_scroll",
             "mobile_list_displays",
             "mobile_take_screenshot",
             "mobile_click_on_screen_at_coordinates",
@@ -645,6 +646,49 @@ async fn invalid_tool_arguments_are_tool_execution_errors() {
         result["result"]["content"][0]["text"],
         "Missing or invalid argument: deviceId"
     );
+}
+
+#[tokio::test]
+async fn pixel_scroll_routes_signed_deltas_and_rejects_invalid_values() {
+    let robot = Arc::new(RecordingRobot::default());
+    let mut server = Server::new(robot.clone());
+    ready(&mut server).await;
+    for delta in [50, -50] {
+        let response = server
+            .handle(request(
+                40,
+                "tools/call",
+                json!({
+                    "name":"mobile_scroll", "arguments":{
+                        "deviceId":"emulator-5554", "x":200, "y":300, "deltaX":0, "deltaY":delta
+                    }
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_ne!(response["result"]["isError"], true);
+    }
+    assert_eq!(
+        *robot.actions.lock().unwrap(),
+        [
+            "swipe:emulator-5554:200,300,200,250:200",
+            "swipe:emulator-5554:200,300,200,350:200",
+        ]
+    );
+    let response = server
+        .handle(request(
+            41,
+            "tools/call",
+            json!({
+                "name":"mobile_scroll", "arguments":{
+                    "deviceId":"emulator-5554", "x":200, "y":300, "deltaX":0, "deltaY":10001
+                }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response["result"]["isError"], true);
+    assert_eq!(robot.actions.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]

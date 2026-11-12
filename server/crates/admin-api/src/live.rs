@@ -119,6 +119,8 @@ pub(crate) struct LiveInput {
     end_y: Option<f64>,
     text: Option<String>,
     duration_ms: Option<u64>,
+    delta_x: Option<f64>,
+    delta_y: Option<f64>,
 }
 
 async fn require_android(state: &AdminState, device_id: &str) -> Result<(), Response> {
@@ -199,6 +201,18 @@ async fn dispatch_input(
                 end.y.round()
             ))
         }
+        "scroll" => {
+            let at = required_point(input.x, input.y)?;
+            let dx = input.delta_x.unwrap_or(0.);
+            let dy = input.delta_y.unwrap_or(0.);
+            if !dx.is_finite() || !dy.is_finite() || dx.abs() > 10000. || dy.abs() > 10000. {
+                return Err(RobotError::InvalidInput(
+                    "Invalid pixel scroll delta".into(),
+                ));
+            }
+            robot.scroll(device_id, at, dx, dy).await?;
+            Ok(format!("{device_id} scroll {dx},{dy}"))
+        }
         "clear" => {
             robot.clear_text(device_id).await?;
             Ok(format!("{device_id} clear text"))
@@ -217,7 +231,7 @@ async fn dispatch_input(
             Ok(format!("{device_id} type"))
         }
         _ => Err(RobotError::InvalidInput(
-            "action must be tap, swipe, type, or clear".into(),
+            "action must be tap, swipe, scroll, type, or clear".into(),
         )),
     }
 }
@@ -525,6 +539,8 @@ mod tests {
                 end_y: None,
                 text: None,
                 duration_ms: None,
+                delta_x: None,
+                delta_y: None,
             }),
         )
         .await;
@@ -669,6 +685,8 @@ mod tests {
                 end_y: None,
                 text: None,
                 duration_ms: None,
+                delta_x: None,
+                delta_y: None,
             }),
         )
         .await;
@@ -686,6 +704,8 @@ mod tests {
                 end_y: None,
                 text: None,
                 duration_ms: None,
+                delta_x: None,
+                delta_y: None,
             }),
         )
         .await;
@@ -703,6 +723,8 @@ mod tests {
                 end_y: None,
                 text: Some("  hello  ".into()),
                 duration_ms: None,
+                delta_x: None,
+                delta_y: None,
             }),
         )
         .await;
@@ -720,6 +742,8 @@ mod tests {
                 end_y: None,
                 text: Some("   ".into()),
                 duration_ms: None,
+                delta_x: None,
+                delta_y: None,
             }),
         )
         .await;

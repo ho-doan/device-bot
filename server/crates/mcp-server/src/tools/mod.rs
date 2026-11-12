@@ -79,6 +79,7 @@ impl ToolRegistry {
             screen::SCREENSHOT_NAME => screen::screenshot(&self.robot, &params.arguments).await,
             screen::DISPLAYS_NAME => screen::displays(&self.robot, &params.arguments).await,
             screen::TAP_NAME => screen::tap(&self.robot, &params.arguments).await,
+            screen::SCROLL_NAME => screen::scroll(&self.robot, &params.arguments).await,
             screen::SWIPE_NAME => screen::swipe(&self.robot, &params.arguments).await,
             ui::LIST_ELEMENTS_NAME => ui::list_elements(&self.robot, &params.arguments).await,
             batch::NAME => batch::execute(&self.robot, &params.arguments).await,

@@ -79,7 +79,7 @@ class _WebUrlDialogState extends State<WebUrlDialog> {
               ),
               const SizedBox(height: 12),
               const Text(
-                'The page opens in this web case. Live sharing requires HTTPS or localhost.',
+                'The page opens in this web case. Live uses tab sharing on HTTPS/localhost and automatic fallback on HTTP.',
               ),
             ],
           ),

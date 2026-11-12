@@ -13,6 +13,7 @@ class AndroidVideoSession extends ChangeNotifier {
   Size _deviceSize = Size.zero;
   bool _closed = false;
   String? status;
+  Map<String, dynamic> recordingContext = {};
   Size get deviceSize {
     if (!hasVideo) return _deviceSize;
     final rotated =
@@ -67,6 +68,11 @@ class AndroidVideoSession extends ChangeNotifier {
       final offer = await peer.getLocalDescription();
       final answer = await client.startAndroidStream(deviceId, offer!.sdp!);
       session._streamId = answer['streamId'] as String;
+      if (answer['context'] is Map) {
+        session.recordingContext = Map<String, dynamic>.from(
+          answer['context'] as Map,
+        );
+      }
       session._deviceSize = Size(
         (answer['width'] as num).toDouble(),
         (answer['height'] as num).toDouble(),

@@ -1,3 +1,4 @@
+import 'live_recording.dart';
 import 'web_navigation.dart';
 import 'inspector_yaml.dart';
 export 'inspector_yaml.dart' show InspectorFlowAction, buildInspectorFlowYaml;
@@ -86,6 +87,7 @@ class CompanionHome extends StatefulWidget {
 }
 
 class _CompanionHomeState extends State<CompanionHome> {
+  final Map<String, LiveRecording> _recordings = {};
   final Map<String, DesktopCaptureSettings> _desktopCaptures = {};
   final _baseUrlController = TextEditingController(text: defaultMcpUrl);
   late Future<DashboardSnapshot> _snapshot;
@@ -309,6 +311,14 @@ class _CompanionHomeState extends State<CompanionHome> {
       context: context,
       builder: (context) => AndroidLiveDialog(
         deviceName: device.name,
+        recording: _recordings.putIfAbsent(
+          device.id,
+          () => LiveRecording(
+            deviceId: device.id,
+            platform: device.platform,
+            directory: LiveRecording.defaultDirectory(),
+          ),
+        ),
         connect: () => device.platform == 'chrome'
             ? client.watchWebLive(device.id)
             : client.watchAndroidLive(device.id),

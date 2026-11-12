@@ -34,3 +34,22 @@ flutter run -d macos \
 
 The companion is intentionally an MCP client only. It does not start or stop
 the Rust server and never controls devices outside the `/mcp` session.
+
+Live control is available for Android and Chrome. Select an element to inspect
+it, then use **Tap selected** to control it. **Up 50 px / Down 50 px** send pixel
+scroll commands. Successful actions are recorded automatically; **Export YAML**
+saves a complete `robot-flow` v2 scenario for the current platform. Run it with:
+
+```bash
+device-bot run /path/to/recording.yaml
+```
+
+Chrome Live keeps browser tab capture as its primary source. HTTP LAN pages
+automatically use the CDP screencast → FFmpeg H.264 → WebRTC fallback, requiring
+FFmpeg with `libx264` on the server. `DEVICE_BOT_FFMPEG_PATH` can override its path.
+See [Live architecture](../../docs/architecture-live.md) for recording and
+fallback details.
+
+When rebuilding after Flutter/plugin changes, fully quit the running QC app
+and launch QC again. Building the Rust binary alone does not replace a running
+Flutter UI.

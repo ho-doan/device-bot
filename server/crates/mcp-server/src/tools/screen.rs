@@ -10,10 +10,14 @@ use super::arguments::{optional_bool, optional_u64, required_number, required_st
 pub(super) const SCREENSHOT_NAME: &str = "mobile_take_screenshot";
 pub(super) const DISPLAYS_NAME: &str = "mobile_list_displays";
 pub(super) const TAP_NAME: &str = "mobile_click_on_screen_at_coordinates";
+pub(super) const SCROLL_NAME: &str = "mobile_scroll";
 pub(super) const SWIPE_NAME: &str = "mobile_swipe_on_screen";
 
-pub(super) fn definitions() -> [ToolDefinition; 4] {
+pub(super) fn definitions() -> [ToolDefinition; 5] {
     [
+        ToolDefinition { name:SCROLL_NAME.into(),title:Some("Scroll by pixels".into()),
+            description:"Scroll at a viewport point by deltaX/deltaY pixels. Chrome uses wheel input; Android uses the equivalent touch displacement.".into(),
+            input_schema:json!({"type":"object","properties":{"deviceId":{"type":"string","minLength":1},"x":{"type":"number"},"y":{"type":"number"},"deltaX":{"type":"number","minimum":-10000,"maximum":10000},"deltaY":{"type":"number","minimum":-10000,"maximum":10000}},"required":["deviceId","x","y","deltaX","deltaY"],"additionalProperties":false}) },
         ToolDefinition {
             name: DISPLAYS_NAME.into(), title: Some("List desktop displays".into()),
             description: "List macOS/Windows displays with IDs, primary status and global coordinate bounds. Refresh before capture when the monitor configuration changes.".into(),
@@ -196,4 +200,36 @@ fn device_id_schema() -> Value {
         "required": ["deviceId"],
         "additionalProperties": false
     })
+}
+
+pub(super) async fn scroll(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResult {
+    let id = match required_string(arguments, "deviceId") {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let mut values = Vec::new();
+    for key in ["x", "y", "deltaX", "deltaY"] {
+        match required_number(arguments, key) {
+            Ok(v) if v.is_finite() => values.push(v),
+            _ => return ToolResult::execution_error(format!("Invalid {key}")),
+        }
+    }
+    if values[2].abs() > 10000. || values[3].abs() > 10000. {
+        return ToolResult::execution_error("Scroll delta exceeds 10000 pixels");
+    }
+    match robot
+        .scroll(
+            &id,
+            Point {
+                x: values[0],
+                y: values[1],
+            },
+            values[2],
+            values[3],
+        )
+        .await
+    {
+        Ok(()) => ToolResult::text("Scrolled"),
+        Err(e) => ToolResult::execution_error(e.to_string()),
+    }
 }

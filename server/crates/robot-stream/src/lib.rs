@@ -30,6 +30,7 @@ pub struct StreamAnswer {
     pub sdp: String,
     pub width: u32,
     pub height: u32,
+    pub context: serde_json::Value,
 }
 struct Session {
     stop: watch::Sender<bool>,
@@ -49,6 +50,7 @@ impl StreamManager {
         if offer.len() > 128 * 1024 {
             return Err(RobotError::InvalidInput("SDP offer is too large".into()));
         }
+        let context = robot.stream_context(device_id).await?;
         let validated_offer = RTCSessionDescription::offer(offer.clone())
             .map_err(|e| RobotError::InvalidInput(e.to_string()))?;
         if let Some(native) = robot.negotiate_native_video(device_id, &offer).await? {
@@ -58,6 +60,7 @@ impl StreamManager {
                 sdp: native.sdp,
                 width: native.width,
                 height: native.height,
+                context,
             };
             self.sessions
                 .lock()
@@ -207,6 +210,7 @@ impl StreamManager {
                     sdp,
                     width,
                     height,
+                    context,
                 },
                 source,
             ))

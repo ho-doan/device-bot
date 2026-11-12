@@ -34,6 +34,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 mod connection;
 mod live;
+mod screencast;
 mod startup;
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -438,7 +439,30 @@ impl Robot for ChromeRobot {
         id: &str,
         offer: &str,
     ) -> Result<Option<robot_core::NativeVideoStream>, RobotError> {
+        let target = self.page(id).await?;
+        let capabilities = self.cdp(&target, "Runtime.evaluate", json!({"expression":"Boolean(isSecureContext && navigator.mediaDevices?.getDisplayMedia && window.CropTarget)","returnByValue":true})).await?;
+        if capabilities["result"]["value"] != true {
+            return Ok(None);
+        }
+        // A user denial is returned; it must never silently enable fallback capture.
         self.start_live(id, offer).await.map(Some)
+    }
+    async fn start_video_stream(&self, id: &str) -> Result<robot_core::VideoStream, RobotError> {
+        self.start_screencast(id).await
+    }
+    async fn stream_context(&self, id: &str) -> Result<Value, RobotError> {
+        Ok(json!({"url":self.page(id).await?.url}))
+    }
+    async fn scroll(&self, id: &str, at: Point, dx: f64, dy: f64) -> Result<(), RobotError> {
+        let target = self.page(id).await?;
+        self.cdp(&target, "Page.bringToFront", json!({})).await?;
+        self.cdp(
+            &target,
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseWheel","x":at.x,"y":at.y,"deltaX":dx,"deltaY":dy}),
+        )
+        .await
+        .map(|_| ())
     }
     async fn restart_device(&self, id: &str) -> Result<(), RobotError> {
         if id != "chrome:browser" {

@@ -24,6 +24,13 @@ impl Controls {
         sockets.retain(|socket| socket.strong_count() > 0);
         sockets.push(Arc::downgrade(socket));
     }
+    pub(super) async fn available(&self, id: &str) -> bool {
+        self.0
+            .lock()
+            .await
+            .get(id)
+            .is_some_and(|sockets| sockets.iter().any(|socket| socket.strong_count() > 0))
+    }
     pub(super) async fn clear_text(&self, id: &str) -> Result<(), RobotError> {
         let socket = self
             .0

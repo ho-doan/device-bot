@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'package:file_selector/file_selector.dart';
+import 'live_recording.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -71,6 +74,7 @@ class AndroidLiveDialog extends StatefulWidget {
     required this.connect,
     required this.onInput,
     this.openVideo,
+    this.recording,
     this.platform = 'android',
     super.key,
   });
@@ -78,6 +82,7 @@ class AndroidLiveDialog extends StatefulWidget {
   final Future<AndroidVideoSession> Function()? openVideo;
   final String deviceName;
   final String platform;
+  final LiveRecording? recording;
   final Stream<AndroidLiveUpdate> Function() connect;
   final Future<void> Function(Map<String, dynamic> input) onInput;
 
@@ -86,6 +91,7 @@ class AndroidLiveDialog extends StatefulWidget {
 }
 
 class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
+  late final LiveRecording _recording;
   final TextEditingController _text = TextEditingController();
   StreamSubscription<AndroidLiveUpdate>? _subscription;
   Future<void> _inputs = Future<void>.value();
@@ -102,6 +108,9 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   @override
   void initState() {
     super.initState();
+    _recording =
+        widget.recording ??
+        LiveRecording(deviceId: 'selected', platform: widget.platform);
     if (widget.openVideo != null) unawaited(_openVideo());
     if (widget.platform != 'chrome' || widget.openVideo == null) {
       _connectInspection();
@@ -168,6 +177,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         return;
       }
       _video = video;
+      if (_recording.context.isEmpty) _recording.context = video.recordingContext;
       video.addListener(_videoChanged);
       if (widget.platform == 'chrome') _connectInspection();
       setState(() {});
@@ -185,14 +195,72 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   }
 
   void _send(Map<String, dynamic> input) {
+    final snapshot = List<AdminElement>.of(_elements);
+    final selected = _selectedIndex == null ? null : snapshot[_selectedIndex!];
+    // Resolve the selector at click time. Reserve the sequence inside the queue.
     _inputs = _inputs
-        .then((_) => widget.onInput(input))
-        .then(
-          (_) {},
-          onError: (Object error) {
-            if (mounted) setState(() => _status = error.toString());
-          },
-        );
+        .then((_) async {
+          final step = _recording.prepare(
+            input,
+            snapshot,
+            input['action'] == 'tap' ? selected : null,
+          );
+          await widget.onInput(input);
+          await _recording.commit(step);
+          if (mounted) setState(() {});
+        })
+        .catchError((Object error) {
+          if (mounted) setState(() => _status = error.toString());
+        });
+  }
+
+  void _scroll50(double delta) {
+    final selected = _selectedIndex == null ? null : _elements[_selectedIndex!];
+    final size = _video?.deviceSize;
+    final bounds = selected?.bounds;
+    final width =
+        size?.width ??
+        _elements
+            .map((e) => e.bounds.right.toDouble())
+            .fold<double>(0, math.max);
+    final height =
+        size?.height ??
+        _elements
+            .map((e) => e.bounds.bottom.toDouble())
+            .fold<double>(0, math.max);
+    final x = bounds != null ? (bounds.left + bounds.right) / 2 : width / 2;
+    // Android translates wheel deltas to a swipe; keep both endpoints on screen.
+    final y = (bounds != null ? (bounds.top + bounds.bottom) / 2 : height / 2)
+        .clamp(math.min(51.0, height / 2), math.max(height - 51, height / 2));
+    if (x <= 0 || y <= 0) return;
+    _send({'action': 'scroll', 'x': x, 'y': y, 'deltaX': 0, 'deltaY': delta});
+  }
+
+  Future<void> _exportRecording() async {
+    try {
+      await _inputs;
+      final yaml = _recording.toYaml();
+      final location = await getSaveLocation(
+        suggestedName: '${_recording.name}.yaml',
+      );
+      if (location == null) return;
+      final path =
+          location.path.endsWith('.yaml') || location.path.endsWith('.yml')
+          ? location.path
+          : '${location.path}.yaml';
+      await XFile.fromData(
+        Uint8List.fromList(utf8.encode(yaml)),
+        mimeType: 'application/yaml',
+        name: '${_recording.name}.yaml',
+      ).saveTo(path);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Saved YAML: $path')));
+      }
+    } on Object catch (error) {
+      if (mounted) setState(() => _status = error.toString());
+    }
   }
 
   void _select(Offset devicePoint) {
@@ -249,6 +317,14 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         appBar: AppBar(
           title: Text('${widget.deviceName} live'),
           actions: [
+            TextButton.icon(
+              key: const Key('live-export-yaml'),
+              onPressed: _recording.count > 0 && _recording.canExport
+                  ? _exportRecording
+                  : null,
+              icon: const Icon(Icons.save_alt),
+              label: Text('Export YAML (${_recording.count})'),
+            ),
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Close'),
@@ -272,7 +348,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
-                  'In Chrome, choose This Tab and allow sharing. Reopen Live after navigation or resizing.',
+                  'If Chrome asks, choose This Tab and allow sharing. HTTP pages use fallback automatically.',
                 ),
               ),
             if (_status != null)
@@ -539,6 +615,33 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                 ),
                                 onChanged: (_) => setState(() {}),
                                 onSubmitted: (_) => _submitText(),
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  OutlinedButton.icon(
+                                    key: const Key('live-scroll-up'),
+                                    onPressed:
+                                        _elements.isEmpty &&
+                                            _video?.deviceSize == null
+                                        ? null
+                                        : () => _scroll50(-50),
+                                    icon: const Icon(Icons.arrow_upward),
+                                    label: const Text('Up 50 px'),
+                                  ),
+                                  OutlinedButton.icon(
+                                    key: const Key('live-scroll-down'),
+                                    onPressed:
+                                        _elements.isEmpty &&
+                                            _video?.deviceSize == null
+                                        ? null
+                                        : () => _scroll50(50),
+                                    icon: const Icon(Icons.arrow_downward),
+                                    label: const Text('Down 50 px'),
+                                  ),
+                                ],
                               ),
                               const SizedBox(height: 8),
                               Wrap(

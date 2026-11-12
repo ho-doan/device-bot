@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+fn import_origin() -> String {
+    "import".into()
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -8,10 +12,12 @@ pub struct Project {
     pub name: String,
     pub source_dir: String,
     pub created_at: u64,
+    #[serde(default = "import_origin")]
+    pub origin: String,
 }
 
 /// The serialized robot-flow contract; no runner or platform dependency.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct CaseReport {
     pub name: String,
     pub status: String,
@@ -95,6 +101,10 @@ pub struct Run {
     pub counts: Counts,
     pub cases: Vec<Case>,
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub targets: Vec<String>,
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 impl Run {

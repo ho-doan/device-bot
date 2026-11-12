@@ -4,7 +4,7 @@ use axum::{
     extract::ConnectInfo,
     http::{Request, StatusCode},
 };
-use robot_report::{Store, model::CaseReport};
+use robot_report::{FlowIngest, Store, model::CaseReport};
 use serde_json::{Value, json};
 use std::{fs, net::SocketAddr, path::PathBuf};
 use tower::ServiceExt;
@@ -370,4 +370,115 @@ fn version_does_not_start_the_service_or_create_history() {
         .output()
         .unwrap();
     assert!(!invalid.status.success());
+}
+
+#[test]
+fn auto_ingest_groups_by_app_and_keeps_failed_and_dry_runs() {
+    let f = Fixture::new();
+    let failed = f.case("cli", "FAIL");
+    fs::write(
+        failed.join("case-1/scenario.yaml"),
+        "version: 2\nname: login\nsteps:\n  - id: launch\n    launch_app:\n      app_id: com.example.orbit\n",
+    )
+    .unwrap();
+    let first = f
+        .store
+        .ingest_flow(FlowIngest {
+            name: "Login fail".into(),
+            source: "cli".into(),
+            case_dir: failed,
+            app_id: Some("com.example.orbit".into()),
+            url: None,
+        })
+        .unwrap();
+    let project = f.store.project(&first.project_id).unwrap();
+    assert_eq!(project.origin, "auto");
+    assert_eq!(project.source_dir, "auto:ios:com.example.orbit");
+    let run = f.store.run(&first.project_id, &first.id).unwrap();
+    assert_eq!(run.counts.failed, 1);
+    assert_eq!(run.source.as_deref(), Some("cli"));
+    assert!(
+        run.cases[0]
+            .files
+            .iter()
+            .any(|file| file.name.ends_with("scenario.yaml"))
+    );
+
+    let dry = f.source.join("dry");
+    fs::create_dir_all(&dry).unwrap();
+    fs::write(
+        dry.join("report.json"),
+        serde_json::to_vec(&json!({
+            "name":"dry", "status":"DRY_RUN", "dry_run":true,
+            "selected_device":{"platform":"ios","id":"test-1"}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let second = f
+        .store
+        .ingest_flow(FlowIngest {
+            name: "Dry".into(),
+            source: "cli".into(),
+            case_dir: dry,
+            app_id: Some("com.example.orbit".into()),
+            url: None,
+        })
+        .unwrap();
+    assert_ne!(first.id, second.id);
+    assert_eq!(second.project_id, first.project_id);
+    assert_eq!(
+        f.store
+            .run(&second.project_id, &second.id)
+            .unwrap()
+            .counts
+            .not_run,
+        1
+    );
+}
+
+#[test]
+fn unpublished_inbox_is_indexed_once_on_store_open() {
+    let f = Fixture::new();
+    let inbox = f.root.join("runs").join("pending-web");
+    fs::create_dir_all(&inbox).unwrap();
+    fs::write(
+        inbox.join("report.json"),
+        serde_json::to_vec(&json!({
+            "name":"web", "status":"PASS",
+            "selected_device":{"platform":"chrome","id":"chrome:browser"}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        inbox.join("scenario.yaml"),
+        "url: https://shop.example.com/app\n",
+    )
+    .unwrap();
+    let opened = Store::open(f.store.root()).unwrap();
+    let projects = opened.projects().unwrap();
+    let web = projects
+        .iter()
+        .find(|project| project.source_dir == "auto:web:shop.example.com")
+        .unwrap();
+    assert_eq!(opened.runs(&web.id).unwrap().len(), 1);
+    let again = Store::open(f.store.root()).unwrap();
+    assert_eq!(again.runs(&web.id).unwrap().len(), 1);
+}
+
+#[test]
+fn ingest_does_not_require_a_manual_project_and_rejects_store_overlap() {
+    let f = Fixture::new();
+    assert!(
+        f.store
+            .ingest_flow(FlowIngest {
+                name: "inside".into(),
+                source: "qc".into(),
+                case_dir: f.store.root().to_path_buf(),
+                app_id: None,
+                url: None,
+            })
+            .is_err()
+    );
 }

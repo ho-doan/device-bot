@@ -29,6 +29,9 @@ pub fn run(arguments: impl Iterator<Item = String>) -> io::Result<()> {
     if std::env::var_os("DEVICE_BOT_BIN").is_none() {
         command.env("DEVICE_BOT_BIN", std::env::current_exe()?);
     }
+    if std::env::var_os("DEVICE_BOT_REPORT_DATA_DIR").is_none() {
+        command.env("DEVICE_BOT_REPORT_DATA_DIR", crate::flavor::reports_dir()?);
+    }
     let status = command.status()?;
     if !status.success() {
         std::process::exit(status.code().unwrap_or(1));

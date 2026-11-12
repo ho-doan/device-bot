@@ -713,6 +713,7 @@ fn setup_failure_cli_still_writes_junit() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_robot-flow"))
         .args(["--server", "/nonexistent/device-bot", "--artifacts"])
         .arg(tmp.0.join("reports"))
+        .env("DEVICE_BOT_REPORT_DATA_DIR", tmp.0.join("history"))
         .arg(&yaml)
         .output()
         .unwrap();
@@ -939,9 +940,11 @@ fn nested_recipe_parameters_are_not_interpolated_twice() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_robot-flow"))
         .args(["--dry-run", "--profiles"])
         .arg(profiles)
-        .args(["--target", "test"])
+        .args(["--target", "test", "--artifacts"])
+        .arg(tmp.0.join("reports"))
         .arg(scenario)
         .env("ROBOT_FLOW_LITERAL_INPUT", "  Đặng ${literal} AbC  ")
+        .env("DEVICE_BOT_REPORT_DATA_DIR", tmp.0.join("history"))
         .output()
         .unwrap();
     assert!(

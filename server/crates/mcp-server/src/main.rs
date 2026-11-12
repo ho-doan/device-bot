@@ -658,7 +658,10 @@ async fn main() -> std::io::Result<()> {
                 flavor::FLAVOR.name()
             );
             let mut flutter_companion = launch_flutter_companion(listen_address, &bearer_token);
-            let reports = robot_report::Store::open(flavor::reports_dir()?).ok();
+            let reports = robot_report::Store::open(
+                robot_report::default_reports_dir().unwrap_or(flavor::reports_dir()?),
+            )
+            .ok();
             if reports.is_none() {
                 eprintln!("robot-report history is unavailable; /reports will not be served");
             }

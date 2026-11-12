@@ -240,12 +240,14 @@ async fn main() {
             }
             Err(error) => setup_error(&format!("scenario-{}", i + 1), o.dry, error),
         };
-        if !o.dry {
-            if let Err(e) = save_report(&report, &dir) {
-                eprintln!("cannot save report: {e}");
-                failed = true;
-            } else {
-                eprintln!("Evidence: {}", dir.display());
+        if let Err(e) = save_report(&report, &dir) {
+            eprintln!("cannot save report: {e}");
+            failed = true;
+        } else {
+            eprintln!("Evidence: {}", dir.display());
+            let _ = fs::copy(path, dir.join("scenario.yaml"));
+            if let Err(error) = record_history(&report, &dir, &o) {
+                eprintln!("History not updated: {error}");
             }
         }
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
@@ -257,6 +259,26 @@ async fn main() {
     if failed {
         std::process::exit(1);
     }
+}
+
+fn record_history(report: &FlowReport, dir: &Path, options: &Options) -> Result<(), String> {
+    let root = robot_report::default_reports_dir().map_err(|e| e.to_string())?;
+    let store = robot_report::Store::open(root).map_err(|e| e.to_string())?;
+    let summary = store
+        .ingest_flow(robot_report::FlowIngest {
+            name: report.name.clone(),
+            source: if options.dry {
+                "cli-dry-run".into()
+            } else {
+                "cli".into()
+            },
+            case_dir: dir.to_path_buf(),
+            app_id: options.app.clone().filter(|value| !value.trim().is_empty()),
+            url: None,
+        })
+        .map_err(|e| e.to_string())?;
+    eprintln!("History: {} ({})", summary.name, summary.project_id);
+    Ok(())
 }
 
 fn setup_error(name: &str, dry_run: bool, error: String) -> FlowReport {

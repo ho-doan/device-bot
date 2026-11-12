@@ -54,8 +54,12 @@ terminal, so closing PowerShell does not stop it. Repeating `start` reuses a
 healthy report service; if it has stopped, `start` launches it again. Running
 `device-bot` always opens the browser, including when the service is already up.
 History is stored in `~/.device-bot/reports`, independent of the current working
-directory. Set `DEVICE_BOT_REPORT_DATA_DIR` to override it before starting the
-service. Startup diagnostics are written to `server.log` in that directory.
+directory. CLI `device-bot run` and QC `mobile_run_flow` copy each case into
+`~/.device-bot/runs/` and index it under an auto project grouped by app
+(platform + bundle) or web origin. Failures and dry-runs are kept; a history
+index error does not change the flow PASS/FAIL. Set `DEVICE_BOT_REPORT_DATA_DIR`
+to override the report store before starting the service. Startup diagnostics
+are written to `server.log` in that directory.
 Set `DEVICE_BOT_REPORT_PORT` before starting to use another loopback port;
 the default is 8765.
 

@@ -10,7 +10,11 @@ use robot_flow::{
     schema,
 };
 use serde_json::{Value, json};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 pub(super) const NAME: &str = "mobile_run_flow";
 
@@ -110,6 +114,24 @@ pub(super) async fn run(robot: &Arc<dyn Robot>, args: &Value) -> ToolResult {
         serde_json::to_vec_pretty(&result).unwrap(),
     ) {
         result["artifactWarning"] = json!(error.to_string());
+    } else if let Err(error) = record_history(&flow, &directory) {
+        result["historyWarning"] = json!(error);
     }
     ToolResult::structured(result)
+}
+
+fn record_history(flow: &FlowDocument, directory: &Path) -> Result<()> {
+    let store =
+        robot_report::Store::open(robot_report::default_reports_dir().map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    store
+        .ingest_flow(robot_report::FlowIngest {
+            name: flow.name.clone(),
+            source: "qc".into(),
+            case_dir: directory.to_path_buf(),
+            app_id: None,
+            url: None,
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }

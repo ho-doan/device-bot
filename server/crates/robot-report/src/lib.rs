@@ -2,5 +2,6 @@
 pub mod http;
 pub mod model;
 pub mod store;
+pub mod targets;
 pub use http::router;
-pub use store::Store;
+pub use store::{FlowIngest, Store, default_reports_dir};

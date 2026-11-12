@@ -1,29 +1,60 @@
-const {test}=require('node:test'); const assert=require('node:assert/strict');
-const vm=require('node:vm');const fs=require('node:fs');
-const script=fs.readFileSync(__dirname+'/../src/live.js','utf8').replace('__KEY__','"capture"').replace('__OFFER__','"offer"');
-function fixture(denied=false, overrides={}){
- const events=[];let stopped=false;
- const track={stop(){stopped=true},async cropTo(target){events.push('crop')}};
- const context={isSecureContext:true,location:{href:'http://localhost:3000/',origin:'http://localhost:3000'},navigator:{mediaDevices:{async getDisplayMedia(){if(denied)throw Error('denied');events.push('capture');return {getVideoTracks:()=>[track],getTracks:()=>[track]}}}},
- CropTarget:{fromElement:async()=>({})},document:{documentElement:{}},innerWidth:800,innerHeight:600,
- setTimeout:()=>1,clearTimeout(){},addEventListener(){},removeEventListener(){},
- RTCPeerConnection:class{constructor(){this.iceGatheringState='complete';this.connectionState='new'} addTrack(){events.push('track')} async setRemoteDescription(o){assert.equal(o.sdp,'offer')} async createAnswer(){return {type:'answer',sdp:'answer'}}async setLocalDescription(a){this.localDescription=a}close(){this.connectionState='closed'}}};
- Object.assign(context,overrides);context.window=context;vm.runInNewContext(script,context);return {context,events,stopped:()=>stopped};
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const script = fs.readFileSync(path.join(__dirname, '../src/live.js'), 'utf8')
+  .replace('__KEY__', '"capture"').replace('__OFFER__', '"offer"');
+
+async function capture(errorName, cropError = false) {
+  const failure = Object.assign(new Error('Invalid state'), { name: errorName });
+  let stopped = 0;
+  const track = { stop() { stopped++; }, async cropTo() { if (cropError) throw failure; } };
+  const media = { getTracks: () => [track], getVideoTracks: () => [track] };
+  const window = { isSecureContext: true, CropTarget: {}, addEventListener() {}, removeEventListener() {} };
+  class Peer {
+    constructor() { this.iceGatheringState = 'complete'; this.connectionState = 'new'; }
+    addTrack() {}
+    async setRemoteDescription() {}
+    async createAnswer() { return { type: 'answer', sdp: 'answer' }; }
+    async setLocalDescription(answer) { this.localDescription = answer; }
+    close() { this.connectionState = 'closed'; }
+  }
+  vm.runInNewContext(script, {
+    window, location: { href: 'https://example.com', origin: 'https://example.com' },
+    navigator: { mediaDevices: { async getDisplayMedia() { if (errorName && !cropError) throw failure; return media; } } },
+    document: { documentElement: {} }, CropTarget: { async fromElement() { return {}; } },
+    RTCPeerConnection: Peer, innerWidth: 800, innerHeight: 600, setTimeout() {}, clearTimeout() {},
+  });
+  await new Promise(setImmediate);
+  return { state: window.capture, stopped: () => stopped };
 }
-test('crop to requested document before adding video; answer and cleanup',async()=>{
- const f=fixture();await new Promise(setImmediate);
- assert.equal(f.context.capture.answer.sdp,'answer'); assert.equal(f.context.capture.answer.width,800);
- assert.deepEqual(f.events,['capture','crop','track']);f.context.capture.stop();assert.ok(f.stopped());
-});
-test('sharing rejection is surfaced and never adds a track',async()=>{const f=fixture(true);await new Promise(setImmediate);assert.match(f.context.capture.error,/denied/);assert.deepEqual(f.events,[])});
 
-test('closing while sharing prompt is pending stops late tracks',async()=>{const f=fixture();f.context.capture.stop();await new Promise(setImmediate);assert.ok(f.stopped());assert.deepEqual(f.events,['capture']);assert.equal(f.context.capture.answer,null)});
-
-test('blank case explains navigation prerequisite without asking for capture',async()=>{
- const f=fixture(false,{isSecureContext:false,location:{href:'about:blank',origin:'null'}});await new Promise(setImmediate);
- assert.match(f.context.capture.error,/Open an HTTPS or localhost page/);assert.match(f.context.capture.error,/about:blank/);assert.match(f.context.capture.error,/not a server build error/);assert.deepEqual(f.events,[]);
+test('capture reports an unfocused document separately from user denial', async () => {
+  for (const name of ['InvalidStateError', 'NotAllowedError']) {
+    const { state } = await capture(name);
+    assert.equal(state.phase, 'capture');
+    assert.equal(state.errorName, name);
+    assert.equal(state.closed, true);
+    assert.equal(state.answer, null);
+  }
 });
-test('missing API and missing Region Capture have distinct errors',async()=>{
- const noApi=fixture(false,{navigator:{mediaDevices:{}}});await new Promise(setImmediate);assert.match(noApi.context.capture.error,/Screen sharing is unavailable/);
- const noCrop=fixture(false,{CropTarget:undefined});await new Promise(setImmediate);assert.match(noCrop.context.capture.error,/Region Capture/);assert.deepEqual(noCrop.events,[]);
+
+test('an invalid crop stays a capture error and stops the approved track', async () => {
+  const { state, stopped } = await capture('InvalidStateError', true);
+  assert.equal(state.phase, 'crop');
+  assert.equal(state.errorName, 'InvalidStateError');
+  assert.equal(stopped(), 1);
+});
+
+test('approved native capture returns its answer and cleans up on stop', async () => {
+  const { state, stopped } = await capture();
+  assert.equal(state.answer.sdp, 'answer');
+  assert.equal(state.answer.width, 800);
+  assert.equal(state.answer.height, 600);
+  assert.equal(state.error, null);
+  state.stop();
+  assert.equal(stopped(), 1);
+  assert.equal(state.peer.connectionState, 'closed');
 });

@@ -344,16 +344,26 @@ For Chrome devices, the QC launch button is **Open URL**. Enter the target HTTP(
 URL in QC to navigate the current private case through `mobile_open_url`; no manual
 address entry in Chrome is required. Other platforms retain the Launch app picker.
 
-Web **Live control** uses browser-native `getDisplayMedia` and WebRTC with SDP and
-lifecycle managed by Rust. Unlike Android's H.264 adapter, browser video travels
-directly to the Flutter peer; Rust does not decode or re-encode it. There is no
-screenshot polling. In Chrome, choose **This Tab** and allow sharing. The source
-must be HTTPS or localhost. A newly started case is `about:blank`: first navigate
-that Chrome window to the target HTTPS or localhost URL, then open Live. Capture
-is unavailable on that blank page; rebuilding the server does not change this.
-Region Capture binds the stream to the controlled
-document, rejecting a mismatched tab selection. Reopen Live after navigation or
-resizing. Sharing ends on Stop, session shutdown, navigation, resize, or peer loss.
+Web **Live control** prefers browser-native `getDisplayMedia` and WebRTC on
+supported HTTPS/localhost pages. Before requesting capture, the bot activates
+the controlled tab and enables CDP focus emulation for the live session; cleanup
+disables focus emulation again. In Chrome, choose **This Tab** and allow sharing.
+Region Capture binds the stream to the controlled document, rejecting a
+mismatched tab selection. In this native path the browser sends video directly
+to Flutter without Rust re-encoding it.
+
+When the page lacks the capture APIs, or capture cannot start because Chrome
+reports missing focus/transient activation (`InvalidStateError`), Live uses CDP
+screencast events and FFmpeg/libx264 through the shared H.264 WebRTC gateway.
+It does not poll screenshots. A sharing permission denial (`NotAllowedError`)
+remains an error and does not switch capture methods. Reopen Live after navigation
+or resizing. Sharing ends on Stop, session shutdown, navigation, or peer loss.
+
+**Current limitation (2026-11-12, macOS / Chrome 157):** Google HTTPS Live still
+fails to display video in QC in the observed run, even though automatic tab focus
+works. This remains deferred; passing logic tests does not establish end-to-end
+video support. See the [follow-up note](../.planning/notes/2026-11-12-chrome-web-live-video-limit.md)
+for observations and the remaining verification.
 
 DOM inspection and inputs use the same MCP session as the private case (the root
 admin session cannot access another case). Select inspects and suggests YAML;

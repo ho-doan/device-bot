@@ -457,7 +457,7 @@ impl Robot for ChromeRobot {
             return Ok(None);
         }
         // A user denial is returned; it must never silently enable fallback capture.
-        self.start_live(id, offer).await.map(Some)
+        self.start_live(id, offer).await
     }
     async fn start_video_stream(&self, id: &str) -> Result<robot_core::VideoStream, RobotError> {
         self.start_screencast(id).await

@@ -278,9 +278,28 @@ pub struct UiRunnerStatus {
     pub diagnostics: Option<Value>,
 }
 
+/// One complete Annex B H.264 access unit, using the encoder presentation clock.
+pub struct VideoFrame {
+    pub data: Vec<u8>,
+    pub pts_us: u64,
+    pub keyframe: bool,
+}
+
+pub struct VideoStream {
+    pub width: u32,
+    pub height: u32,
+    pub frames: tokio::sync::mpsc::Receiver<Result<VideoFrame, RobotError>>,
+}
+
 /// Async, platform-independent device control boundary.
 #[async_trait]
 pub trait Robot: Send + Sync {
+    /// Encoded video only. Dropping the receiver stops capture and releases resources.
+    async fn start_video_stream(&self, device_id: &str) -> Result<VideoStream, RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "realtime video for {device_id}"
+        )))
+    }
     /// Isolate per-client state while sharing physical drivers where appropriate.
     fn fork_session(&self) -> Option<Arc<dyn Robot>> {
         None
@@ -337,6 +356,11 @@ pub trait Robot: Send + Sync {
         app_id: Option<&str>,
     ) -> Result<(), RobotError>;
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError>;
+    async fn clear_text(&self, device_id: &str) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "clearing text for {device_id}"
+        )))
+    }
     async fn swipe(
         &self,
         device_id: &str,
@@ -594,6 +618,9 @@ impl RobotRegistry {
 
 #[async_trait]
 impl Robot for RobotRegistry {
+    async fn start_video_stream(&self, id: &str) -> Result<VideoStream, RobotError> {
+        self.driver_for(id).await?.start_video_stream(id).await
+    }
     fn fork_session(&self) -> Option<Arc<dyn Robot>> {
         Some(Arc::new(Self::new(
             self.drivers
@@ -664,6 +691,9 @@ impl Robot for RobotRegistry {
     }
     async fn open_url(&self, id: &str, url: &str, app: Option<&str>) -> Result<(), RobotError> {
         self.driver_for(id).await?.open_url(id, url, app).await
+    }
+    async fn clear_text(&self, id: &str) -> Result<(), RobotError> {
+        self.driver_for(id).await?.clear_text(id).await
     }
     async fn type_text(&self, id: &str, text: &str) -> Result<(), RobotError> {
         self.driver_for(id).await?.type_text(id, text).await

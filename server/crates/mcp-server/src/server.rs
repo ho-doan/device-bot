@@ -26,6 +26,7 @@ impl Server {
     }
 
     pub async fn shutdown(&self) -> Result<(), robot_core::RobotError> {
+        self.tools.stop_streams().await;
         self.robot.close_session().await
     }
 

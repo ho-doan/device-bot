@@ -1,8 +1,4 @@
-//! Android screen mirror: screenshot frames, a slower element tree, and input.
-//!
-//! `screencap` is a still image, so the mirror is a few frames per second.
-//! Element dumps stay on their own cadence and do not run on every frame.
-//! One device gate keeps a frame, a tree dump, and a tap from overlapping.
+//! Android live inspection metadata and input. Video uses the WebRTC media gateway.
 
 use std::{
     collections::HashMap,
@@ -19,7 +15,6 @@ use axum::{
         sse::{Event, KeepAlive, Sse},
     },
 };
-use base64::{Engine, engine::general_purpose::STANDARD};
 use robot_core::{DeviceState, Platform, Point, Robot, RobotError, UiElement};
 use serde::Deserialize;
 use serde_json::json;
@@ -28,9 +23,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{AdminState, ErrorResponse, is_authorized};
 
-const FRAME_GAP: Duration = Duration::from_millis(200);
 const ELEMENT_GAP: Duration = Duration::from_millis(1200);
-const MAX_FRAME_FAILURES: u32 = 5;
 
 pub(crate) async fn android_live(
     Path(device_id): Path<String>,
@@ -206,6 +199,10 @@ async fn dispatch_input(
                 end.y.round()
             ))
         }
+        "clear" => {
+            robot.clear_text(device_id).await?;
+            Ok(format!("{device_id} clear text"))
+        }
         "type" => {
             let text = input.text.as_deref().unwrap_or("").trim();
             if text.is_empty() {
@@ -220,7 +217,7 @@ async fn dispatch_input(
             Ok(format!("{device_id} type"))
         }
         _ => Err(RobotError::InvalidInput(
-            "action must be tap, swipe, or type".into(),
+            "action must be tap, swipe, type, or clear".into(),
         )),
     }
 }
@@ -265,79 +262,33 @@ async fn mirror(
     sender: mpsc::Sender<Result<Event, std::convert::Infallible>>,
     max_frames: Option<u32>,
 ) {
-    let mut frames = 0u32;
-    let mut failures = 0u32;
-    let mut next_elements = tokio::time::Instant::now();
+    let mut updates = 0;
     let mut preferred = PreferredTree::Auto;
     loop {
-        if sender.is_closed() {
-            break;
-        }
-        let shot = {
-            let gate = device_gate(&device_id);
-            let _guard = gate.lock().await;
-            robot.take_screenshot(&device_id).await
-        };
-        match shot {
-            Ok(png) => {
-                failures = 0;
-                if send_json(&sender, "frame", json!({ "png": STANDARD.encode(png) }))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            Err(error) => {
-                failures += 1;
-                if send_json(&sender, "error", json!({ "error": error.to_string() }))
-                    .await
-                    .is_err()
-                    || failures >= MAX_FRAME_FAILURES
-                {
-                    break;
-                }
-                tokio::time::sleep(FRAME_GAP).await;
-                continue;
-            }
-        }
-
-        if tokio::time::Instant::now() >= next_elements {
-            next_elements = tokio::time::Instant::now() + ELEMENT_GAP;
-            let listed = {
+        let listed = tokio::select! {
+            _ = sender.closed() => break,
+            listed = async {
                 let gate = device_gate(&device_id);
                 let _guard = gate.lock().await;
                 inspection_tree(robot.as_ref(), &device_id, &mut preferred).await
-            };
-            match listed {
-                Ok((elements, source)) => {
-                    if send_json(
-                        &sender,
-                        "elements",
-                        json!({ "elements": elements, "source": source }),
-                    )
-                    .await
-                    .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    if send_json(&sender, "error", json!({ "error": error.to_string() }))
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
+            } => listed,
+        };
+        let sent = match listed {
+            Ok((elements, source)) => {
+                send_json(
+                    &sender,
+                    "elements",
+                    json!({"elements":elements,"source":source}),
+                )
+                .await
             }
-        }
-
-        frames += 1;
-        if max_frames.is_some_and(|limit| frames >= limit) || sender.is_closed() {
+            Err(error) => send_json(&sender, "error", json!({"error":error.to_string()})).await,
+        };
+        updates += 1;
+        if sent.is_err() || max_frames.is_some_and(|limit| updates >= limit) {
             break;
         }
-        tokio::time::sleep(FRAME_GAP).await;
+        tokio::select! { _ = sender.closed() => break, _ = tokio::time::sleep(ELEMENT_GAP) => {} }
     }
 }
 
@@ -440,11 +391,7 @@ mod tests {
         }
 
         async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
-            if device_id == "phone" {
-                Ok(vec![0x89, 0x50, 0x4e, 0x47])
-            } else {
-                Err(RobotError::DeviceNotFound(device_id.to_owned()))
-            }
+            panic!("live inspection must not capture screenshots: {device_id}")
         }
 
         async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
@@ -463,6 +410,13 @@ mod tests {
             Err(RobotError::Unsupported("unused".into()))
         }
 
+        async fn clear_text(&self, device_id: &str) -> Result<(), RobotError> {
+            self.actions
+                .lock()
+                .unwrap()
+                .push(format!("clear {device_id}"));
+            Ok(())
+        }
         async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {
             self.actions
                 .lock()
@@ -557,7 +511,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_stream_emits_a_frame_and_the_element_tree() {
+    async fn clear_text_uses_the_robot_boundary_without_typing_an_empty_string() {
+        let (admin, actions) = state(false);
+        let response = android_input(
+            Path("phone".into()),
+            State(admin),
+            authorized(),
+            Json(LiveInput {
+                action: "clear".into(),
+                x: None,
+                y: None,
+                end_x: None,
+                end_y: None,
+                text: None,
+                duration_ms: None,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert_eq!(*actions.lock().unwrap(), vec!["clear phone"]);
+    }
+
+    #[tokio::test]
+    async fn live_inspection_emits_elements_without_capturing_screenshots() {
         let (admin, _) = state(false);
         let response = android_live(
             Path("phone".into()),
@@ -574,7 +550,7 @@ mod tests {
             .await
             .unwrap();
         let text = String::from_utf8(body.to_vec()).unwrap();
-        assert!(text.contains("event: frame"), "{text}");
+        assert!(!text.contains("event: frame"), "{text}");
         assert!(text.contains("event: elements"), "{text}");
         assert!(text.contains("Save"), "{text}");
         assert!(text.contains("\"source\":\"native\""), "{text}");

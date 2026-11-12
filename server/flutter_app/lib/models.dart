@@ -239,6 +239,8 @@ class AdminElement {
     this.source,
     this.index,
     this.position,
+    this.focused,
+    this.elementType,
   });
 
   factory AdminElement.fromJson(Map<String, dynamic> json) => AdminElement(
@@ -252,6 +254,8 @@ class AdminElement {
     source: json['source'] as String?,
     index: json['index'] as int?,
     position: json['position'] as int?,
+    focused: json['focused'] as bool?,
+    elementType: json['elementType'] as String?,
   );
 
   final String className;
@@ -261,6 +265,11 @@ class AdminElement {
   final AdminBounds bounds;
   final bool clickable;
   final bool enabled;
+  final bool? focused;
+  final String? elementType;
+  bool get isEditable =>
+      elementType == 'textField' ||
+      className.toLowerCase().contains('edittext');
   final String? source;
   final int? index;
 

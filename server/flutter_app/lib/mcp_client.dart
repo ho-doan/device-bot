@@ -9,9 +9,8 @@ import 'local_connection.dart';
 /// MCP client used by the Flutter companion.
 ///
 /// Device control goes through the same initialize/session/tools/call contract
-/// as any other MCP client. The Android live mirror is the exception: MCP is
-/// one response per call, so frames use the admin event stream and taps use
-/// the admin input route on the same server.
+/// as any other MCP client. Video uses WebRTC with SDP/lifecycle over MCP.
+/// Inspection metadata and input use authenticated admin endpoints.
 class McpClient {
   McpClient({
     required String baseUrl,
@@ -172,10 +171,24 @@ class McpClient {
     );
   }
 
-  /// Screenshot frames and element snapshots for an available Android device.
-  ///
-  /// Cancel the subscription to stop the mirror. Frames are screencaps, so
-  /// the rate stays at a few images per second.
+  /// Negotiate realtime video without sending media through MCP.
+  Future<Map<String, dynamic>> startAndroidStream(
+    String deviceId,
+    String sdp,
+  ) async {
+    final result = await callTool('mobile_start_stream', {
+      'deviceId': deviceId,
+      'sdp': sdp,
+    });
+    return result.structuredContent ??
+        Map<String, dynamic>.from(jsonDecode(result.text!) as Map);
+  }
+
+  Future<void> stopAndroidStream(String streamId) async {
+    await callTool('mobile_stop_stream', {'streamId': streamId});
+  }
+
+  /// Inspection metadata only; video arrives independently over WebRTC.
   Stream<AndroidLiveUpdate> watchAndroidLive(String deviceId) async* {
     if (_disposed) {
       throw const McpException('MCP client is closed.');
@@ -471,7 +484,12 @@ class McpClient {
     final starting =
         body['method'] == 'tools/call' &&
         (body['params'] as Map?)?['name'] == 'mobile_boot_device';
-    final timeout = Duration(seconds: preparing || starting ? 300 : 30);
+    final negotiatingVideo =
+        body['method'] == 'tools/call' &&
+        (body['params'] as Map?)?['name'] == 'mobile_start_stream';
+    final timeout = Duration(
+      seconds: preparing || starting ? 300 : (negotiatingVideo ? 60 : 30),
+    );
     try {
       final request = await client.postUrl(_baseUri.resolve('/mcp'));
       request.headers.contentType = ContentType.json;
@@ -551,11 +569,12 @@ class McpClient {
               .deleteUrl(_baseUri.resolve('/mcp'))
               .timeout(const Duration(seconds: 10));
           request.headers.set('mcp-session-id', session);
-          if (bearerToken.trim().isNotEmpty)
+          if (bearerToken.trim().isNotEmpty) {
             request.headers.set(
               HttpHeaders.authorizationHeader,
               'Bearer ${bearerToken.trim()}',
             );
+          }
           final response = await request.close().timeout(
             const Duration(seconds: 10),
           );
@@ -696,7 +715,7 @@ AndroidLiveUpdate? decodeAndroidLiveEvent(String name, String data) {
             AdminElement.fromJson({
               ...Map<String, dynamic>.from(values[i] as Map),
               'index': i + 1,
-              if (source != null) 'source': source,
+              'source': ?source,
             }),
           );
         } on Object {

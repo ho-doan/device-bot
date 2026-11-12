@@ -72,6 +72,56 @@ void main() {
     );
   });
 
+  test(
+    'only enabled clickable elements accept a tap; blank space is ignored',
+    () {
+      const button = AdminElement(
+        className: 'Button',
+        resourceId: null,
+        text: 'Save',
+        contentDescription: null,
+        bounds: AdminBounds(left: 10, top: 20, right: 30, bottom: 40),
+        clickable: true,
+        enabled: true,
+      );
+      const disabled = AdminElement(
+        className: 'Button',
+        resourceId: null,
+        text: 'Disabled',
+        contentDescription: null,
+        bounds: AdminBounds(left: 50, top: 20, right: 70, bottom: 40),
+        clickable: true,
+        enabled: false,
+      );
+      const label = AdminElement(
+        className: 'TextView',
+        resourceId: null,
+        text: 'Label',
+        contentDescription: null,
+        bounds: AdminBounds(left: 10, top: 50, right: 30, bottom: 70),
+        clickable: false,
+        enabled: true,
+      );
+      const elements = [button, disabled, label];
+      expect(
+        actionableElementAtDevicePoint(elements, const Offset(20, 30)),
+        button,
+      );
+      expect(
+        actionableElementAtDevicePoint(elements, const Offset(60, 30)),
+        isNull,
+      );
+      expect(
+        actionableElementAtDevicePoint(elements, const Offset(20, 60)),
+        isNull,
+      );
+      expect(
+        actionableElementAtDevicePoint(elements, const Offset(99, 99)),
+        isNull,
+      );
+    },
+  );
+
   testWidgets('live control is offered only for Android devices', (
     tester,
   ) async {
@@ -120,7 +170,64 @@ void main() {
     expect(buttons.last.onPressed, isNull);
   });
 
-  testWidgets('tapping an element in the live list sends its center', (
+  testWidgets(
+    'clear targets the focused Android editor and leaves the QC draft',
+    (tester) async {
+      final inputs = <Map<String, dynamic>>[];
+      final updates = StreamController<AndroidLiveUpdate>();
+      addTearDown(updates.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AndroidLiveDialog(
+            deviceName: 'Phone',
+            connect: () => updates.stream,
+            onInput: (input) async {
+              inputs.add(input);
+            },
+          ),
+        ),
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.byKey(const Key('android-live-clear-text')),
+            )
+            .onPressed,
+        isNull,
+      );
+      updates.add(
+        AndroidLiveElements(
+          source: 'native',
+          elements: const [
+            AdminElement(
+              className: 'android.widget.EditText',
+              resourceId: 'editor',
+              text: 'old text',
+              contentDescription: null,
+              bounds: AdminBounds(left: 0, top: 0, right: 100, bottom: 40),
+              clickable: true,
+              enabled: true,
+              focused: true,
+              elementType: 'textField',
+            ),
+          ],
+        ),
+      );
+      await tester.pump();
+      await tester.enterText(
+        find.byKey(const Key('android-live-type')),
+        'draft',
+      );
+      await tester.tap(find.byKey(const Key('android-live-clear-text')));
+      await tester.pump();
+      expect(inputs, [
+        {'action': 'clear'},
+      ]);
+      expect(find.text('draft'), findsOneWidget);
+    },
+  );
+
+  testWidgets('non-clickable nodes can be inspected but cannot be tapped', (
     tester,
   ) async {
     final inputs = <Map<String, dynamic>>[];
@@ -142,25 +249,84 @@ void main() {
         source: 'native',
         elements: const [
           AdminElement(
-            className: 'Button',
-            resourceId: null,
-            text: 'Save',
+            className: 'TextView',
+            resourceId: 'label',
+            text: 'Label',
             contentDescription: null,
-            bounds: AdminBounds(left: 10, top: 20, right: 30, bottom: 60),
-            clickable: true,
-            enabled: true,
-            index: 1,
+            bounds: AdminBounds(left: 0, top: 0, right: 100, bottom: 40),
+            clickable: false,
+            enabled: false,
           ),
         ],
       ),
     );
     await tester.pump();
-
-    expect(find.text('Save'), findsOneWidget);
-    await tester.tap(find.text('Save'));
+    await tester.tap(find.byKey(const ValueKey('android-live-element-0')));
     await tester.pump();
-    expect(inputs, [
-      {'action': 'tap', 'x': 20, 'y': 40},
-    ]);
+    expect(inputs, isEmpty);
+    expect(find.byKey(const Key('android-live-yaml')), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const Key('android-live-tap-selected')),
+          )
+          .onPressed,
+      isNull,
+    );
   });
+
+  testWidgets(
+    'selection only inspects YAML; explicit Tap selected sends the center',
+    (tester) async {
+      final inputs = <Map<String, dynamic>>[];
+      final updates = StreamController<AndroidLiveUpdate>();
+      addTearDown(updates.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AndroidLiveDialog(
+            deviceName: 'Phone',
+            connect: () => updates.stream,
+            onInput: (input) async {
+              inputs.add(input);
+            },
+          ),
+        ),
+      );
+      updates.add(
+        AndroidLiveElements(
+          source: 'native',
+          elements: const [
+            AdminElement(
+              className: 'Button',
+              resourceId: null,
+              text: 'Save',
+              contentDescription: null,
+              bounds: AdminBounds(left: 10, top: 20, right: 30, bottom: 60),
+              clickable: true,
+              enabled: true,
+              index: 1,
+            ),
+          ],
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Save'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('android-live-element-0')));
+      await tester.pump();
+      expect(inputs, isEmpty);
+      expect(find.byKey(const Key('android-live-yaml')), findsOneWidget);
+      final yaml = tester
+          .widget<SelectableText>(find.byKey(const Key('android-live-yaml')))
+          .data!;
+      expect(yaml, contains('assert_element:'));
+      expect(yaml, contains('label: "Save"'));
+      expect(find.byTooltip('Copy YAML'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('android-live-tap-selected')));
+      await tester.pump();
+      expect(inputs, [
+        {'action': 'tap', 'x': 20, 'y': 40},
+      ]);
+    },
+  );
 }

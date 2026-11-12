@@ -1,0 +1,16 @@
+[package]
+name = "robot-stream"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+robot-core = { path = "../robot-core" }
+serde.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+webrtc = "=0.14.0"
+
+[dev-dependencies]
+robot-android = { path = "../robot-android" }

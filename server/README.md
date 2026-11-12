@@ -314,6 +314,45 @@ default, or one SSE `message` event when the client sends
 `Accept: text/event-stream`. `DELETE /mcp` with the same session header closes
 the in-memory session.
 
+## Android realtime viewer
+
+Android Live uses scrcpy-server (MediaCodec H.264), ADB, the shared Rust
+`robot-stream` WebRTC gateway, and `flutter_webrtc` in the QC companion.
+There is no screenshot polling. MCP handles SDP negotiation and lifecycle:
+`mobile_start_stream` accepts `deviceId` and a complete, ICE-gathered receive-only
+video SDP `sdp`; its structured result contains `streamId`, answer `sdp`, `width`,
+and `height`. Apply the answer to the viewer peer. `mobile_stop_stream` accepts
+`streamId` and is idempotent. Streams belong to the MCP session and stop on
+session close, viewer disconnect, capture failure, or a 20-second connection timeout.
+
+Install matching scrcpy client/server **5.0.1** (tested on Samsung Android 10), or
+use the **3.3.4** protocol adapter. Homebrew and standard Linux server locations
+are detected automatically. For portable/custom installations set both
+`SCRCPY_SERVER_PATH` (host jar path) and `SCRCPY_SERVER_VERSION` (exact version).
+Unsupported versions fail explicitly because the scrcpy wire protocol is versioned.
+The server pushes the jar and creates a per-stream ADB forward; closing capture
+releases the process, socket and forward. Keep the launch arguments minimal:
+redundant defaults caused a native Samsung encoder crash during device testing.
+
+The viewer connects directly to Rust using local/LAN ICE candidates (no external
+STUN/TURN configured). Video is not decoded/re-encoded by Rust. Inspection metadata
+travels separately over authenticated SSE; taps/swipes/text use the authenticated
+admin input endpoint. Clicking the video or a list item selects an element for
+inspection only, including disabled/non-clickable nodes. `Tap selected` explicitly
+sends a device tap and is enabled only for an enabled, clickable selection.
+The inspector previews robot-flow YAML (tap, assert, text or scroll) with a Copy
+YAML action; copying never controls the device. Dragging the video still scrolls.
+`Send text` types into the focused Android editor. `Clear Android field` clears
+that editor through the existing scrcpy control socket using Ctrl+A then Delete;
+it is disabled without an enabled, focused editor, and the server rechecks focus.
+Clearing Android does not delete the QC text draft.
+
+To run the physical-device regression test:
+
+```sh
+DEVICE_BOT_TEST_ANDROID=<adb-serial> cargo test -p robot-stream physical_device_stream_arrives_over_webrtc_and_stops -- --ignored --nocapture
+```
+
 ## Optional local admin API
 
 The same explicit HTTP listener also exposes local operator endpoints:
@@ -323,6 +362,8 @@ The same explicit HTTP listener also exposes local operator endpoints:
 | `GET /admin/devices` | Current devices from the robot registry |
 | `GET /admin/devices/{device_id}/screenshot` | Current device PNG for the companion viewer |
 | `GET /admin/devices/{device_id}/elements` | Normalized accessibility tree used to draw labeled bounds over the screenshot; supports optional `filter` and `maxResults` query parameters |
+| `GET /admin/devices/{device_id}/live` | Android element metadata over SSE; no video frames |
+| `POST /admin/devices/{device_id}/input` | Android viewer tap/swipe/text |
 | `GET /admin/config` | Safe-to-display auth and log-buffer status |
 | `GET /admin/logs` | Bounded, recent MCP request activity |
 | `GET /admin/logs/stream` | Future activity as server-sent events |
@@ -331,7 +372,7 @@ They share the HTTP listener's bearer-token policy. The Flutter companion
 source lives in [`flutter_app/`](flutter_app/), but uses the MCP session above
 for device discovery, boot, app launch, screenshot, accessibility inspection,
 and manual actions. These admin endpoints remain available for diagnostics and
-are not part of the companion's device-control path. The companion is a client
+also carry Android Live inspection and input. The companion is a client
 only; the Rust CLI owns the server lifecycle and launches the companion after
 the MCP listener is ready.
 

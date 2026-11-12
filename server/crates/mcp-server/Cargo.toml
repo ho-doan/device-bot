@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+robot-stream = { path = "../robot-stream" }
 axum.workspace = true
 base64 = "0.22.1"
 device-mcp-protocol = { path = "../mcp-protocol" }

@@ -27,6 +27,7 @@ use tokio::{process::Command, sync::Mutex};
 use url::Url;
 
 mod emulator;
+mod video;
 
 static TREE_DUMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -121,6 +122,7 @@ pub struct AndroidRobot<R = TokioCommandRunner> {
     artifact_dir: PathBuf,
     recordings: Arc<Mutex<HashMap<String, ActiveRecording>>>,
     runner: R,
+    video_controls: Arc<video::Controls>,
 }
 
 impl AndroidRobot<TokioCommandRunner> {
@@ -147,6 +149,7 @@ impl<R> AndroidRobot<R> {
             artifact_dir: artifact_dir.into(),
             recordings: Arc::default(),
             runner,
+            video_controls: Arc::default(),
         }
     }
 
@@ -183,6 +186,13 @@ impl<R> AndroidRobot<R> {
 
 #[async_trait]
 impl<R: CommandRunner> Robot for AndroidRobot<R> {
+    async fn start_video_stream(
+        &self,
+        device_id: &str,
+    ) -> Result<robot_core::VideoStream, RobotError> {
+        ensure_device_id(device_id)?;
+        video::start(self.adb_path(), device_id, &self.video_controls).await
+    }
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
         self.discover_devices().await
     }
@@ -391,6 +401,21 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
         }
         self.run_adb(&args).await?;
         Ok(())
+    }
+
+    async fn clear_text(&self, device_id: &str) -> Result<(), RobotError> {
+        ensure_device_id(device_id)?;
+        let elements = self.list_elements(device_id).await?;
+        if !elements.iter().any(|element| {
+            element.focused == Some(true)
+                && element.enabled
+                && element.element_type == Some(ElementType::TextField)
+        }) {
+            return Err(RobotError::InvalidInput(
+                "Focus an editable Android field before clearing text".into(),
+            ));
+        }
+        self.video_controls.clear_text(device_id).await
     }
 
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {
@@ -1057,6 +1082,21 @@ mod tests {
                 .to_string()
                 .contains("KEYCODE_ENTER was not sent")
         );
+    }
+
+    #[tokio::test]
+    async fn clear_rejects_non_editable_focus_before_sending_keys() {
+        let runner = FakeRunner::new([
+            successful(""),
+            successful(
+                r#"<hierarchy><node text="Button" class="android.widget.Button" focused="true" enabled="true" bounds="[0,0][100,40]" /></hierarchy>"#,
+            ),
+            successful(""),
+        ]);
+        let robot = AndroidRobot::with_runner("adb-test", runner);
+        let error = robot.clear_text("phone").await.unwrap_err();
+        assert!(error.to_string().contains("Focus an editable"));
+        assert_eq!(robot.runner.calls.lock().unwrap().len(), 3);
     }
 
     #[tokio::test]

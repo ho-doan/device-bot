@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'inspector_yaml.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'android_video.dart';
 
 import 'mcp_client.dart';
 import 'models.dart';
@@ -54,14 +56,25 @@ AdminElement? elementAtDevicePoint(List<AdminElement> elements, Offset point) {
   return null;
 }
 
+/// Blank space and disabled/non-actionable nodes never generate device taps.
+AdminElement? actionableElementAtDevicePoint(
+  List<AdminElement> elements,
+  Offset point,
+) => elementAtDevicePoint(
+  elements.where((element) => element.clickable && element.enabled).toList(),
+  point,
+);
+
 class AndroidLiveDialog extends StatefulWidget {
   const AndroidLiveDialog({
     required this.deviceName,
     required this.connect,
     required this.onInput,
+    this.openVideo,
     super.key,
   });
 
+  final Future<AndroidVideoSession> Function()? openVideo;
   final String deviceName;
   final Stream<AndroidLiveUpdate> Function() connect;
   final Future<void> Function(Map<String, dynamic> input) onInput;
@@ -74,19 +87,20 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   final TextEditingController _text = TextEditingController();
   StreamSubscription<AndroidLiveUpdate>? _subscription;
   Future<void> _inputs = Future<void>.value();
-  ui.Image? _image;
+  AndroidVideoSession? _video;
   List<AdminElement> _elements = const [];
   String? _source;
   String? _status;
   int? _selectedIndex;
-  int _decodeGeneration = 0;
   bool _stopped = false;
+  InspectorFlowAction _yamlAction = InspectorFlowAction.assertVisible;
   Offset? _panOrigin;
   Offset? _panLatest;
 
   @override
   void initState() {
     super.initState();
+    if (widget.openVideo != null) unawaited(_openVideo());
     _subscription = widget.connect().listen(
       _onUpdate,
       onError: (Object error) {
@@ -102,21 +116,35 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   void dispose() {
     unawaited(_subscription?.cancel());
     _text.dispose();
-    _image?.dispose();
+    _video?.removeListener(_videoChanged);
+    unawaited(_video?.close().catchError((Object _) {}));
     super.dispose();
   }
 
   void _onUpdate(AndroidLiveUpdate update) {
     if (!mounted) return;
     switch (update) {
-      case AndroidLiveFrame(:final png):
-        unawaited(_decode(png));
+      case AndroidLiveFrame():
+        break;
       case AndroidLiveElements(:final elements, :final source):
         setState(() {
+          final previous = _selectedIndex == null
+              ? null
+              : _elements[_selectedIndex!];
           _elements = elements;
           _source = source;
-          if (_selectedIndex != null && _selectedIndex! >= elements.length) {
-            _selectedIndex = null;
+          if (previous != null) {
+            final match = elements.indexWhere(
+              (element) =>
+                  element.className == previous.className &&
+                  element.resourceId == previous.resourceId &&
+                  element.source == previous.source &&
+                  element.bounds.left == previous.bounds.left &&
+                  element.bounds.top == previous.bounds.top &&
+                  element.bounds.right == previous.bounds.right &&
+                  element.bounds.bottom == previous.bounds.bottom,
+            );
+            _selectedIndex = match < 0 ? null : match;
           }
         });
       case AndroidLiveStatus(:final message):
@@ -124,23 +152,26 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     }
   }
 
-  Future<void> _decode(Uint8List bytes) async {
-    final generation = ++_decodeGeneration;
+  Future<void> _openVideo() async {
     try {
-      final codec = await ui.instantiateImageCodec(bytes);
-      final frame = await codec.getNextFrame();
-      codec.dispose();
-      if (!mounted || generation != _decodeGeneration) {
-        frame.image.dispose();
+      final video = await widget.openVideo!();
+      if (!mounted) {
+        await video.close();
         return;
       }
-      final previous = _image;
-      setState(() => _image = frame.image);
-      previous?.dispose();
-    } on Object {
-      if (mounted && generation == _decodeGeneration) {
-        setState(() => _status = 'Could not decode a live frame.');
-      }
+      _video = video;
+      video.addListener(_videoChanged);
+      setState(() {});
+    } on Object catch (error) {
+      if (mounted) setState(() => _status = error.toString());
+    }
+  }
+
+  void _videoChanged() {
+    if (mounted) {
+      setState(() {
+        _status = _video?.status;
+      });
     }
   }
 
@@ -162,18 +193,39 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     });
   }
 
-  void _tap(Offset devicePoint) {
-    _select(devicePoint);
+  void _tapSelected() {
+    final index = _selectedIndex;
+    if (index == null || index >= _elements.length) return;
+    final element = _elements[index];
+    if (!element.enabled || !element.clickable) return;
+    final bounds = element.bounds;
     _send({
       'action': 'tap',
-      'x': devicePoint.dx.round(),
-      'y': devicePoint.dy.round(),
+      'x': ((bounds.left + bounds.right) / 2).round(),
+      'y': ((bounds.top + bounds.bottom) / 2).round(),
     });
+  }
+
+  String _yamlFor(AdminElement element) => buildInspectorFlowYaml(
+    element: element,
+    elements: _elements,
+    action: _yamlAction,
+    sequence: 1,
+    inputText: _text.text,
+  );
+
+  Future<void> _copyYaml(AdminElement element) async {
+    await Clipboard.setData(ClipboardData(text: _yamlFor(element)));
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('YAML copied')));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final image = _image;
+    final video = _video;
     final selected =
         _selectedIndex != null && _selectedIndex! < _elements.length
         ? _elements[_selectedIndex!]
@@ -202,8 +254,8 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
               child: Text(
                 _stopped
                     ? 'Live mirror stopped.'
-                    : 'Screenshots a few times a second. Tap or drag the image. Element boxes refresh about once a second.'
-                          '${source == null ? '' : ' $_elements.length elements from the $source.'}',
+                    : 'Select an element to inspect. Use Tap selected to control the device. Drag the video to scroll.'
+                          '${source == null ? '' : ' ${_elements.length} elements from the $source.'}',
                 key: const Key('android-live-status'),
               ),
             ),
@@ -219,7 +271,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
               child: Row(
                 children: [
                   Expanded(
-                    child: image == null
+                    child: video == null || !video.hasVideo
                         ? const Center(child: CircularProgressIndicator())
                         : LayoutBuilder(
                             builder: (context, constraints) {
@@ -227,10 +279,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                 constraints.maxWidth,
                                 constraints.maxHeight,
                               );
-                              final imageSize = Size(
-                                image.width.toDouble(),
-                                image.height.toDouble(),
-                              );
+                              final imageSize = video.deviceSize;
                               final fitted = fittedScreenshotRect(
                                 viewport: viewport,
                                 image: imageSize,
@@ -243,7 +292,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                     viewport: viewport,
                                     image: imageSize,
                                   );
-                                  if (point != null) _tap(point);
+                                  if (point != null) _select(point);
                                 },
                                 onPanStart: (details) {
                                   _panOrigin = details.localPosition;
@@ -271,7 +320,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                   );
                                   if (end == null ||
                                       (latest - origin).distance < 12) {
-                                    _tap(start);
+                                    _select(start);
                                     return;
                                   }
                                   _send({
@@ -287,11 +336,10 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                   children: [
                                     Positioned.fromRect(
                                       rect: fitted,
-                                      child: RawImage(
-                                        image: image,
-                                        fit: BoxFit.fill,
-                                        width: fitted.width,
-                                        height: fitted.height,
+                                      child: RTCVideoView(
+                                        video.renderer,
+                                        objectFit: RTCVideoViewObjectFit
+                                            .RTCVideoViewObjectFitContain,
                                       ),
                                     ),
                                     Positioned.fill(
@@ -311,60 +359,195 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                           ),
                   ),
                   SizedBox(
-                    width: 300,
+                    width: 340,
                     child: Column(
                       children: [
-                        if (selected != null)
-                          ListTile(
-                            title: Text(selected.name),
-                            subtitle: Text(
-                              '${selected.bounds.left},${selected.bounds.top} '
-                              '${selected.bounds.width}×${selected.bounds.height}',
-                            ),
-                          ),
                         Expanded(
-                          child: ListView.builder(
-                            itemCount: _elements.length,
-                            itemBuilder: (context, index) {
-                              final element = _elements[index];
-                              return ListTile(
-                                key: ValueKey('android-live-element-$index'),
-                                selected: index == _selectedIndex,
-                                title: Text(element.name),
-                                dense: true,
-                                onTap: () {
-                                  final bounds = element.bounds;
-                                  setState(() => _selectedIndex = index);
-                                  _tap(
-                                    Offset(
-                                      (bounds.left + bounds.right) / 2,
-                                      (bounds.top + bounds.bottom) / 2,
+                          child: CustomScrollView(
+                            slivers: [
+                              if (selected != null)
+                                SliverToBoxAdapter(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        Text(
+                                          selected.name,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        SelectableText(
+                                          'Selector: ${selected.selector}\n${selected.className}\n'
+                                          '${selected.bounds.left},${selected.bounds.top}  ${selected.bounds.width}×${selected.bounds.height}',
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodySmall,
+                                        ),
+                                        const SizedBox(height: 8),
+                                        FilledButton.icon(
+                                          key: const Key(
+                                            'android-live-tap-selected',
+                                          ),
+                                          onPressed:
+                                              selected.clickable &&
+                                                  selected.enabled
+                                              ? _tapSelected
+                                              : null,
+                                          icon: const Icon(
+                                            Icons.touch_app_outlined,
+                                          ),
+                                          label: const Text('Tap selected'),
+                                        ),
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child:
+                                                  DropdownButton<
+                                                    InspectorFlowAction
+                                                  >(
+                                                    isExpanded: true,
+                                                    value: _yamlAction,
+                                                    items: const [
+                                                      DropdownMenuItem(
+                                                        value:
+                                                            InspectorFlowAction
+                                                                .assertVisible,
+                                                        child: Text(
+                                                          'YAML: Assert visible',
+                                                        ),
+                                                      ),
+                                                      DropdownMenuItem(
+                                                        value:
+                                                            InspectorFlowAction
+                                                                .tap,
+                                                        child: Text(
+                                                          'YAML: Tap element',
+                                                        ),
+                                                      ),
+                                                      DropdownMenuItem(
+                                                        value:
+                                                            InspectorFlowAction
+                                                                .typeText,
+                                                        child: Text(
+                                                          'YAML: Type text',
+                                                        ),
+                                                      ),
+                                                      DropdownMenuItem(
+                                                        value:
+                                                            InspectorFlowAction
+                                                                .scrollUp,
+                                                        child: Text(
+                                                          'YAML: Scroll up',
+                                                        ),
+                                                      ),
+                                                      DropdownMenuItem(
+                                                        value:
+                                                            InspectorFlowAction
+                                                                .scrollDown,
+                                                        child: Text(
+                                                          'YAML: Scroll down',
+                                                        ),
+                                                      ),
+                                                    ],
+                                                    onChanged: (action) {
+                                                      if (action != null) {
+                                                        setState(
+                                                          () => _yamlAction =
+                                                              action,
+                                                        );
+                                                      }
+                                                    },
+                                                  ),
+                                            ),
+                                            IconButton(
+                                              tooltip: 'Copy YAML',
+                                              onPressed: () =>
+                                                  _copyYaml(selected),
+                                              icon: const Icon(
+                                                Icons.copy_outlined,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        SizedBox(
+                                          height: 100,
+                                          child: SingleChildScrollView(
+                                            child: SelectableText(
+                                              _yamlFor(selected),
+                                              key: const Key(
+                                                'android-live-yaml',
+                                              ),
+                                              style: const TextStyle(
+                                                fontFamily: 'monospace',
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
+                                  ),
+                                ),
+                              SliverList.builder(
+                                itemCount: _elements.length,
+                                itemBuilder: (context, index) {
+                                  final element = _elements[index];
+                                  return ListTile(
+                                    key: ValueKey(
+                                      'android-live-element-$index',
+                                    ),
+                                    selected: index == _selectedIndex,
+                                    title: Text(element.name),
+                                    dense: true,
+                                    onTap: () =>
+                                        setState(() => _selectedIndex = index),
                                   );
                                 },
-                              );
-                            },
+                              ),
+                            ],
                           ),
                         ),
                         Padding(
                           padding: const EdgeInsets.all(12),
-                          child: Row(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              Expanded(
-                                child: TextField(
-                                  key: const Key('android-live-type'),
-                                  controller: _text,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Type into focused field',
-                                    isDense: true,
-                                  ),
-                                  onSubmitted: (_) => _submitText(),
+                              TextField(
+                                key: const Key('android-live-type'),
+                                controller: _text,
+                                decoration: const InputDecoration(
+                                  labelText: 'Text for focused Android field',
+                                  isDense: true,
                                 ),
+                                onChanged: (_) => setState(() {}),
+                                onSubmitted: (_) => _submitText(),
                               ),
-                              const SizedBox(width: 8),
-                              FilledButton(
-                                onPressed: _submitText,
-                                child: const Text('Send'),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  FilledButton(
+                                    key: const Key('android-live-send-text'),
+                                    onPressed: _submitText,
+                                    child: const Text('Send text'),
+                                  ),
+                                  OutlinedButton(
+                                    key: const Key('android-live-clear-text'),
+                                    onPressed:
+                                        _elements.any(
+                                          (element) =>
+                                              element.focused == true &&
+                                              element.enabled &&
+                                              element.isEditable,
+                                        )
+                                        ? () => _send({'action': 'clear'})
+                                        : null,
+                                    child: const Text('Clear Android field'),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
@@ -385,7 +568,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     final text = _text.text.trim();
     if (text.isEmpty) return;
     _send({'action': 'type', 'text': text});
-    _text.clear();
+    setState(_text.clear);
   }
 }
 

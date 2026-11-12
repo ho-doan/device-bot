@@ -10,6 +10,7 @@ mod navigation;
 mod recording;
 mod runner_status;
 mod screen;
+mod stream;
 mod ui;
 
 use std::sync::Arc;
@@ -19,11 +20,19 @@ use robot_core::Robot;
 
 pub(crate) struct ToolRegistry {
     robot: Arc<dyn Robot>,
+    streams: robot_stream::StreamManager,
 }
 
 impl ToolRegistry {
     pub(crate) fn new(robot: Arc<dyn Robot>) -> Self {
-        Self { robot }
+        Self {
+            robot,
+            streams: robot_stream::StreamManager::default(),
+        }
+    }
+
+    pub(crate) async fn stop_streams(&self) {
+        self.streams.stop_all().await;
     }
 
     pub(crate) fn definitions(&self) -> Vec<ToolDefinition> {
@@ -40,6 +49,7 @@ impl ToolRegistry {
         definitions.extend(app::definitions());
         definitions.push(apps::definition());
         definitions.extend(recording::definitions());
+        definitions.extend(stream::definitions());
         definitions.extend(screen::definitions());
         definitions
     }
@@ -49,6 +59,10 @@ impl ToolRegistry {
         params: CallToolParams,
     ) -> Result<ToolResult, device_mcp_protocol::RpcError> {
         let mut result = match params.name.as_str() {
+            stream::START_NAME => {
+                stream::start(&self.robot, &self.streams, &params.arguments).await
+            }
+            stream::STOP_NAME => stream::stop(&self.streams, &params.arguments).await,
             device::NAME => device::call(&self.robot).await,
             device::BOOT_NAME => device::boot(&self.robot, &params.arguments).await,
             recording::START_NAME => recording::start(&self.robot, &params.arguments).await,

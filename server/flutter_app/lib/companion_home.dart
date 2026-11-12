@@ -430,11 +430,11 @@ class _CompanionHomeState extends State<CompanionHome> {
     AdminDevice device, {
     DesktopCaptureSettings? capture,
   }) async {
-    // Keep the screenshot and accessibility tree in the same inspection flow.
-    // The screenshot is captured first so the QC overlay starts from a known
-    // visual state before asking the driver for the element tree.
+    // Capture the labeled screenshot first, then read the tree for the sidebar.
+    // The server draws element text onto the PNG. The canvas only adds the
+    // selected outline when that annotation is present.
     final client = _client();
-    final image = await client.takeScreenshot(
+    final shot = await client.takeAnnotatedScreenshot(
       device.id,
       appId: capture?.appId,
       displayId: capture?.display.id,
@@ -442,7 +442,8 @@ class _CompanionHomeState extends State<CompanionHome> {
     try {
       final inspection = await client.inspectElements(device.id);
       return _InspectionData(
-        image: image,
+        image: shot.bytes,
+        labelsOnImage: shot.annotated,
         elements: capture == null
             ? inspection.elements
             : inspection.elements
@@ -459,7 +460,8 @@ class _CompanionHomeState extends State<CompanionHome> {
       // A screenshot does not require an app context, while iOS XCTest UI
       // queries do. Keep the screenshot visible when the latter is unavailable.
       return _InspectionData(
-        image: image,
+        image: shot.bytes,
+        labelsOnImage: shot.annotated,
         elements: const [],
         elementsError: elementInspectionErrorMessage(error),
         display: capture?.display,
@@ -735,11 +737,13 @@ class _InspectionData {
   const _InspectionData({
     required this.image,
     required this.elements,
+    this.labelsOnImage = false,
     this.elementsError,
     this.display,
   });
 
   final Uint8List image;
+  final bool labelsOnImage;
   final List<AdminElement> elements;
   final String? elementsError;
   final DesktopDisplay? display;
@@ -874,6 +878,7 @@ steps:
                     bytes: inspection.image,
                     display: inspection.display,
                     elements: inspection.elements,
+                    labelsOnImage: inspection.labelsOnImage,
                     selectedIndex: _selectedIndex,
                     onSelectElement: _selectElement,
                     deviceName: widget.device.name,
@@ -1281,10 +1286,12 @@ class _ScreenshotCanvas extends StatefulWidget {
     required this.onSelectElement,
     required this.deviceName,
     required this.platform,
+    this.labelsOnImage = false,
     this.display,
   });
 
   final Uint8List bytes;
+  final bool labelsOnImage;
   final List<AdminElement> elements;
   final int? selectedIndex;
   final ValueChanged<int> onSelectElement;
@@ -1412,6 +1419,7 @@ class _ScreenshotCanvasState extends State<_ScreenshotCanvas> {
                             painter: _ElementOverlayPainter(
                               elements: widget.elements,
                               scale: coordinateScale,
+                              labelsOnImage: widget.labelsOnImage,
                               selectedIndex: widget.selectedIndex,
                               origin: Offset(
                                 (widget.display?.bounds.left ?? 0).toDouble(),
@@ -1438,11 +1446,13 @@ class _ElementOverlayPainter extends CustomPainter {
     required this.elements,
     required this.scale,
     required this.selectedIndex,
+    this.labelsOnImage = false,
     this.origin = Offset.zero,
   });
 
   final List<AdminElement> elements;
   final double scale;
+  final bool labelsOnImage;
   final int? selectedIndex;
   final Offset origin;
 
@@ -1456,8 +1466,9 @@ class _ElementOverlayPainter extends CustomPainter {
     ];
 
     for (final index in order) {
-      final bounds = elements[index].bounds;
       final selected = selectedIndex == index;
+      if (labelsOnImage && !selected) continue;
+      final bounds = elements[index].bounds;
       final rect = Rect.fromLTRB(
         ((bounds.left - origin.dx) * scale).clamp(0.0, size.width).toDouble(),
         ((bounds.top - origin.dy) * scale).clamp(0.0, size.height).toDouble(),
@@ -1471,6 +1482,7 @@ class _ElementOverlayPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = selected ? 4 : 2;
       canvas.drawRect(rect, border);
+      if (labelsOnImage) continue;
 
       final element = elements[index];
       final labelText =
@@ -1519,6 +1531,7 @@ class _ElementOverlayPainter extends CustomPainter {
   bool shouldRepaint(covariant _ElementOverlayPainter oldDelegate) =>
       oldDelegate.elements != elements ||
       oldDelegate.origin != origin ||
+      oldDelegate.labelsOnImage != labelsOnImage ||
       oldDelegate.scale != scale ||
       oldDelegate.selectedIndex != selectedIndex;
 }

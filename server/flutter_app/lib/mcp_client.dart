@@ -142,6 +142,35 @@ class McpClient {
     );
   }
 
+  /// Screenshot with element index and visible text drawn by the server.
+  ///
+  /// `annotated` is false when the server returns the raw image because the
+  /// element tree or PNG could not be labeled. The inspector then paints labels
+  /// itself.
+  Future<({Uint8List bytes, bool annotated})> takeAnnotatedScreenshot(
+    String deviceId, {
+    String? appId,
+    String? displayId,
+  }) async {
+    final result = await callTool('mobile_take_screenshot', {
+      'deviceId': deviceId,
+      'appId': ?appId,
+      'displayId': ?displayId,
+      'annotateElements': true,
+    });
+    for (final content in result.content) {
+      if (content['type'] == 'image' && content['data'] is String) {
+        return (
+          bytes: base64Decode(content['data'] as String),
+          annotated: result.structuredContent?['annotated'] == true,
+        );
+      }
+    }
+    throw const McpException(
+      'MCP screenshot response did not contain an image.',
+    );
+  }
+
   Future<List<AdminElement>> listElements(
     String deviceId, {
     String? filter,

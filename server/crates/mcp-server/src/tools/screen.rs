@@ -5,7 +5,7 @@ use device_mcp_protocol::{ToolDefinition, ToolResult};
 use robot_core::{Point, Robot, ScreenshotOptions};
 use serde_json::{Value, json};
 
-use super::arguments::{optional_u64, required_number, required_string};
+use super::arguments::{optional_bool, optional_u64, required_number, required_string};
 
 pub(super) const SCREENSHOT_NAME: &str = "mobile_take_screenshot";
 pub(super) const DISPLAYS_NAME: &str = "mobile_list_displays";
@@ -22,11 +22,12 @@ pub(super) fn definitions() -> [ToolDefinition; 4] {
         ToolDefinition {
             name: SCREENSHOT_NAME.into(),
             title: Some("Take a mobile screenshot".into()),
-            description: "Capture a PNG. Desktop options: appId selects/activates the target app, displayId selects a display returned by mobile_list_displays. The previous foreground app (such as QC) is restored after capture, including failures. UI element coordinates remain global desktop coordinates.".into(),
+            description: "Capture a PNG. Desktop options: appId selects/activates the target app, displayId selects a display returned by mobile_list_displays. The previous foreground app (such as QC) is restored after capture, including failures. UI element coordinates remain global desktop coordinates. annotateElements draws each element's index and visible text on the screenshot, then widens the PNG with a YAML flow hint (resource_id, label, position, class_contains, element_type, source) for that element. The result's structuredContent.annotated is false when the element tree or image cannot be labeled; the raw PNG is still returned.".into(),
             input_schema: json!({"type":"object", "properties":{
                 "deviceId":{"type":"string","minLength":1},
                 "appId":{"type":"string","minLength":1},
-                "displayId":{"type":"string","minLength":1}
+                "displayId":{"type":"string","minLength":1},
+                "annotateElements":{"type":"boolean","default":false}
             },"required":["deviceId"],"additionalProperties":false}),
         },
         ToolDefinition {
@@ -82,10 +83,31 @@ pub(super) async fn screenshot(robot: &Arc<dyn Robot>, arguments: &Value) -> Too
             }
         }
     }
+    let annotate = match optional_bool(arguments, "annotateElements") {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
     match robot
         .take_screenshot_with_options(&device_id, &options)
         .await
     {
+        Ok(bytes) if annotate => {
+            match device_admin_api::with_element_labels(
+                robot.as_ref(),
+                &device_id,
+                bytes,
+                options.display_id.as_deref(),
+            )
+            .await
+            {
+                Ok(shot) => ToolResult::labeled_image(
+                    STANDARD.encode(shot.bytes),
+                    "image/png",
+                    shot.annotated,
+                ),
+                Err(error) => ToolResult::execution_error(error.to_string()),
+            }
+        }
         Ok(bytes) => ToolResult::image(STANDARD.encode(bytes), "image/png"),
         Err(error) => ToolResult::execution_error(error.to_string()),
     }

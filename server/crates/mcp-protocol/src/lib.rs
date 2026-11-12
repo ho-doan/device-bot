@@ -203,6 +203,18 @@ impl ToolResult {
         }
     }
 
+    /// PNG plus whether element labels were drawn into the image.
+    pub fn labeled_image(data: String, mime_type: impl Into<String>, annotated: bool) -> Self {
+        Self {
+            content: vec![ToolContent::Image {
+                data,
+                mime_type: mime_type.into(),
+            }],
+            structured_content: Some(serde_json::json!({ "annotated": annotated })),
+            is_error: None,
+        }
+    }
+
     pub fn text(text: impl Into<String>) -> Self {
         Self {
             content: vec![ToolContent::Text { text: text.into() }],

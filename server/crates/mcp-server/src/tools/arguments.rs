@@ -19,6 +19,16 @@ pub(super) fn required_number(arguments: &Value, key: &str) -> Result<f64, ToolR
         .ok_or_else(|| ToolResult::execution_error(format!("Missing or invalid argument: {key}")))
 }
 
+pub(super) fn optional_bool(arguments: &Value, key: &str) -> Result<bool, ToolResult> {
+    match arguments.get(key) {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(value)) => Ok(*value),
+        Some(_) => Err(ToolResult::execution_error(format!(
+            "Missing or invalid argument: {key}"
+        ))),
+    }
+}
+
 pub(super) fn optional_u64(arguments: &Value, key: &str) -> Result<Option<u64>, ToolResult> {
     match arguments.get(key) {
         None | Some(Value::Null) => Ok(None),

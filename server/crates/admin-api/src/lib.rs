@@ -24,6 +24,10 @@ use axum::{
 };
 use robot_core::Robot;
 use serde::{Deserialize, Serialize};
+
+mod overlay;
+
+pub use overlay::{AnnotatedScreenshot, with_element_labels};
 use tokio::sync::{Mutex, broadcast};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
@@ -127,20 +131,68 @@ async fn list_devices(State(state): State<AdminState>, headers: HeaderMap) -> Re
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct ScreenshotQuery {
+    annotate: Option<String>,
+}
+
 async fn screenshot(
     Path(device_id): Path<String>,
+    Query(query): Query<ScreenshotQuery>,
     State(state): State<AdminState>,
     headers: HeaderMap,
 ) -> Response {
     if !is_authorized(&headers, state.bearer_token.as_deref()) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    if let Some(annotate) = query.annotate.as_deref() {
+        if annotate != "elements" {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "annotate must be elements".into(),
+                }),
+            )
+                .into_response();
+        }
+    }
     state
         .activity_log
         .record("admin.screenshot", device_id.clone())
         .await;
     match state.robot.take_screenshot(&device_id).await {
-        Ok(png) => ([(header::CONTENT_TYPE, "image/png")], png).into_response(),
+        Ok(png) => {
+            let annotated = if query.annotate.as_deref() == Some("elements") {
+                match with_element_labels(state.robot.as_ref(), &device_id, png, None).await {
+                    Ok(shot) => shot,
+                    Err(error) => {
+                        return (
+                            StatusCode::BAD_GATEWAY,
+                            Json(ErrorResponse {
+                                error: error.to_string(),
+                            }),
+                        )
+                            .into_response();
+                    }
+                }
+            } else {
+                AnnotatedScreenshot {
+                    bytes: png,
+                    annotated: false,
+                }
+            };
+            (
+                [
+                    (header::CONTENT_TYPE, "image/png"),
+                    (
+                        header::HeaderName::from_static("x-device-bot-annotated"),
+                        if annotated.annotated { "true" } else { "false" },
+                    ),
+                ],
+                annotated.bytes,
+            )
+                .into_response()
+        }
         Err(error) => (
             StatusCode::BAD_GATEWAY,
             Json(ErrorResponse {
@@ -375,7 +427,13 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(header::AUTHORIZATION, "Bearer test-token".parse().unwrap());
 
-        let response = screenshot(Path("test-device".to_owned()), State(state), headers).await;
+        let response = screenshot(
+            Path("test-device".to_owned()),
+            Query(ScreenshotQuery { annotate: None }),
+            State(state),
+            headers,
+        )
+        .await;
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");

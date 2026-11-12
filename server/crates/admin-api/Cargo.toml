@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 ab_glyph = "0.2"
 axum.workspace = true
+base64 = "0.22.1"
 font8x8 = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 robot-core = { path = "../robot-core" }

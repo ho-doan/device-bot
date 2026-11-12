@@ -8,9 +8,10 @@ import 'local_connection.dart';
 
 /// MCP client used by the Flutter companion.
 ///
-/// The companion deliberately uses the same initialize/session/tools/call
-/// contract as any other MCP client. It does not call the server's admin
-/// endpoints to control devices.
+/// Device control goes through the same initialize/session/tools/call contract
+/// as any other MCP client. The Android live mirror is the exception: MCP is
+/// one response per call, so frames use the admin event stream and taps use
+/// the admin input route on the same server.
 class McpClient {
   McpClient({
     required String baseUrl,
@@ -169,6 +170,105 @@ class McpClient {
     throw const McpException(
       'MCP screenshot response did not contain an image.',
     );
+  }
+
+  /// Screenshot frames and element snapshots for an available Android device.
+  ///
+  /// Cancel the subscription to stop the mirror. Frames are screencaps, so
+  /// the rate stays at a few images per second.
+  Stream<AndroidLiveUpdate> watchAndroidLive(String deviceId) async* {
+    if (_disposed) {
+      throw const McpException('MCP client is closed.');
+    }
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(_adminUri(deviceId, 'live'));
+      request.headers.set(HttpHeaders.acceptHeader, 'text/event-stream');
+      _setBearer(request);
+      final response = await request.close();
+      if (response.statusCode != 200) {
+        final body = await utf8.decodeStream(response);
+        throw McpException(
+          _adminError(body, response.statusCode),
+          httpStatus: response.statusCode,
+        );
+      }
+      var name = 'message';
+      final data = StringBuffer();
+      await for (final line
+          in response.transform(utf8.decoder).transform(const LineSplitter())) {
+        if (line.isEmpty) {
+          if (data.isNotEmpty) {
+            final update = decodeAndroidLiveEvent(name, data.toString());
+            if (update != null) yield update;
+          }
+          name = 'message';
+          data.clear();
+          continue;
+        }
+        if (line.startsWith(':')) continue;
+        if (line.startsWith('event:')) {
+          name = line.substring(6).trim();
+        } else if (line.startsWith('data:')) {
+          if (data.isNotEmpty) data.writeln();
+          data.write(line.substring(5).trimLeft());
+        }
+      }
+    } on McpException {
+      rethrow;
+    } on Object catch (error) {
+      throw McpException('Android live mirror stopped: $error');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  /// Tap, swipe, or type on the Android device while the mirror is open.
+  ///
+  /// Coordinates are screenshot pixels. `action` is `tap`, `swipe`, or `type`.
+  Future<void> sendAndroidInput(
+    String deviceId,
+    Map<String, dynamic> input,
+  ) async {
+    if (_disposed) {
+      throw const McpException('MCP client is closed.');
+    }
+    final client = HttpClient();
+    try {
+      final request = await client.postUrl(_adminUri(deviceId, 'input'));
+      request.headers.contentType = ContentType.json;
+      _setBearer(request);
+      request.add(utf8.encode(jsonEncode(input)));
+      final response = await request.close().timeout(
+        const Duration(seconds: 30),
+      );
+      final body = await utf8.decodeStream(response);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw McpException(
+          _adminError(body, response.statusCode),
+          httpStatus: response.statusCode,
+        );
+      }
+    } on McpException {
+      rethrow;
+    } on Object catch (error) {
+      throw McpException('Android input failed: $error');
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Uri _adminUri(String deviceId, String action) {
+    return _baseUri.replace(
+      pathSegments: ['admin', 'devices', deviceId, action],
+    );
+  }
+
+  void _setBearer(HttpClientRequest request) {
+    final token = bearerToken.trim();
+    if (token.isNotEmpty) {
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    }
   }
 
   Future<List<AdminElement>> listElements(
@@ -447,19 +547,37 @@ class McpClient {
       if (session != null) {
         final client = HttpClient();
         try {
-          final request = await client.deleteUrl(_baseUri.resolve('/mcp')).timeout(const Duration(seconds: 10));
+          final request = await client
+              .deleteUrl(_baseUri.resolve('/mcp'))
+              .timeout(const Duration(seconds: 10));
           request.headers.set('mcp-session-id', session);
-          if (bearerToken.trim().isNotEmpty) request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${bearerToken.trim()}');
-          final response = await request.close().timeout(const Duration(seconds: 10));
+          if (bearerToken.trim().isNotEmpty)
+            request.headers.set(
+              HttpHeaders.authorizationHeader,
+              'Bearer ${bearerToken.trim()}',
+            );
+          final response = await request.close().timeout(
+            const Duration(seconds: 10),
+          );
           await response.drain<void>();
           if (response.statusCode != 204 && response.statusCode != 404) {
-            _record('error', 'MCP session cleanup failed with HTTP ${response.statusCode}');
+            _record(
+              'error',
+              'MCP session cleanup failed with HTTP ${response.statusCode}',
+            );
           }
         } on Object {
-          _record('error', 'Could not release the MCP session; server connection unavailable');
-        } finally { client.close(force: true); }
+          _record(
+            'error',
+            'Could not release the MCP session; server connection unavailable',
+          );
+        } finally {
+          client.close(force: true);
+        }
       }
-    } finally { await _eventsController.close(); }
+    } finally {
+      await _eventsController.close();
+    }
   }
 }
 
@@ -507,6 +625,92 @@ List<InstalledApp> _installedAppsFrom(dynamic value) {
     entries.add(InstalledApp.fromJson(app));
   }
   return entries;
+}
+
+String _adminError(String body, int status) {
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is Map && decoded['error'] is String) {
+      return decoded['error'] as String;
+    }
+  } on Object {
+    // The body is already the message when it is not the admin JSON shape.
+  }
+  final trimmed = body.trim();
+  if (trimmed.isEmpty) return 'Android live request failed with HTTP $status.';
+  return trimmed;
+}
+
+sealed class AndroidLiveUpdate {
+  const AndroidLiveUpdate();
+}
+
+class AndroidLiveFrame extends AndroidLiveUpdate {
+  const AndroidLiveFrame(this.png);
+
+  final Uint8List png;
+}
+
+class AndroidLiveElements extends AndroidLiveUpdate {
+  const AndroidLiveElements({required this.elements, this.source});
+
+  final List<AdminElement> elements;
+  final String? source;
+}
+
+class AndroidLiveStatus extends AndroidLiveUpdate {
+  const AndroidLiveStatus(this.message);
+
+  final String message;
+}
+
+/// One SSE event from `GET /admin/devices/{id}/live`.
+AndroidLiveUpdate? decodeAndroidLiveEvent(String name, String data) {
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(data);
+  } on Object {
+    return AndroidLiveStatus('Live mirror sent an unreadable $name event.');
+  }
+  if (decoded is! Map) return null;
+  final json = Map<String, dynamic>.from(decoded);
+  switch (name) {
+    case 'frame':
+      final png = json['png'];
+      if (png is! String || png.isEmpty) return null;
+      try {
+        return AndroidLiveFrame(base64Decode(png));
+      } on Object {
+        return const AndroidLiveStatus(
+          'Live mirror sent a frame that is not base64.',
+        );
+      }
+    case 'elements':
+      final values = (json['elements'] as List?) ?? const [];
+      final source = json['source'] as String?;
+      final elements = <AdminElement>[];
+      for (var i = 0; i < values.length; i++) {
+        if (values[i] is! Map) continue;
+        try {
+          elements.add(
+            AdminElement.fromJson({
+              ...Map<String, dynamic>.from(values[i] as Map),
+              'index': i + 1,
+              if (source != null) 'source': source,
+            }),
+          );
+        } on Object {
+          continue;
+        }
+      }
+      return AndroidLiveElements(elements: elements, source: source);
+    case 'error':
+      return AndroidLiveStatus(
+        json['error']?.toString() ?? 'Live mirror error',
+      );
+    default:
+      return null;
+  }
 }
 
 class McpToolResult {

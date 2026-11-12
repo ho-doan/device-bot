@@ -191,6 +191,7 @@ dependencies = [
  "ab_glyph",
  "async-trait",
  "axum",
+ "base64",
  "font8x8",
  "image",
  "robot-core",

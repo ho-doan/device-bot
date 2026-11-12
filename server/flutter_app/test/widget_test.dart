@@ -13,7 +13,8 @@ void main() {
   testWidgets('renders the MCP companion connection controls', (tester) async {
     await tester.pumpWidget(const MobileMcpCompanion());
 
-    expect(find.text('Device Bot Companion'), findsOneWidget);
+    expect(find.text('Device Bot Dev'), findsOneWidget);
+    expect(find.text('http://127.0.0.1:3338'), findsOneWidget);
     expect(find.text('MCP server URL'), findsOneWidget);
     expect(find.text('Bearer token (optional)'), findsNothing);
     expect(find.text('Refresh'), findsOneWidget);

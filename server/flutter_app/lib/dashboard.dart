@@ -8,6 +8,7 @@ class Dashboard extends StatelessWidget {
     required this.onViewScreenshot,
     required this.onBootDevice,
     required this.onLaunchApp,
+    this.onLive,
     this.onRunnerAction,
     this.busyDevices = const {},
     super.key,
@@ -17,6 +18,7 @@ class Dashboard extends StatelessWidget {
   final Set<String> busyDevices;
   final DashboardSnapshot snapshot;
   final ValueChanged<AdminDevice> onViewScreenshot;
+  final ValueChanged<AdminDevice>? onLive;
   final Future<void> Function(AdminDevice) onBootDevice;
   final Future<void> Function(AdminDevice) onLaunchApp;
 
@@ -27,6 +29,7 @@ class Dashboard extends StatelessWidget {
         final devices = _DevicesPanel(
           devices: snapshot.devices,
           onViewScreenshot: onViewScreenshot,
+          onLive: onLive,
           onBootDevice: onBootDevice,
           onLaunchApp: onLaunchApp,
           onRunnerAction: onRunnerAction,
@@ -58,6 +61,7 @@ class _DevicesPanel extends StatelessWidget {
   const _DevicesPanel({
     required this.devices,
     required this.onViewScreenshot,
+    required this.onLive,
     required this.onBootDevice,
     required this.onLaunchApp,
     required this.onRunnerAction,
@@ -68,6 +72,7 @@ class _DevicesPanel extends StatelessWidget {
   final void Function(AdminDevice, RunnerAction)? onRunnerAction;
   final Set<String> busyDevices;
   final ValueChanged<AdminDevice> onViewScreenshot;
+  final ValueChanged<AdminDevice>? onLive;
   final Future<void> Function(AdminDevice) onBootDevice;
   final Future<void> Function(AdminDevice) onLaunchApp;
 
@@ -142,6 +147,16 @@ class _DevicesPanel extends StatelessWidget {
                               : () => onViewScreenshot(device),
                           icon: const Icon(Icons.screenshot_monitor),
                         ),
+                        if (onLive != null && device.platform == 'android')
+                          IconButton(
+                            tooltip: 'Live control',
+                            onPressed:
+                                busyDevices.contains(device.id) ||
+                                    device.state != 'available'
+                                ? null
+                                : () => onLive!(device),
+                            icon: const Icon(Icons.videocam_outlined),
+                          ),
                       ],
                     ),
                     if (device.readiness?.state == 'trust_required' ||

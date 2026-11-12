@@ -398,7 +398,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.mobileMcpCompanion.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/mobile_mcp_companion.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/mobile_mcp_companion";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/mobile_mcp_companion_dev.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/mobile_mcp_companion_dev";
 			};
 			name = Debug;
 		};
@@ -621,6 +621,9 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				INFOPLIST_FILE = Runner/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.mobileMcpCompanion.dev;
+				PRODUCT_DISPLAY_NAME = "Device Bot Dev";
+				PRODUCT_NAME = mobile_mcp_companion_dev;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

@@ -71,6 +71,13 @@ fn short_flags_print_version_help_and_reject_extra_upgrade_arguments() {
     let help = String::from_utf8(help.stdout).unwrap();
     assert!(help.contains("-v, --version"), "{help}");
     assert!(help.contains("-u, --upgrade"), "{help}");
+    assert!(help.contains("8765"), "{help}");
+    assert!(help.contains("3338"), "{help}");
+    assert!(help.contains(".device-bot-dev"), "{help}");
+    if cfg!(debug_assertions) {
+        assert!(help.contains("This process is the dev flavor"), "{help}");
+        assert!(version.trim().ends_with("dev"), "{version}");
+    }
 
     let invalid = Command::new(env!("CARGO_BIN_EXE_device-bot"))
         .args(["-u", "extra"])

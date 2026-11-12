@@ -20,11 +20,12 @@ use axum::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
-    routing::get,
+    routing::{get, post},
 };
 use robot_core::Robot;
 use serde::{Deserialize, Serialize};
 
+mod live;
 mod overlay;
 
 pub use overlay::{AnnotatedScreenshot, with_element_labels};
@@ -109,6 +110,11 @@ pub fn router(state: AdminState) -> Router {
         .route("/admin/devices", get(list_devices))
         .route("/admin/devices/{device_id}/screenshot", get(screenshot))
         .route("/admin/devices/{device_id}/elements", get(elements))
+        .route("/admin/devices/{device_id}/live", get(live::android_live))
+        .route(
+            "/admin/devices/{device_id}/input",
+            post(live::android_input),
+        )
         .route("/admin/config", get(config))
         .route("/admin/logs", get(logs))
         .route("/admin/logs/stream", get(stream_logs))

@@ -1,19 +1,11 @@
 //! Same-user connection discovery for the local QC desktop app.
-use std::{
-    fs, io,
-    io::Write,
-    net::SocketAddr,
-    path::{Path, PathBuf},
-};
+use std::{fs, io, io::Write, net::SocketAddr, path::Path};
 
 pub fn publish(address: SocketAddr, token: &str) -> io::Result<()> {
     if !address.ip().is_loopback() && !address.ip().is_unspecified() {
         return Ok(());
     }
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .ok_or_else(|| io::Error::other("user home directory is unavailable"))?;
-    let home = PathBuf::from(home);
-    write_connection(&home.join(".device-bot/mcp"), address, token)?;
+    write_connection(&crate::flavor::mcp_dir()?, address, token)?;
     Ok(())
 }
 

@@ -8,24 +8,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const HELP: &str =
-    "device-bot                         Start the background web app and open http://127.0.0.1:8765
-device-bot start                   Ensure the background web app is running
-device-bot qc                      Open the QC desktop app and ensure local MCP is running
-device-bot mcp                     Run the MCP server over stdio
-device-bot mcp --listen HOST:PORT  Run the MCP server over HTTP
-device-bot run <scenario.yaml> ... Run scenarios (see: device-bot run --help)
-device-bot -v, --version
-device-bot -h, --help
-device-bot --configure-ios-signing  Detect the signing team and update the iOS helper project
-device-bot --check-install
-device-bot --check-update
-device-bot -u, --upgrade            Install the latest verified release
-
-The web app survives closing the terminal. Repeated starts reuse the running service.
-History defaults to ~/.device-bot/reports; override with DEVICE_BOT_REPORT_DATA_DIR.
-The default web port is 8765; override with DEVICE_BOT_REPORT_PORT.";
-
 fn sibling(name: &str) -> io::Result<PathBuf> {
     let path =
         std::env::current_exe()?.with_file_name(format!("{name}{}", std::env::consts::EXE_SUFFIX));
@@ -58,9 +40,7 @@ fn report_directory() -> io::Result<PathBuf> {
     let path = if let Some(path) = std::env::var_os("DEVICE_BOT_REPORT_DATA_DIR") {
         PathBuf::from(path)
     } else {
-        let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Home directory not found"))?;
-        PathBuf::from(home).join(".device-bot/reports")
+        crate::flavor::reports_dir()?
     };
     fs::create_dir_all(&path)?;
     fs::canonicalize(path)
@@ -145,7 +125,7 @@ pub fn start(open: bool) -> io::Result<()> {
                     "DEVICE_BOT_REPORT_PORT must be 1..65535",
                 )
             })?,
-        Err(std::env::VarError::NotPresent) => 8765,
+        Err(std::env::VarError::NotPresent) => crate::flavor::FLAVOR.report_port(),
         Err(error) => return Err(io::Error::new(io::ErrorKind::InvalidInput, error)),
     };
     let address = SocketAddr::from(([127, 0, 0, 1], port));

@@ -8,8 +8,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-const ADDRESS: &str = "127.0.0.1:3337";
-
 fn app() -> io::Result<PathBuf> {
     if let Some(path) = std::env::var_os("DEVICE_BOT_QC_APP") {
         let path = PathBuf::from(path);
@@ -17,48 +15,50 @@ fn app() -> io::Result<PathBuf> {
             io::Error::new(io::ErrorKind::NotFound, "DEVICE_BOT_QC_APP does not exist")
         });
     }
+    let flavor = super::flavor::FLAVOR;
     let mut candidates = Vec::new();
-    let executable = if cfg!(target_os = "macos") {
-        "mobile_mcp_companion.app"
-    } else if cfg!(windows) {
-        "mobile_mcp_companion.exe"
-    } else {
-        "mobile_mcp_companion"
-    };
-    candidates.push(std::env::current_exe()?.with_file_name(executable));
-    if cfg!(target_os = "macos") {
-        candidates.push(PathBuf::from("/Applications").join(executable));
-        candidates.push(
-            PathBuf::from("/Applications/Device Bot QC.app/Contents/Resources").join(executable),
-        );
+    let executable_dir = std::env::current_exe()?;
+    for name in flavor.qc_bundle_names() {
+        candidates.push(executable_dir.with_file_name(name));
+    }
+    if flavor == super::flavor::Flavor::Prod && cfg!(target_os = "macos") {
+        let name = flavor.qc_bundle_names()[0];
+        candidates.push(PathBuf::from("/Applications").join(name));
+        candidates
+            .push(PathBuf::from("/Applications/Device Bot QC.app/Contents/Resources").join(name));
         if let Some(home) = std::env::var_os("HOME") {
             let applications = PathBuf::from(home).join("Applications");
-            candidates.push(applications.join(executable));
+            candidates.push(applications.join(name));
             candidates.push(
                 applications
                     .join("Device Bot QC.app/Contents/Resources")
-                    .join(executable),
+                    .join(name),
             );
         }
     }
     if let Some(source) = super::flutter_app_directory() {
-        for mode in ["Release", "Debug"] {
-            let relative = if cfg!(target_os = "macos") {
-                format!("build/macos/Build/Products/{mode}/{executable}")
-            } else if cfg!(windows) {
-                format!("build/windows/x64/runner/{mode}/{executable}")
-            } else {
-                format!(
-                    "build/linux/x64/{}/bundle/{executable}",
-                    mode.to_lowercase()
-                )
-            };
-            candidates.push(source.join(relative));
+        for mode in flavor.qc_build_modes() {
+            for name in flavor.qc_bundle_names() {
+                let relative = if cfg!(target_os = "macos") {
+                    format!("build/macos/Build/Products/{mode}/{name}")
+                } else if cfg!(windows) {
+                    format!("build/windows/x64/runner/{mode}/{name}")
+                } else {
+                    format!("build/linux/x64/{}/bundle/{name}", mode.to_lowercase())
+                };
+                candidates.push(source.join(relative));
+            }
         }
     }
     candidates.into_iter().find(|path| path.exists()).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::NotFound,
-            "QC app not found. The CLI bundle does not include QC. Build server/flutter_app with `flutter build macos` (Windows: `flutter build windows`), or set DEVICE_BOT_QC_APP to an existing app bundle/executable.")
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            if flavor == super::flavor::Flavor::Dev {
+                "QC dev app not found. From server/flutter_app run `flutter run -d macos` (Windows: `flutter run -d windows`). The installed device-bot stays on prod."
+            } else {
+                "QC app not found. The CLI bundle does not include QC. Build server/flutter_app with `flutter build macos` (Windows: `flutter build windows`), or set DEVICE_BOT_QC_APP to an existing app bundle/executable."
+            },
+        )
     })
 }
 
@@ -105,22 +105,23 @@ fn ready(address: SocketAddr) -> io::Result<bool> {
 }
 
 fn ensure_server() -> io::Result<()> {
-    let address = ADDRESS.parse().unwrap();
+    let address = super::flavor::FLAVOR.mcp_address().parse().unwrap();
     if ready(address)? {
         return Ok(());
     }
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .ok_or_else(|| io::Error::other("Home directory not found"))?;
-    let directory = PathBuf::from(home).join(".device-bot/mcp");
+    let directory = super::flavor::mcp_dir()?;
     fs::create_dir_all(&directory)?;
     let log_path = directory.join("server.log");
     let log = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log_path)?;
+    let listen = super::flavor::FLAVOR.mcp_address();
     let mut command = Command::new(std::env::current_exe()?);
     command
-        .args(["mcp", "--listen", ADDRESS])
+        .arg("mcp")
+        .arg("--listen")
+        .arg(&listen)
         .env("DEVICE_BOT_FLUTTER_AUTOSTART", "0")
         .current_dir(&directory)
         .stdout(Stdio::from(log.try_clone()?))
@@ -158,11 +159,8 @@ fn launch(path: &Path) -> io::Result<()> {
     if path.extension().is_some_and(|extension| extension == "app") {
         let mut command = Command::new("open");
         command.arg(path);
-        if let Some(home) = std::env::var_os("HOME") {
-            command.env(
-                "DEVICE_BOT_QC_CONNECTION_DIR",
-                PathBuf::from(home).join(".device-bot/mcp"),
-            );
+        if std::env::var_os("HOME").is_some() {
+            command.env("DEVICE_BOT_QC_CONNECTION_DIR", super::flavor::mcp_dir()?);
         }
         let status = command.status()?;
         return if status.success() {
@@ -186,7 +184,12 @@ pub fn open() -> io::Result<()> {
     let app = fs::canonicalize(app()?)?;
     ensure_server()?;
     launch(&app)?;
-    println!("QC: {} (MCP http://{ADDRESS})", app.display());
+    println!(
+        "QC {}: {} (MCP http://{})",
+        super::flavor::FLAVOR.name(),
+        app.display(),
+        super::flavor::FLAVOR.mcp_address()
+    );
     Ok(())
 }
 

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 /// Only same-machine endpoints may receive a token discovered from local disk.
 Future<String?> localBearerToken(Uri endpoint, {String? directory}) async {
   const localHosts = {'localhost', '127.0.0.1', '::1'};
@@ -14,7 +16,8 @@ Future<String?> localBearerToken(Uri endpoint, {String? directory}) async {
           if (Platform.environment['DEVICE_BOT_QC_CONNECTION_DIR']
               case final String root)
             root,
-          '$home/.device-bot/mcp',
+          '$home/${kDebugMode ? '.device-bot-dev' : '.device-bot'}/mcp',
+          '$home/${kDebugMode ? '.device-bot' : '.device-bot-dev'}/mcp',
         ];
   for (final root in roots) {
     try {

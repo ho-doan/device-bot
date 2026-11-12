@@ -15,6 +15,7 @@ use robot_macos::MacosRobot;
 use robot_windows::WindowsRobot;
 
 mod assets;
+mod flavor;
 mod launcher;
 mod qc;
 mod qc_connection;
@@ -293,7 +294,7 @@ async fn main() -> std::io::Result<()> {
         }
         Some("run") => return launcher::run(arguments),
         Some("--help" | "-h" | "help") => {
-            println!("{}", launcher::HELP);
+            println!("{}", flavor::help());
             return Ok(());
         }
         Some("mcp") => {
@@ -312,7 +313,11 @@ async fn main() -> std::io::Result<()> {
                 "--version accepts no arguments",
             ));
         }
-        println!("{}", env!("CARGO_PKG_VERSION"));
+        if flavor::FLAVOR == flavor::Flavor::Dev {
+            println!("{} dev", env!("CARGO_PKG_VERSION"));
+        } else {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+        }
         return Ok(());
     }
     if matches!(command.as_deref(), Some("--check-install")) {
@@ -402,6 +407,12 @@ async fn main() -> std::io::Result<()> {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "--upgrade accepts no arguments",
+            ));
+        }
+        if flavor::FLAVOR == flavor::Flavor::Dev {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the dev flavor does not replace the installed device-bot; run the prod binary with --upgrade",
             ));
         }
         match update::check_latest_release(env!("CARGO_PKG_VERSION"))? {
@@ -537,8 +548,8 @@ async fn main() -> std::io::Result<()> {
     let xcrun_path = std::env::var("XCRUN_PATH").unwrap_or_else(|_| "xcrun".into());
     let artifact_dir =
         std::env::var("DEVICE_BOT_ARTIFACT_DIR").unwrap_or_else(|_| "artifacts".into());
-    let ios_agent_address =
-        std::env::var("DEVICE_BOT_IOS_AGENT_BIND").unwrap_or_else(|_| "127.0.0.1:18787".into());
+    let ios_agent_address = std::env::var("DEVICE_BOT_IOS_AGENT_BIND")
+        .unwrap_or_else(|_| format!("127.0.0.1:{}", flavor::FLAVOR.ios_agent_port()));
     let ios_agent_address: SocketAddr = ios_agent_address.parse().map_err(|error| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -584,8 +595,8 @@ async fn main() -> std::io::Result<()> {
         .map_err(|error| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, error.to_string())
         })?;
-    let ios_sim_agent_address =
-        std::env::var("DEVICE_BOT_IOS_SIM_AGENT_BIND").unwrap_or_else(|_| "127.0.0.1:18788".into());
+    let ios_sim_agent_address = std::env::var("DEVICE_BOT_IOS_SIM_AGENT_BIND")
+        .unwrap_or_else(|_| format!("127.0.0.1:{}", flavor::FLAVOR.ios_sim_agent_port()));
     let ios_sim_agent_address: SocketAddr = ios_sim_agent_address.parse().map_err(|error| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -634,7 +645,18 @@ async fn main() -> std::io::Result<()> {
             if let Err(error) = qc_connection::publish(listen_address, &bearer_token) {
                 eprintln!("QC local connection discovery unavailable: {error}");
             }
-            eprintln!("Device Bot listening on http://{listen_address}");
+            if flavor::FLAVOR == flavor::Flavor::Dev
+                && listen_address.port() == flavor::Flavor::Prod.mcp_port()
+            {
+                eprintln!(
+                    "dev is listening on the prod MCP port {}; prod uses 3337 and dev uses 3338",
+                    listen_address.port()
+                );
+            }
+            eprintln!(
+                "Device Bot {} listening on http://{listen_address}",
+                flavor::FLAVOR.name()
+            );
             let mut flutter_companion = launch_flutter_companion(listen_address, &bearer_token);
             let result = axum::serve(
                 listener,

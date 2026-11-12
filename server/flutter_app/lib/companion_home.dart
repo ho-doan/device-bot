@@ -2,18 +2,25 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'android_live.dart';
 import 'dashboard.dart';
 import 'desktop_capture.dart';
 import 'mcp_client.dart';
 import 'models.dart';
 
-const _defaultBaseUrl = String.fromEnvironment(
-  'DEVICE_BOT_URL',
-  defaultValue: 'http://127.0.0.1:3337',
-);
+const _configuredMcpUrl = String.fromEnvironment('DEVICE_BOT_URL');
+
+/// Debug QC talks to the dev MCP. Release QC talks to the installed prod MCP.
+String get defaultMcpUrl => _configuredMcpUrl.isNotEmpty
+    ? _configuredMcpUrl
+    : (kDebugMode ? 'http://127.0.0.1:3338' : 'http://127.0.0.1:3337');
+
+String get companionTitle =>
+    kDebugMode ? 'Device Bot Dev' : 'Device Bot Companion';
 const _defaultAuthToken = String.fromEnvironment('DEVICE_BOT_AUTH');
 
 String installedAppsErrorMessage(Object? error) {
@@ -146,7 +153,7 @@ class CompanionHome extends StatefulWidget {
 
 class _CompanionHomeState extends State<CompanionHome> {
   final Map<String, DesktopCaptureSettings> _desktopCaptures = {};
-  final _baseUrlController = TextEditingController(text: _defaultBaseUrl);
+  final _baseUrlController = TextEditingController(text: defaultMcpUrl);
   late Future<DashboardSnapshot> _snapshot;
   McpClient? _mcpClient;
   String? _sessionBaseUrl;
@@ -178,7 +185,10 @@ class _CompanionHomeState extends State<CompanionHome> {
 
   McpClient _client() {
     _sessionBaseUrl ??= _baseUrlController.text;
-    return _mcpClient ??= McpClient(baseUrl: _baseUrlController.text, bearerToken: _defaultAuthToken);
+    return _mcpClient ??= McpClient(
+      baseUrl: _baseUrlController.text,
+      bearerToken: _defaultAuthToken,
+    );
   }
 
   void _refresh() {
@@ -342,6 +352,18 @@ class _CompanionHomeState extends State<CompanionHome> {
     }
   }
 
+  void _showAndroidLive(AdminDevice device) {
+    final client = _client();
+    showDialog<void>(
+      context: context,
+      builder: (context) => AndroidLiveDialog(
+        deviceName: device.name,
+        connect: () => client.watchAndroidLive(device.id),
+        onInput: (input) => client.sendAndroidInput(device.id, input),
+      ),
+    );
+  }
+
   void _showScreenshot(AdminDevice device) async {
     DesktopCaptureSettings? capture;
     if (device.platform == 'macos' || device.platform == 'windows') {
@@ -483,7 +505,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      'Device Bot Companion',
+                      companionTitle,
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
                     const SizedBox(height: 6),
@@ -516,6 +538,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                           return Dashboard(
                             snapshot: _withLiveEvents(snapshot.requireData),
                             onViewScreenshot: _showScreenshot,
+                            onLive: _showAndroidLive,
                             onBootDevice: _bootDevice,
                             onLaunchApp: _launchApp,
                             onRunnerAction: _runnerAction,

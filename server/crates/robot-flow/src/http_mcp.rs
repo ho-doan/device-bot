@@ -31,10 +31,18 @@ impl HttpMcp {
             .filter(|s| !s.trim().is_empty())
             .or_else(|| {
                 let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })?;
-                let path = PathBuf::from(home).join(format!(
-                    ".device-bot/mcp/connection-{}.json",
-                    uri.port_u16().unwrap_or(80)
-                ));
+                let port = uri.port_u16().unwrap_or(80);
+                // Dev writes ~/.device-bot-dev; prod writes ~/.device-bot. The stored URL
+                // is checked below, so a file for the other flavor cannot authenticate.
+                let path = [".device-bot-dev", ".device-bot"]
+                    .into_iter()
+                    .find_map(|dir| {
+                        let path = PathBuf::from(&home)
+                            .join(dir)
+                            .join("mcp")
+                            .join(format!("connection-{port}.json"));
+                        path.is_file().then_some(path)
+                    })?;
                 let value: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
                 let stored: Uri = value["url"].as_str()?.parse().ok()?;
                 if stored.scheme_str() != Some("http")

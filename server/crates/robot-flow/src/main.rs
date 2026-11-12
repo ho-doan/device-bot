@@ -14,6 +14,7 @@ struct Options {
     device: Option<String>,
     app: Option<String>,
     server: String,
+    mcp_url: Option<String>,
     server_args: Vec<String>,
     artifacts: PathBuf,
     confirmed: Vec<String>,
@@ -36,7 +37,7 @@ fn parse() -> Result<Options, String> {
         match arg.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "device-bot run [--dry-run] [--profiles targets.yaml --target NAME] [--device ID] [--app-id ID]\n  [--server PROGRAM --server-arg ARG] [--artifacts DIR] [--confirm PRECONDITION]\n  [--rpc-timeout SECONDS] [--case-timeout SECONDS] <scenario.yaml> ...\n\nDefault MCP command: device-bot mcp. Also available directly as robot-flow."
+                    "device-bot run [--dry-run] [--profiles targets.yaml --target NAME] [--device ID] [--app-id ID]\n  [--server PROGRAM --server-arg ARG | --mcp-url http://127.0.0.1:3337/mcp] [--artifacts DIR] [--confirm PRECONDITION]\n  [--rpc-timeout SECONDS] [--case-timeout SECONDS] <scenario.yaml> ...\n\nDefault MCP command: device-bot mcp. Also available directly as robot-flow."
                 );
                 std::process::exit(0);
             }
@@ -44,6 +45,7 @@ fn parse() -> Result<Options, String> {
                 println!("{}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
+            "--mcp-url" => o.mcp_url = Some(args.next().ok_or("--mcp-url needs a URL")?),
             "--dry-run" => o.dry = true,
             "--profiles" => o.profiles = Some(args.next().ok_or("--profiles needs a path")?.into()),
             "--target" => o.target = Some(args.next().ok_or("--target needs a name")?),
@@ -80,6 +82,9 @@ fn parse() -> Result<Options, String> {
     }
     if o.paths.is_empty() {
         return Err("provide at least one scenario YAML (see --help)".into());
+    }
+    if o.mcp_url.is_some() && custom_server {
+        return Err("choose --mcp-url or --server, not both".into());
     }
     if !custom_server {
         o.server_args.insert(0, "mcp".into());
@@ -204,6 +209,9 @@ async fn main() {
             Ok((flow, profile)) => {
                 let client = if o.dry {
                     Ok(None)
+                } else if let Some(url) = &o.mcp_url {
+                    robot_flow::http_mcp::HttpMcp::new(url, Duration::from_secs(o.rpc))
+                        .map(|c| Some(Box::new(c) as Box<dyn robot_flow::mcp::Mcp>))
                 } else {
                     StdioMcp::spawn(&o.server, &o.server_args, Duration::from_secs(o.rpc))
                         .map(|c| Some(Box::new(c) as Box<dyn robot_flow::mcp::Mcp>))

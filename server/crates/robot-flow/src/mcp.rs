@@ -126,18 +126,18 @@ impl Mcp for StdioMcp {
 
     async fn close(&mut self) -> Result<()> {
         self.input.take();
-        match timeout(Duration::from_secs(2), self.child.wait()).await {
-            Ok(result) => {
-                result.map_err(|e| e.to_string())?;
-            }
+        let status = match timeout(Duration::from_secs(7), self.child.wait()).await {
+            Ok(result) => result.map_err(|e| e.to_string())?,
             Err(_) => {
                 self.child.start_kill().map_err(|e| e.to_string())?;
-                timeout(Duration::from_secs(2), self.child.wait())
-                    .await
-                    .map_err(|_| "MCP shutdown timeout".to_string())?
-                    .map_err(|e| e.to_string())?;
+                let _ = self.child.wait().await;
+                return Err("MCP shutdown timeout; connection closed for context cleanup".into());
             }
+        };
+        if !status.success() {
+            return Err(format!("MCP server exited with {status} during cleanup"));
         }
+
         Ok(())
     }
 }

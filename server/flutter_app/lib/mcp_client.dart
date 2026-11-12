@@ -32,6 +32,7 @@ class McpClient {
   int _nextRequestId = 1;
   int _nextEventSequence = 1;
   bool _initialized = false;
+  bool _disposed = false;
   Future<void>? _initializing;
 
   Stream<AdminEvent> get events => _eventsController.stream;
@@ -250,6 +251,7 @@ class McpClient {
   }
 
   Future<void> _ensureInitialized() async {
+    if (_disposed) throw const McpException('MCP session is closed.');
     if (_initialized) return;
     if (_initializing case final pending?) {
       await pending;
@@ -408,7 +410,27 @@ class McpClient {
   }
 
   Future<void> dispose() async {
-    await _eventsController.close();
+    if (_disposed) return;
+    _disposed = true;
+    final session = _sessionId;
+    _sessionId = null;
+    try {
+      if (session != null) {
+        final client = HttpClient();
+        try {
+          final request = await client.deleteUrl(_baseUri.resolve('/mcp')).timeout(const Duration(seconds: 10));
+          request.headers.set('mcp-session-id', session);
+          if (bearerToken.trim().isNotEmpty) request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${bearerToken.trim()}');
+          final response = await request.close().timeout(const Duration(seconds: 10));
+          await response.drain<void>();
+          if (response.statusCode != 204 && response.statusCode != 404) {
+            _record('error', 'MCP session cleanup failed with HTTP ${response.statusCode}');
+          }
+        } on Object {
+          _record('error', 'Could not release the MCP session; server connection unavailable');
+        } finally { client.close(force: true); }
+      }
+    } finally { await _eventsController.close(); }
   }
 }
 

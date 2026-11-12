@@ -5,3 +5,5 @@ pub mod schema;
 mod trace;
 pub use runner::{FlowReport, FlowRunner};
 pub use schema::{FlowDocument, Profile, Profiles};
+
+pub mod http_mcp;

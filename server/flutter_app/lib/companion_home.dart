@@ -149,6 +149,7 @@ class _CompanionHomeState extends State<CompanionHome> {
   final _baseUrlController = TextEditingController(text: _defaultBaseUrl);
   late Future<DashboardSnapshot> _snapshot;
   McpClient? _mcpClient;
+  String? _sessionBaseUrl;
   StreamSubscription<AdminEvent>? _mcpEventSubscription;
   List<AdminEvent> _liveEvents = const [];
   String _activityStatus = 'Activity stream is connecting…';
@@ -175,12 +176,18 @@ class _CompanionHomeState extends State<CompanionHome> {
     super.dispose();
   }
 
-  McpClient _client() => _mcpClient ??= McpClient(
-    baseUrl: _baseUrlController.text,
-    bearerToken: _defaultAuthToken,
-  );
+  McpClient _client() {
+    _sessionBaseUrl ??= _baseUrlController.text;
+    return _mcpClient ??= McpClient(baseUrl: _baseUrlController.text, bearerToken: _defaultAuthToken);
+  }
 
   void _refresh() {
+    final existing = _mcpClient;
+    if (existing != null && _sessionBaseUrl == _baseUrlController.text) {
+      setState(() => _snapshot = existing.loadDashboard());
+      return;
+    }
+    _sessionBaseUrl = _baseUrlController.text;
     _readinessTimer ??= Timer.periodic(
       const Duration(seconds: 5),
       (_) => _pollDeviceReadiness(),

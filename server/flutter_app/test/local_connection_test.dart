@@ -41,6 +41,11 @@ void main() {
       );
       var authenticated = 0;
       server.listen((request) async {
+      if (request.method == 'DELETE') {
+        request.response.statusCode = 204;
+        await request.response.close();
+        return;
+      }
         expect(
           request.headers.value(HttpHeaders.authorizationHeader),
           'Bearer auto-token',

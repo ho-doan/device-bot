@@ -34,6 +34,10 @@ pub async fn serve(mut server: Server) -> io::Result<()> {
         }
     }
 
+    server
+        .shutdown()
+        .await
+        .map_err(|e| io::Error::other(e.to_string()))?;
     Ok(())
 }
 

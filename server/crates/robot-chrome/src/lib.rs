@@ -32,6 +32,7 @@ use tokio::{
 };
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+mod connection;
 mod startup;
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -50,9 +51,9 @@ pub struct ChromeRobot {
     ffmpeg_path: String,
     recordings: Arc<Mutex<HashMap<String, ActiveRecording>>>,
     boot_lock: Arc<Mutex<()>>,
-    fresh_browser: bool,
-    managed_address: Arc<std::sync::RwLock<Option<String>>>,
-    managed_browser: Arc<Mutex<Option<startup::ManagedBrowser>>>,
+    browser_session: Arc<Mutex<Option<connection::BrowserSession>>>,
+    browser_connection: Arc<Mutex<Option<Arc<Mutex<connection::BrowserConnection>>>>>,
+    discovery_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -77,9 +78,9 @@ impl ChromeRobot {
             ffmpeg_path: "ffmpeg".into(),
             recordings: Arc::new(Mutex::new(HashMap::new())),
             boot_lock: Arc::default(),
-            fresh_browser: false,
-            managed_address: Arc::default(),
-            managed_browser: Arc::default(),
+            browser_session: Arc::default(),
+            browser_connection: Arc::default(),
+            discovery_file: None,
         }
     }
 
@@ -90,7 +91,9 @@ impl ChromeRobot {
                 .clone()
                 .unwrap_or_else(|| "127.0.0.1:9222".into()),
         );
-        robot.fresh_browser = explicit_address.is_none();
+        if explicit_address.is_none() {
+            robot.discovery_file = Some(startup::default_discovery_file());
+        }
         robot.artifact_dir = std::env::var("DEVICE_BOT_ARTIFACT_DIR")
             .unwrap_or_else(|_| "artifacts".into())
             .into();
@@ -107,7 +110,7 @@ impl ChromeRobot {
     }
 
     async fn http_get(&self, path: &str) -> Result<Vec<u8>, RobotError> {
-        let address = self.debug_address();
+        let address = self.debug_address.clone();
         let mut stream = TcpStream::connect(&address).await.map_err(|error| {
             RobotError::CommandFailed(format!(
                 "Chrome DevTools is not reachable at {}: {error}",
@@ -177,6 +180,18 @@ impl ChromeRobot {
     }
 
     async fn targets(&self) -> Result<Vec<ChromeTarget>, RobotError> {
+        let mut session = self.browser_session.lock().await;
+        if let Some(session) = session.as_mut() {
+            return session.targets().await;
+        }
+        Err(RobotError::CommandFailed(
+            "Chrome case context is not started; call mobile_boot_device with chrome:browser"
+                .into(),
+        ))
+    }
+
+    #[cfg(test)]
+    async fn endpoint_targets(&self) -> Result<Vec<ChromeTarget>, RobotError> {
         let response = tokio::time::timeout(Duration::from_secs(2), self.http_get("/json/list"))
             .await
             .map_err(|_| {
@@ -210,6 +225,10 @@ impl ChromeRobot {
         method: &str,
         params: Value,
     ) -> Result<Value, RobotError> {
+        let mut session = self.browser_session.lock().await;
+        if let Some(session) = session.as_mut() {
+            return session.page_request(target, method, params).await;
+        }
         tokio::time::timeout(
             Duration::from_secs(5),
             self.cdp_request(target, method, params),
@@ -284,6 +303,79 @@ impl ChromeRobot {
         )))
     }
 
+    async fn query_dom(&self, target: &ChromeTarget) -> Result<Vec<UiElement>, RobotError> {
+        let expression = include_str!("dom-elements.js");
+        let result = self
+            .cdp(
+                target,
+                "Runtime.evaluate",
+                json!({
+                    "expression": expression,
+                    "returnByValue": true,
+                    "awaitPromise": true,
+                }),
+            )
+            .await?;
+        if let Some(exception) = result.get("exceptionDetails") {
+            let detail = exception
+                .pointer("/exception/description")
+                .or_else(|| exception.get("text"))
+                .and_then(Value::as_str)
+                .unwrap_or("JavaScript evaluation failed");
+            return Err(RobotError::CommandFailed(format!(
+                "Chrome DOM/accessibility query failed: {detail}"
+            )));
+        }
+        let values = result
+            .pointer("/result/value")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                RobotError::CommandFailed("Chrome did not return DOM element data".into())
+            })?;
+        Ok(values
+            .iter()
+            .map(|value| UiElement {
+                class_name: value_string(value, "className").unwrap_or_else(|| "element".into()),
+                resource_id: value_string(value, "resourceId"),
+                text: value_string(value, "text"),
+                content_description: value_string(value, "contentDescription"),
+                bounds: Bounds {
+                    left: value_i32(value, "left"),
+                    top: value_i32(value, "top"),
+                    right: value_i32(value, "right"),
+                    bottom: value_i32(value, "bottom"),
+                },
+                clickable: value
+                    .get("clickable")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                enabled: value
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                focused: value.get("focused").and_then(Value::as_bool),
+                checked: value.get("checked").and_then(Value::as_bool),
+                selected: value.get("selected").and_then(Value::as_bool),
+                value: value
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                element_type: value
+                    .get("elementType")
+                    .and_then(Value::as_str)
+                    .and_then(|element_type| ElementType::parse(element_type).ok()),
+            })
+            .collect())
+    }
+
+    async fn dispatch_tap(&self, target: &ChromeTarget, point: Point) -> Result<(), RobotError> {
+        self.cdp(target, "Page.bringToFront", json!({})).await?;
+        self.dispatch_mouse(target, "mousePressed", point, Some("left"))
+            .await?;
+        self.dispatch_mouse(target, "mouseReleased", point, Some("left"))
+            .await
+    }
+
     async fn dispatch_mouse(
         &self,
         target: &ChromeTarget,
@@ -340,10 +432,50 @@ fn value_i32(value: &Value, key: &str) -> i32 {
 
 #[async_trait]
 impl Robot for ChromeRobot {
-    async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
-        if self.fresh_browser && self.managed_address.read().unwrap().is_none() {
-            return Ok(vec![self.offline_browser()]);
+    fn fork_session(&self) -> Option<Arc<dyn Robot>> {
+        let mut robot = Self::new(self.debug_address.clone());
+        robot.discovery_file = self.discovery_file.clone();
+        robot.browser_connection = Arc::clone(&self.browser_connection);
+        robot.artifact_dir = self.artifact_dir.clone();
+        robot.ffmpeg_path = self.ffmpeg_path.clone();
+        Some(Arc::new(robot))
+    }
+    async fn close_session(&self) -> Result<(), RobotError> {
+        let recordings: Vec<_> = self
+            .recordings
+            .lock()
+            .await
+            .drain()
+            .map(|(_, r)| r)
+            .collect();
+        let mut first = None;
+        for recording in recordings {
+            let _ = recording.stop.send(());
+            match recording.task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    if first.is_none() {
+                        first = Some(e);
+                    }
+                }
+                Err(e) => {
+                    if first.is_none() {
+                        first = Some(RobotError::CommandFailed(e.to_string()));
+                    }
+                }
+            }
         }
+        if let Some(mut session) = self.browser_session.lock().await.take() {
+            if let Err(e) = session.close().await {
+                if first.is_none() {
+                    first = Some(e);
+                }
+            }
+        }
+        first.map_or(Ok(()), Err)
+    }
+
+    async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
         // Chrome is optional. An inactive DevTools endpoint must not stop the
         // mobile and desktop drivers from listing their own devices.
         let targets = match self.targets().await {
@@ -522,13 +654,7 @@ impl Robot for ChromeRobot {
 
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
         let target = self.page(device_id).await?;
-        // CDP can dispatch clicks into a background tab. Activate it first so
-        // native browser prompts are visible to the following desktop step.
-        self.cdp(&target, "Page.bringToFront", json!({})).await?;
-        self.dispatch_mouse(&target, "mousePressed", point, Some("left"))
-            .await?;
-        self.dispatch_mouse(&target, "mouseReleased", point, Some("left"))
-            .await
+        self.dispatch_tap(&target, point).await
     }
 
     async fn launch_app(&self, device_id: &str, _app_id: &str) -> Result<(), RobotError> {
@@ -620,68 +746,7 @@ impl Robot for ChromeRobot {
 
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         let target = self.page(device_id).await?;
-        let expression = include_str!("dom-elements.js");
-        let result = self
-            .cdp(
-                &target,
-                "Runtime.evaluate",
-                json!({
-                    "expression": expression,
-                    "returnByValue": true,
-                    "awaitPromise": true,
-                }),
-            )
-            .await?;
-        if let Some(exception) = result.get("exceptionDetails") {
-            let detail = exception
-                .pointer("/exception/description")
-                .or_else(|| exception.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or("JavaScript evaluation failed");
-            return Err(RobotError::CommandFailed(format!(
-                "Chrome DOM/accessibility query failed: {detail}"
-            )));
-        }
-        let values = result
-            .pointer("/result/value")
-            .and_then(Value::as_array)
-            .ok_or_else(|| {
-                RobotError::CommandFailed("Chrome did not return DOM element data".into())
-            })?;
-        Ok(values
-            .iter()
-            .map(|value| UiElement {
-                class_name: value_string(value, "className").unwrap_or_else(|| "element".into()),
-                resource_id: value_string(value, "resourceId"),
-                text: value_string(value, "text"),
-                content_description: value_string(value, "contentDescription"),
-                bounds: Bounds {
-                    left: value_i32(value, "left"),
-                    top: value_i32(value, "top"),
-                    right: value_i32(value, "right"),
-                    bottom: value_i32(value, "bottom"),
-                },
-                clickable: value
-                    .get("clickable")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                enabled: value
-                    .get("enabled")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true),
-                focused: value.get("focused").and_then(Value::as_bool),
-                checked: value.get("checked").and_then(Value::as_bool),
-                selected: value.get("selected").and_then(Value::as_bool),
-                value: value
-                    .get("value")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                element_type: value
-                    .get("elementType")
-                    .and_then(Value::as_str)
-                    .and_then(|element_type| ElementType::parse(element_type).ok()),
-            })
-            .collect())
+        self.query_dom(&target).await
     }
 }
 
@@ -719,11 +784,11 @@ mod tests {
             String::from_utf8_lossy(body)
         );
         let (robot, server) = serve_http(response.into_bytes(), true).await;
-        let result = tokio::time::timeout(Duration::from_secs(1), robot.list_devices()).await;
+        let result = tokio::time::timeout(Duration::from_secs(1), robot.endpoint_targets()).await;
         server.abort();
-        let devices = result.expect("discovery waited for EOF").unwrap();
-        assert_eq!(devices.len(), 1);
-        assert_eq!(devices[0].id, "chrome:A1B2");
+        let targets = result.expect("discovery waited for EOF").unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(device_id(&targets[0]), "chrome:A1B2");
     }
 
     #[tokio::test]
@@ -779,7 +844,8 @@ mod tests {
                 .await
                 .unwrap();
         });
-        let elements = robot.list_elements("chrome:A1B2").await.unwrap();
+        let target = robot.endpoint_targets().await.unwrap().remove(0);
+        let elements = robot.query_dom(&target).await.unwrap();
         assert_eq!(elements[0].value.as_deref(), Some(""));
         assert_eq!(elements[1].value.as_deref(), Some("hello"));
         assert_eq!(elements[2].value, None);
@@ -847,7 +913,10 @@ mod tests {
             });
             let result = tokio::time::timeout(
                 Duration::from_secs(2),
-                robot.tap("chrome:A1B2", Point { x: 10.0, y: 20.0 }),
+                robot.dispatch_tap(
+                    &robot.endpoint_targets().await.unwrap().remove(0),
+                    Point { x: 10.0, y: 20.0 },
+                ),
             )
             .await
             .unwrap();
@@ -878,3 +947,6 @@ mod tests {
         assert_eq!(device_id(&target), "chrome:A1B2");
     }
 }
+
+#[cfg(test)]
+mod connection_tests;

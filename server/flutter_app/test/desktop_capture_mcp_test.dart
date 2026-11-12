@@ -8,6 +8,11 @@ void main() {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(server.close);
     server.listen((request) async {
+      if (request.method == 'DELETE') {
+        request.response.statusCode = 204;
+        await request.response.close();
+        return;
+      }
       final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
       if (body['method'] == 'notifications/initialized') {
         request.response.statusCode = 202;

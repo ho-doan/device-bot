@@ -11,6 +11,7 @@ use crate::{lifecycle::Lifecycle, response, tools::ToolRegistry};
 
 /// Stateful MCP dispatcher for one transport connection.
 pub struct Server {
+    robot: Arc<dyn Robot>,
     lifecycle: Lifecycle,
     tools: ToolRegistry,
 }
@@ -18,9 +19,14 @@ pub struct Server {
 impl Server {
     pub fn new(robot: Arc<dyn Robot>) -> Self {
         Self {
+            robot: Arc::clone(&robot),
             lifecycle: Lifecycle::default(),
             tools: ToolRegistry::new(robot),
         }
+    }
+
+    pub async fn shutdown(&self) -> Result<(), robot_core::RobotError> {
+        self.robot.close_session().await
     }
 
     /// Dispatch one syntactically valid JSON-RPC message.

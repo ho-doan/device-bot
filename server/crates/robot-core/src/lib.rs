@@ -281,6 +281,14 @@ pub struct UiRunnerStatus {
 /// Async, platform-independent device control boundary.
 #[async_trait]
 pub trait Robot: Send + Sync {
+    /// Isolate per-client state while sharing physical drivers where appropriate.
+    fn fork_session(&self) -> Option<Arc<dyn Robot>> {
+        None
+    }
+    async fn close_session(&self) -> Result<(), RobotError> {
+        Ok(())
+    }
+
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError>;
     async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {
         Err(RobotError::Unsupported(format!(
@@ -586,6 +594,26 @@ impl RobotRegistry {
 
 #[async_trait]
 impl Robot for RobotRegistry {
+    fn fork_session(&self) -> Option<Arc<dyn Robot>> {
+        Some(Arc::new(Self::new(
+            self.drivers
+                .iter()
+                .map(|driver| driver.fork_session().unwrap_or_else(|| Arc::clone(driver)))
+                .collect::<Vec<_>>(),
+        )))
+    }
+    async fn close_session(&self) -> Result<(), RobotError> {
+        let mut first = None;
+        for driver in &self.drivers {
+            if let Err(error) = driver.close_session().await {
+                if first.is_none() {
+                    first = Some(error);
+                }
+            }
+        }
+        first.map_or(Ok(()), Err)
+    }
+
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
         let mut devices = vec![];
         let mut errors = vec![];

@@ -16,6 +16,11 @@ void main() {
       final sessions = <String>[];
 
       server.listen((request) async {
+      if (request.method == 'DELETE') {
+        request.response.statusCode = 204;
+        await request.response.close();
+        return;
+      }
         expect(request.uri.path, '/mcp');
         expect(
           request.headers.value(HttpHeaders.authorizationHeader),
@@ -178,6 +183,11 @@ void main() {
         'clickable': true,
       };
       server.listen((request) async {
+      if (request.method == 'DELETE') {
+        request.response.statusCode = 204;
+        await request.response.close();
+        return;
+      }
         final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
         var result = <String, dynamic>{};
         if (body['method'] == 'initialize') {
@@ -245,6 +255,11 @@ void main() {
       var expire = true;
       final actions = <Map<String, dynamic>>[];
       server.listen((request) async {
+      if (request.method == 'DELETE') {
+        request.response.statusCode = 204;
+        await request.response.close();
+        return;
+      }
         final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
         var result = <String, dynamic>{};
         if (body['method'] == 'initialize') {
@@ -321,6 +336,11 @@ void lockRecoveryTests() {
         var locked = true;
         final warnings = <DeviceReadiness>[];
         server.listen((request) async {
+      if (request.method == 'DELETE') {
+        request.response.statusCode = 204;
+        await request.response.close();
+        return;
+      }
           final body =
               jsonDecode(await utf8.decoder.bind(request).join()) as Map;
           var result = <String, dynamic>{};

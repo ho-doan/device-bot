@@ -241,7 +241,12 @@ async fn initialize_session(
     headers: HeaderMap,
     request: JsonRpcRequest,
 ) -> Response {
-    let mut server = Server::new(Arc::clone(&state.robot));
+    let mut server = Server::new(
+        state
+            .robot
+            .fork_session()
+            .unwrap_or_else(|| Arc::clone(&state.robot)),
+    );
     let result = server.handle(request).await;
     let initialized = result
         .as_ref()
@@ -287,8 +292,12 @@ async fn handle_delete(State(state): State<HttpState>, headers: HeaderMap) -> Re
     else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    if state.sessions.lock().await.remove(session_id).is_some() {
-        StatusCode::NO_CONTENT.into_response()
+    let removed = state.sessions.lock().await.remove(session_id);
+    if let Some(server) = removed {
+        match server.lock().await.shutdown().await {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+        }
     } else {
         StatusCode::NOT_FOUND.into_response()
     }

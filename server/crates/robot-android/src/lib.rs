@@ -121,6 +121,7 @@ pub struct AndroidRobot<R = TokioCommandRunner> {
     boot_lock: Arc<Mutex<()>>,
     artifact_dir: PathBuf,
     recordings: Arc<Mutex<HashMap<String, ActiveRecording>>>,
+    tree_dump_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     runner: R,
     video_controls: Arc<video::Controls>,
 }
@@ -148,6 +149,7 @@ impl<R> AndroidRobot<R> {
             boot_lock: Arc::default(),
             artifact_dir: artifact_dir.into(),
             recordings: Arc::default(),
+            tree_dump_locks: Arc::default(),
             runner,
             video_controls: Arc::default(),
         }
@@ -564,6 +566,14 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
 
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         ensure_device_id(device_id)?;
+        // Android allows one UiAutomation service per device. QC Live and flow
+        // replay share this driver (including clones), so serialize the entire
+        // dump/read/cleanup here rather than only gating the live HTTP route.
+        let gate = {
+            let mut gates = self.tree_dump_locks.lock().await;
+            gates.entry(device_id.to_owned()).or_default().clone()
+        };
+        let _guard = gate.lock().await;
         let sequence = TREE_DUMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let remote_path = format!("/sdcard/mobile-mcp-{sequence}.xml");
         self.run_adb(&[
@@ -980,6 +990,69 @@ mod tests {
             stdout: stdout.into(),
             stderr: vec![],
         }
+    }
+
+    // Android permits only one UiAutomation registration per device. Model the
+    // real exit 137 when QC inspection and flow replay dump the same tree at once.
+    #[derive(Debug, Default, Clone)]
+    struct ConcurrentTreeRunner {
+        active: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+        barrier: Option<Arc<tokio::sync::Barrier>>,
+    }
+
+    #[async_trait]
+    impl CommandRunner for ConcurrentTreeRunner {
+        async fn run(&self, _: &str, args: &[String]) -> Result<CommandOutput, RobotError> {
+            if args.get(3).is_some_and(|arg| arg == "uiautomator") {
+                let device = args[1].clone();
+                if !self.active.lock().unwrap().insert(device.clone()) {
+                    return Ok(CommandOutput {
+                        success: false,
+                        exit_code: Some(137),
+                        stdout: vec![],
+                        stderr: vec![],
+                    });
+                }
+                if let Some(barrier) = &self.barrier {
+                    barrier.wait().await;
+                } else {
+                    tokio::task::yield_now().await;
+                }
+                self.active.lock().unwrap().remove(&device);
+            }
+            if args.get(2).is_some_and(|arg| arg == "exec-out") {
+                return Ok(successful(
+                    r#"<hierarchy><node text="Import video" class="android.widget.Button" clickable="true" enabled="true" bounds="[0,0][100,40]" /></hierarchy>"#,
+                ));
+            }
+            Ok(successful(""))
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_tree_reads_on_one_device_do_not_kill_uiautomator() {
+        let robot = AndroidRobot::with_runner("adb-test", ConcurrentTreeRunner::default());
+        let replay = robot.clone();
+        let (live, flow) =
+            tokio::join!(robot.list_elements("phone"), replay.list_elements("phone"),);
+        assert_eq!(live.unwrap().len(), 1);
+        assert_eq!(flow.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn tree_reads_on_different_devices_can_run_concurrently() {
+        let runner = ConcurrentTreeRunner {
+            barrier: Some(Arc::new(tokio::sync::Barrier::new(2))),
+            ..Default::default()
+        };
+        let robot = AndroidRobot::with_runner("adb-test", runner);
+        let reads =
+            async { tokio::join!(robot.list_elements("first"), robot.list_elements("second")) };
+        let (first, second) = tokio::time::timeout(std::time::Duration::from_secs(1), reads)
+            .await
+            .expect("different devices must not share a dump lock");
+        assert_eq!(first.unwrap().len(), 1);
+        assert_eq!(second.unwrap().len(), 1);
     }
 
     #[test]

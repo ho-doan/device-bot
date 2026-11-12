@@ -235,6 +235,14 @@ powershell -ExecutionPolicy Bypass -File $script
 Remove-Item $script
 ```
 
+Both installers also install the official portable **scrcpy 5.0.1** bundle,
+including its matching `scrcpy-server`, ADB and runtime resources, alongside
+Device Bot. Downloads are pinned to SHA-256 checksums and client/ADB execution
+is verified before installation succeeds. Homebrew and WinGet are not required.
+Restart any running Device Bot MCP process after installing so Android Live
+uses the new dependencies. On Windows, open a new terminal after the first
+installation to pick up the user PATH change.
+
 Set `DEVICE_BOT_VERSION` to pin a release and `DEVICE_BOT_INSTALL_DIR` to
 override the default install directory. The release archives must be named
 `device-bot-v<VERSION>-<TARGET>.tar.gz` on macOS and `.zip` on Windows.
@@ -358,7 +366,8 @@ and `height`. Apply the answer to the viewer peer. `mobile_stop_stream` accepts
 `streamId` and is idempotent. Streams belong to the MCP session and stop on
 session close, viewer disconnect, capture failure, or a 20-second connection timeout.
 
-Install matching scrcpy client/server **5.0.1** (tested on Samsung Android 10), or
+The release installers include matching scrcpy client/server **5.0.1** (tested
+on Samsung Android 10). For source builds, install **5.0.1** separately, or
 use the **3.3.4** protocol adapter. Homebrew and standard Linux server locations
 are detected automatically. For portable/custom installations set both
 `SCRCPY_SERVER_PATH` (host jar path) and `SCRCPY_SERVER_VERSION` (exact version).

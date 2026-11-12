@@ -1,19 +1,25 @@
 """Release archive/installer contract, using disposable fixture executables."""
 import contextlib
 import hashlib
+import functools
+import http.server
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import tarfile
 import tempfile
 import unittest
+import threading
 from unittest.mock import patch
 import zipfile
 
 SCRIPTS = Path(__file__).resolve().parent
+PWSH = os.environ.get('DEVICE_BOT_TEST_PWSH') or shutil.which('pwsh') or shutil.which('powershell')
 spec = importlib.util.spec_from_file_location('package_release', SCRIPTS / 'package_release.py')
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
@@ -107,12 +113,31 @@ esac
                     destination.addfile(member, source.extractfile(member) if member.isfile() else None)
         replacement.replace(archive)
 
-    def install(self, archive):
+    def scrcpy_bundle(self, arch='aarch64', version='5.0.1', missing=(), exit_code=0):
+        bundle = Path(tempfile.mkdtemp(dir=self.root)) / f'scrcpy-macos-{arch}-v5.0.1'
+        bundle.mkdir(exist_ok=True)
+        contents = {
+            'scrcpy': f'#!/bin/sh\necho "scrcpy {version} <https://github.com/Genymobile/scrcpy>"\nexit {exit_code}\n',
+            'adb': '#!/bin/sh\necho "Android Debug Bridge version 1.0.41"\n',
+            'scrcpy-server': 'matching server jar',
+            'scrcpy.png': 'portable icon',
+        }
+        for name, content in contents.items():
+            path = bundle / name
+            if name not in missing:
+                path.write_text(content)
+                path.chmod(0o755 if name in ('scrcpy', 'adb') else 0o644)
+        archive = self.out / (bundle.name + '.tar.gz')
+        with tarfile.open(archive, 'w:gz') as output:
+            output.add(bundle, arcname=bundle.name)
+        return archive
+
+    def install(self, archive, scrcpy=None, bad_scrcpy_checksum=False, arch='arm64'):
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         (self.out / 'checksums.txt').write_text(f'{digest}  {archive.name}\n')
         shims = self.root / 'shims'
         shims.mkdir(exist_ok=True)
-        (shims / 'uname').write_text('#!/bin/sh\ncase "$1" in -s) echo Darwin;; -m) echo arm64;; esac\n')
+        (shims / 'uname').write_text(f'#!/bin/sh\ncase "$1" in -s) echo Darwin;; -m) echo {arch};; esac\n')
         (shims / 'curl').write_text('''#!/bin/sh
 output=''
 while [ "$#" -gt 0 ]; do
@@ -123,11 +148,19 @@ cp "$TEST_DOWNLOAD_ROOT/${url##*/}" "$output"
 ''')
         for path in shims.iterdir():
             path.chmod(0o755)
+        scrcpy = scrcpy or self.scrcpy_bundle('aarch64' if arch == 'arm64' else 'x86_64')
+        # Pin fixture checksums in a disposable installer copy. Production pins
+        # stay unchanged and no download/install touches the host machine.
+        installer = (SCRIPTS / 'install.sh').read_text()
+        digest = '0' * 64 if bad_scrcpy_checksum else hashlib.sha256(scrcpy.read_bytes()).hexdigest()
+        installer = re.sub(r'SCRCPY_SHA256="[0-9a-f]{64}"', f'SCRCPY_SHA256="{digest}"', installer)
+        installer_path = self.root / 'install.sh'
+        installer_path.write_text(installer)
         self.install_dir = self.root / 'installed'
         env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'],
                    DEVICE_BOT_VERSION=self.version, DEVICE_BOT_INSTALL_DIR=str(self.install_dir),
                    TEST_DOWNLOAD_ROOT=str(self.out))
-        return subprocess.run(['sh', str(SCRIPTS / 'install.sh')], env=env, capture_output=True, text=True)
+        return subprocess.run(['sh', str(installer_path)], env=env, capture_output=True, text=True)
 
     @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
     def test_mac_installer_installs_three_verified_tools(self):
@@ -137,6 +170,143 @@ cp "$TEST_DOWNLOAD_ROOT/${url##*/}" "$output"
             version = subprocess.check_output([str(self.install_dir / name), '--version'], text=True)
             self.assertEqual(version.strip(), '0.1.4')
         self.assertTrue((self.install_dir / 'robot-report-assets/0.1.4/deploy/README.md').is_file())
+        self.assertTrue((self.install_dir / 'scrcpy-server').is_file())
+        # Exercise the driver's real discovery contract from a different cwd.
+        env = dict(os.environ, PATH=str(self.install_dir) + os.pathsep + os.environ['PATH'])
+        version = subprocess.check_output(['scrcpy', '--version'], cwd=self.root, env=env, text=True)
+        self.assertTrue(version.startswith('scrcpy 5.0.1 '))
+        subprocess.run(['adb', 'version'], cwd=self.root, env=env, check=True, capture_output=True)
+        self.assertIn('Installed Android Live dependencies', result.stdout)
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
+    def test_mac_installer_rejects_bad_scrcpy_checksum_before_install(self):
+        result = self.install(self.package(), bad_scrcpy_checksum=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('scrcpy checksum verification failed', result.stderr)
+        self.assertFalse(self.install_dir.exists())
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
+    def test_mac_installer_rejects_missing_or_incompatible_scrcpy(self):
+        archive = self.package()
+        for options, error in [({'missing': ('scrcpy-server',)}, 'does not contain scrcpy-server'),
+                               ({'version': '9.0.0'}, 'scrcpy version verification failed'),
+                               ({'exit_code': 1}, 'scrcpy version verification failed')]:
+            with self.subTest(options=options):
+                result = self.install(archive, scrcpy=self.scrcpy_bundle(**options))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stderr)
+                self.assertFalse(self.install_dir.exists())
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
+    def test_mac_intel_installer_includes_matching_scrcpy(self):
+        result = self.install(self.package('x86_64-apple-darwin'), arch='x86_64')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.install_dir / 'scrcpy-server').is_file())
+
+    def install_windows(self, missing=(), bad_checksum=False, version='5.0.1'):
+        if os.name == 'nt':
+            # Build one tiny native fixture for all CLI names on Windows CI.
+            source = self.root / 'Fixture.cs'
+            source.write_text('''using System;
+using System.IO;
+class Fixture {
+    static int Main(string[] args) {
+        string name = Path.GetFileName(Environment.GetCommandLineArgs()[0]);
+        if (name == "scrcpy.exe") Console.WriteLine("scrcpy " + Environment.GetEnvironmentVariable("TEST_SCRCPY_VERSION"));
+        else if (name == "adb.exe") Console.WriteLine("Android Debug Bridge version 1.0.41");
+        else if (args.Length > 0 && args[0] == "--version") Console.WriteLine("0.1.4");
+        else if (args.Length == 0 || args[0] != "--check-install") return 1;
+        return 0;
+    }
+}
+''')
+            compiler = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+            fixture = self.root / 'fixture.exe'
+            subprocess.run([str(compiler), '/nologo', '/out:' + str(fixture), str(source)], check=True, capture_output=True)
+            for name in ['device-bot', 'robot-flow', 'robot-report']:
+                shutil.copyfile(fixture, self.bins / (name + '.exe'))
+            scrcpy_exe = adb_exe = fixture.read_bytes()
+        else:
+            scrcpy_exe = f'#!/bin/sh\necho "scrcpy {version} <https://github.com/Genymobile/scrcpy>"\n'.encode()
+            adb_exe = b'#!/bin/sh\necho "Android Debug Bridge version 1.0.41"\n'
+        archive = self.package('x86_64-pc-windows-msvc')
+        (self.out / 'checksums.txt').write_text(f'{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n')
+        dependencies = {'scrcpy.exe': scrcpy_exe, 'adb.exe': adb_exe, 'scrcpy-server': b'matching server jar'}
+        for name in ['AdbWinApi.dll', 'AdbWinUsbApi.dll', 'SDL3.dll', 'avcodec-63.dll',
+                     'avformat-63.dll', 'avutil-61.dll', 'swresample-7.dll', 'libusb-1.0.dll']:
+            dependencies[name] = b'runtime fixture'
+        scrcpy = self.out / 'scrcpy-win64-v5.0.1.zip'
+        with zipfile.ZipFile(scrcpy, 'w') as output:
+            for name, content in dependencies.items():
+                if name not in missing:
+                    output.writestr('scrcpy-win64-v5.0.1/' + name, content)
+        digest = '0' * 64 if bad_checksum else hashlib.sha256(scrcpy.read_bytes()).hexdigest()
+
+        class QuietHandler(http.server.SimpleHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(QuietHandler, directory=str(self.out)))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        base = f'http://127.0.0.1:{server.server_port}'
+        # Exercise the real installer with local HTTP archives, pinning only the
+        # fixture checksum. Restore persistent PATH even when installation fails.
+        installer = (SCRIPTS / 'install.ps1').read_text()
+        installer = re.sub(r'\$ScrcpySha256 = "[0-9a-f]{64}"', f'$ScrcpySha256 = "{digest}"', installer)
+        installer = installer.replace('https://github.com/$Repository/releases/download/v$Version', base)
+        installer = installer.replace('https://github.com/Genymobile/scrcpy/releases/download/v$ScrcpyVersion', base)
+        installer_path = self.root / 'install.ps1'
+        installer_path.write_text(installer)
+        bootstrap = ''
+        if os.name != 'nt':
+            # PowerShell ZIP extraction drops POSIX executable permissions.
+            bootstrap = '''Import-Module Microsoft.PowerShell.Archive
+function Expand-Archive {
+param($Path, $DestinationPath, [switch]$Force)
+Microsoft.PowerShell.Archive\\Expand-Archive @PSBoundParameters
+Get-ChildItem $DestinationPath -Recurse -Filter *.exe | ForEach-Object { & /bin/chmod +x $_.FullName }
+}
+'''
+        quoted = str(installer_path).replace("'", "''")
+        bootstrap += f'''$savedPath = [Environment]::GetEnvironmentVariable("Path", "User")
+try {{ & '{quoted}' }} finally {{ [Environment]::SetEnvironmentVariable("Path", $savedPath, "User") }}
+'''
+        self.install_dir = self.root / 'installed windows'
+        env = {key: value for key, value in os.environ.items() if not key.startswith('DEVICE_BOT_')}
+        env.update(DEVICE_BOT_VERSION=self.version, DEVICE_BOT_INSTALL_DIR=str(self.install_dir),
+                   PROCESSOR_ARCHITECTURE='AMD64', PROCESSOR_ARCHITEW6432='', TEST_SCRCPY_VERSION=version)
+        return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-Command', bootstrap], env=env, capture_output=True, text=True)
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_installer_includes_android_live_dependencies(self):
+        result = self.install_windows()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name in ['device-bot.exe', 'robot-flow.exe', 'robot-report.exe', 'scrcpy.exe', 'scrcpy-server', 'adb.exe', 'SDL3.dll']:
+            self.assertTrue((self.install_dir / name).is_file(), name)
+        self.assertIn('Installed Android Live dependencies', result.stdout)
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_installer_rejects_bad_scrcpy_checksum_before_install(self):
+        result = self.install_windows(bad_checksum=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('scrcpy checksum verification failed', result.stderr)
+        self.assertFalse(self.install_dir.exists())
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_installer_rejects_missing_scrcpy_server_before_install(self):
+        result = self.install_windows(missing=('scrcpy-server',))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('does not contain scrcpy-server', result.stderr)
+        self.assertFalse(self.install_dir.exists())
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_installer_rejects_incompatible_scrcpy_before_install(self):
+        result = self.install_windows(version='9.0.0')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('scrcpy version verification failed', result.stderr)
+        self.assertFalse(self.install_dir.exists())
 
     @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
     def test_mac_installer_installs_qc_next_to_the_cli(self):

@@ -14,6 +14,10 @@ $InstallDir = if ($env:DEVICE_BOT_INSTALL_DIR) {
     Join-Path $env:USERPROFILE ".device-bot\bin"
 }
 $BinaryName = "device-bot.exe"
+# Pinned to the protocol supported by robot-android/src/video.rs (see install.sh).
+# The official portable bundle includes the matching server, ADB and runtime DLLs.
+$ScrcpyVersion = "5.0.1"
+$ScrcpySha256 = "b12a2c4ee8be317422451fc7dcf8ee20a71b5ea7ef9ad73ddd825a25316227a5"
 $RetryAttempts = 4
 $WaitPid = $env:DEVICE_BOT_WAIT_PID
 $InstallerScriptPath = $MyInvocation.MyCommand.Path
@@ -147,7 +151,36 @@ try {
         }
     }
 
+    $scrcpyBundle = "scrcpy-win64-v$ScrcpyVersion"
+    $scrcpyArchive = Join-Path $TempDir "$scrcpyBundle.zip"
+    Invoke-DownloadWithRetry "https://github.com/Genymobile/scrcpy/releases/download/v$ScrcpyVersion/$scrcpyBundle.zip" $scrcpyArchive "Downloading Android Live dependencies (scrcpy $ScrcpyVersion and ADB)"
+    $scrcpyActual = (Get-FileHash -Algorithm SHA256 -Path $scrcpyArchive).Hash.ToLowerInvariant()
+    if ($scrcpyActual -ne $ScrcpySha256) { throw "scrcpy checksum verification failed. Expected $ScrcpySha256, got $scrcpyActual." }
+    Expand-Archive -Path $scrcpyArchive -DestinationPath $TempDir -Force
+    $scrcpyRoot = Join-Path $TempDir $scrcpyBundle
+    foreach ($name in @("scrcpy.exe", "scrcpy-server", "adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll", "SDL3.dll", "avcodec-63.dll", "avformat-63.dll", "avutil-61.dll", "swresample-7.dll", "libusb-1.0.dll")) {
+        if (-not (Test-Path -Path (Join-Path $scrcpyRoot $name) -PathType Leaf)) {
+            throw "The scrcpy archive does not contain $name."
+        }
+        $installed = Join-Path $InstallDir $name
+        if (Test-Path -Path $installed -PathType Leaf) {
+            try {
+                $handle = [System.IO.File]::Open($installed, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+                $handle.Dispose()
+            } catch { throw "Stop the running Android Live, scrcpy and ADB processes before replacing $name." }
+        }
+    }
+    $scrcpyOutput = & (Join-Path $scrcpyRoot "scrcpy.exe") --version
+    $scrcpyFirstLine = [string]($scrcpyOutput | Select-Object -First 1)
+    if ($LASTEXITCODE -ne 0 -or $scrcpyFirstLine -notmatch "^scrcpy $([regex]::Escape($ScrcpyVersion))(\s|$)") {
+        throw "scrcpy version verification failed; expected $ScrcpyVersion."
+    }
+    & (Join-Path $scrcpyRoot "adb.exe") version | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "ADB verification failed." }
+
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    # Keep DLLs and the server beside scrcpy.exe; this directory is on PATH.
+    Copy-Item -Path (Join-Path $scrcpyRoot "*") -Destination $InstallDir -Recurse -Force
     $assetParent = Join-Path $InstallDir "device-bot-assets"
     New-Item -ItemType Directory -Path $assetParent -Force | Out-Null
     $assetDestination = Join-Path $assetParent $Version
@@ -177,9 +210,15 @@ try {
         [Environment]::SetEnvironmentVariable("Path", (($pathEntries + $InstallDir) | Where-Object { $_ }) -join ";", "User")
         Write-Host "Added $InstallDir to the user PATH. Open a new terminal to use device-bot."
     }
+    $env:Path = "$InstallDir;$env:Path"
+    & (Join-Path $InstallDir "scrcpy.exe") --version
+    if ($LASTEXITCODE -ne 0) { throw "Installed scrcpy verification failed." }
+    & (Join-Path $InstallDir "adb.exe") version
+    if ($LASTEXITCODE -ne 0) { throw "Installed ADB verification failed." }
     $qcInstalled = Join-Path $InstallDir "qc"
     if (Test-Path $qcInstalled) { Write-Host "Installed QC to $qcInstalled" }
     Write-Host "Installed $($Binaries -join ", ") $Version to $InstallDir"
+    Write-Host "Installed Android Live dependencies: scrcpy $ScrcpyVersion, scrcpy-server and ADB"
 } finally {
     if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
     if ($InstallerScriptPath -and (Test-Path $InstallerScriptPath)) {

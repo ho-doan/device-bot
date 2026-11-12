@@ -6,6 +6,9 @@ VERSION="${DEVICE_BOT_VERSION:-}"
 INSTALL_DIR="${DEVICE_BOT_INSTALL_DIR:-$HOME/.local/bin}"
 REPOSITORY="${DEVICE_BOT_REPOSITORY:-ho-doan/device-bot}"
 BINARY_NAME="device-bot"
+# Keep in sync with robot-android/src/video.rs and install.ps1. Use the official
+# portable bundle so Android Live also works without Homebrew or a separate ADB.
+SCRCPY_VERSION="5.0.1"
 
 for command in curl shasum tar install mkdir mktemp awk sleep cp mv env; do
   if ! command -v "$command" >/dev/null 2>&1; then
@@ -26,9 +29,13 @@ esac
 case "$(uname -m)" in
   arm64|aarch64)
     TARGET="aarch64-apple-darwin"
+    SCRCPY_ARCH="aarch64"
+    SCRCPY_SHA256="33611e51977a8289e2e124b220f727895181ef2eb9060e0987a4dc2db9cf0d6b"
     ;;
   x86_64|amd64)
     TARGET="x86_64-apple-darwin"
+    SCRCPY_ARCH="x86_64"
+    SCRCPY_SHA256="31a5467a9e907f162b093267cbbab1276b15c6e709c2ea8159566a8d165beb50"
     ;;
   *)
     echo "Unsupported macOS architecture: $(uname -m)" >&2
@@ -148,7 +155,34 @@ for binary in $BINARIES; do
 done
 env -u DEVICE_BOT_ASSET_DIR "${TEMP_DIR}/${BINARY_NAME}" --check-install
 
+SCRCPY_BUNDLE="scrcpy-macos-${SCRCPY_ARCH}-v${SCRCPY_VERSION}"
+SCRCPY_ARCHIVE="${TEMP_DIR}/${SCRCPY_BUNDLE}.tar.gz"
+download_with_retry \
+  "https://github.com/Genymobile/scrcpy/releases/download/v${SCRCPY_VERSION}/${SCRCPY_BUNDLE}.tar.gz" \
+  "$SCRCPY_ARCHIVE" "Downloading Android Live dependencies (scrcpy ${SCRCPY_VERSION} and ADB)"
+if [ "$(shasum -a 256 "$SCRCPY_ARCHIVE" | awk '{print tolower($1)}')" != "$SCRCPY_SHA256" ]; then
+  echo "scrcpy checksum verification failed." >&2
+  exit 1
+fi
+tar -xzf "$SCRCPY_ARCHIVE" -C "$TEMP_DIR"
+SCRCPY_ROOT="${TEMP_DIR}/${SCRCPY_BUNDLE}"
+for dependency in scrcpy scrcpy-server adb; do
+  if [ ! -f "${SCRCPY_ROOT}/${dependency}" ]; then
+    echo "The scrcpy archive does not contain ${dependency}." >&2
+    exit 1
+  fi
+done
+if ! "${SCRCPY_ROOT}/scrcpy" --version > "${TEMP_DIR}/scrcpy-version.txt" ||
+  [ "$(awk 'NR == 1 {print $1, $2}' "${TEMP_DIR}/scrcpy-version.txt")" != "scrcpy ${SCRCPY_VERSION}" ]; then
+  echo "scrcpy version verification failed; expected ${SCRCPY_VERSION}." >&2
+  exit 1
+fi
+"${SCRCPY_ROOT}/adb" version > /dev/null
+
 mkdir -p "$INSTALL_DIR"
+# Keep client, matching server and portable resources together. The Android
+# driver discovers scrcpy-server in the same PATH directory as scrcpy.
+cp -R "${SCRCPY_ROOT}/." "$INSTALL_DIR/"
 mkdir -p "${INSTALL_DIR}/device-bot-assets"
 cp -R "${TEMP_DIR}/${ASSETS}" "${INSTALL_DIR}/device-bot-assets/"
 if [ -d "${TEMP_DIR}/robot-report-assets/${VERSION}" ]; then
@@ -164,8 +198,11 @@ if [ -d "${TEMP_DIR}/qc" ]; then
   cp -R "${TEMP_DIR}/qc" "${INSTALL_DIR}/qc"
 fi
 env -u DEVICE_BOT_ASSET_DIR "${INSTALL_DIR}/${BINARY_NAME}" --check-install
+"${INSTALL_DIR}/scrcpy" --version
+"${INSTALL_DIR}/adb" version
 
 echo "Installed ${BINARIES} ${VERSION} to ${INSTALL_DIR}"
+echo "Installed Android Live dependencies: scrcpy ${SCRCPY_VERSION}, scrcpy-server and ADB"
 if [ -d "${INSTALL_DIR}/qc" ]; then
   echo "Installed QC to ${INSTALL_DIR}/qc"
 fi

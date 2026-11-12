@@ -20,7 +20,10 @@ use std::{
 };
 
 use async_trait::async_trait;
-use robot_core::{DeviceState, Platform, Point, Robot, RobotDevice, RobotError, UiElement};
+use robot_core::{
+    AppWindow, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, RunningApp, UiElement,
+    UiTarget,
+};
 use serde_json::{Value, json};
 use tokio::{
     process::{Child, Command},
@@ -107,6 +110,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     static kCFBooleanTrue: CFTypeRef;
     fn CFRelease(value: CFTypeRef);
+    fn CFRetain(value: CFTypeRef) -> CFTypeRef;
     fn CFDictionaryCreate(
         allocator: CFTypeRef,
         keys: *const CFTypeRef,
@@ -214,6 +218,7 @@ impl Drop for CfOwned {
 struct NativeAxAttributes {
     manual_accessibility: CFStringRef,
     focused_window: CFStringRef,
+    windows: CFStringRef,
     children: CFStringRef,
     role: CFStringRef,
     title: CFStringRef,
@@ -229,6 +234,7 @@ impl NativeAxAttributes {
         Ok(Self {
             manual_accessibility: native_cf_string("AXManualAccessibility")?,
             focused_window: native_cf_string("AXFocusedWindow")?,
+            windows: native_cf_string("AXWindows")?,
             children: native_cf_string("AXChildren")?,
             role: native_cf_string("AXRole")?,
             title: native_cf_string("AXTitle")?,
@@ -246,6 +252,7 @@ impl Drop for NativeAxAttributes {
         for value in [
             self.manual_accessibility,
             self.focused_window,
+            self.windows,
             self.children,
             self.role,
             self.title,
@@ -669,6 +676,7 @@ fn native_accessibility_elements(
     filter: Option<&str>,
     max_results: Option<usize>,
     preferred_pid: Option<i32>,
+    preferred_window: Option<String>,
 ) -> Result<Vec<UiElement>, RobotError> {
     if max_results == Some(0) {
         return Ok(vec![]);
@@ -689,8 +697,7 @@ fn native_accessibility_elements(
             kCFBooleanTrue,
         )
     };
-    let window =
-        native_required_attribute(application.0, attributes.focused_window, "AXFocusedWindow")?;
+    let window = native_target_window(application.0, &attributes, preferred_window.as_deref())?;
     let mut elements = Vec::new();
     native_collect_elements(
         window.0,
@@ -702,6 +709,172 @@ fn native_accessibility_elements(
         &mut elements,
     );
     Ok(elements)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DesktopWindow {
+    process_id: u32,
+    window_id: String,
+    owner: String,
+    title: String,
+}
+
+fn running_apps_from_windows(windows: &[DesktopWindow]) -> Vec<RunningApp> {
+    let mut apps = Vec::new();
+    for window in windows {
+        if apps
+            .iter()
+            .any(|app: &RunningApp| app.process_id == window.process_id)
+        {
+            continue;
+        }
+        apps.push(RunningApp {
+            process_id: window.process_id,
+            name: window.owner.clone(),
+            bundle_id: None,
+        });
+    }
+    apps.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then(left.process_id.cmp(&right.process_id))
+    });
+    apps
+}
+
+fn windows_for_process(windows: &[DesktopWindow], process_id: Option<u32>) -> Vec<AppWindow> {
+    windows
+        .iter()
+        .filter(|window| process_id.is_none_or(|id| window.process_id == id))
+        .map(|window| AppWindow {
+            window_id: window.window_id.clone(),
+            process_id: window.process_id,
+            title: if window.title.is_empty() {
+                window.owner.clone()
+            } else {
+                window.title.clone()
+            },
+            focused: false,
+        })
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn native_listed_windows() -> Result<Vec<DesktopWindow>, RobotError> {
+    let windows = CfOwned(unsafe {
+        CGWindowListCopyWindowInfo(
+            K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY | K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS,
+            0,
+        )
+    });
+    if windows.0.is_null() || unsafe { CFGetTypeID(windows.0) } != unsafe { CFArrayGetTypeID() } {
+        return Err(RobotError::CommandFailed(
+            "could not enumerate macOS windows".into(),
+        ));
+    }
+    let layer_key = native_cf_string("kCGWindowLayer")?;
+    let owner_pid_key = native_cf_string("kCGWindowOwnerPID")?;
+    let owner_name_key = native_cf_string("kCGWindowOwnerName")?;
+    let title_key = native_cf_string("kCGWindowName")?;
+    let number_key = native_cf_string("kCGWindowNumber")?;
+    let count = unsafe { CFArrayGetCount(windows.0) };
+    let mut listed = Vec::new();
+    for index in 0..count {
+        let window = unsafe { CFArrayGetValueAtIndex(windows.0, index) };
+        if window.is_null() {
+            continue;
+        }
+        if native_i32(unsafe { CFDictionaryGetValue(window, layer_key) }) != Some(0) {
+            continue;
+        }
+        let Some(pid) = native_i32(unsafe { CFDictionaryGetValue(window, owner_pid_key) }) else {
+            continue;
+        };
+        if pid <= 0 {
+            continue;
+        }
+        let Some(number) = native_i32(unsafe { CFDictionaryGetValue(window, number_key) }) else {
+            continue;
+        };
+        listed.push(DesktopWindow {
+            process_id: pid as u32,
+            window_id: number.to_string(),
+            owner: native_string(unsafe { CFDictionaryGetValue(window, owner_name_key) })
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| format!("pid {pid}")),
+            title: native_string(unsafe { CFDictionaryGetValue(window, title_key) })
+                .unwrap_or_default(),
+        });
+    }
+    Ok(listed)
+}
+
+#[cfg(target_os = "macos")]
+fn native_target_window(
+    application: AXUIElementRef,
+    attributes: &NativeAxAttributes,
+    preferred_window: Option<&str>,
+) -> Result<CfOwned, RobotError> {
+    let windows = native_copy_attribute(application, attributes.windows);
+    if let Some(preferred) = preferred_window.filter(|value| !value.is_empty()) {
+        if let Some(windows) = windows.as_ref() {
+            if unsafe { CFGetTypeID(windows.0) } == unsafe { CFArrayGetTypeID() } {
+                let count = unsafe { CFArrayGetCount(windows.0) };
+                for index in 0..count {
+                    let child = unsafe { CFArrayGetValueAtIndex(windows.0, index) };
+                    if child.is_null() {
+                        continue;
+                    }
+                    let title =
+                        native_string_attribute(child, attributes.title).unwrap_or_default();
+                    let listed_title = native_listed_windows().ok().and_then(|windows| {
+                        windows
+                            .into_iter()
+                            .find(|window| window.window_id == preferred)
+                            .map(|window| window.title)
+                    });
+                    if title == preferred
+                        || listed_title
+                            .as_ref()
+                            .is_some_and(|value| !value.is_empty() && value == &title)
+                        || preferred == index.to_string()
+                    {
+                        return Ok(CfOwned(unsafe { CFRetain(child) }));
+                    }
+                }
+            }
+        }
+        return Err(RobotError::CommandFailed(format!(
+            "could not find macOS window {preferred}; list windows again and select a visible one"
+        )));
+    }
+    match native_required_attribute(application, attributes.focused_window, "AXFocusedWindow") {
+        Ok(window) => Ok(window),
+        Err(_) => {
+            let Some(windows) = windows else {
+                return Err(RobotError::CommandFailed(
+                    "the selected macOS app has no focused window and no AXWindows; show a window, then retry".into(),
+                ));
+            };
+            if unsafe { CFGetTypeID(windows.0) } != unsafe { CFArrayGetTypeID() }
+                || unsafe { CFArrayGetCount(windows.0) } == 0
+            {
+                return Err(RobotError::CommandFailed(
+                    "the selected macOS app has no focused window; show a window, then retry"
+                        .into(),
+                ));
+            }
+            let child = unsafe { CFArrayGetValueAtIndex(windows.0, 0) };
+            if child.is_null() {
+                return Err(RobotError::CommandFailed(
+                    "the selected macOS app has no focused window; show a window, then retry"
+                        .into(),
+                ));
+            }
+            Ok(CfOwned(unsafe { CFRetain(child) }))
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -720,6 +893,7 @@ pub struct MacosRobot {
     recording: Arc<Mutex<Option<ActiveRecording>>>,
     active_application: Arc<Mutex<Option<String>>>,
     active_process_id: Arc<Mutex<Option<i32>>>,
+    active_window_id: Arc<Mutex<Option<String>>>,
     capture_lock: Arc<Mutex<()>>,
 }
 
@@ -734,6 +908,7 @@ impl MacosRobot {
             recording: Arc::new(Mutex::new(None)),
             active_application: Arc::new(Mutex::new(None)),
             active_process_id: Arc::default(),
+            active_window_id: Arc::default(),
             capture_lock: Arc::default(),
         }
     }
@@ -810,10 +985,16 @@ impl MacosRobot {
         {
             let filter = filter.map(str::to_owned).map(|value| value.to_lowercase());
             let application = *self.active_process_id.lock().await;
+            let window = self.active_window_id.lock().await.clone();
             tokio::time::timeout(
                 Duration::from_millis(2_500),
                 tokio::task::spawn_blocking(move || {
-                    native_accessibility_elements(filter.as_deref(), max_results, application)
+                    native_accessibility_elements(
+                        filter.as_deref(),
+                        max_results,
+                        application,
+                        window,
+                    )
                 }),
             )
             .await
@@ -966,6 +1147,72 @@ impl Robot for MacosRobot {
             platform: Platform::Macos,
             state: DeviceState::Available,
         }])
+    }
+
+    async fn list_running_apps(&self, device_id: &str) -> Result<Vec<RunningApp>, RobotError> {
+        self.require_device(device_id)?;
+        #[cfg(target_os = "macos")]
+        {
+            return Ok(running_apps_from_windows(&native_listed_windows()?));
+        }
+        #[cfg(not(target_os = "macos"))]
+        Ok(vec![])
+    }
+
+    async fn list_app_windows(
+        &self,
+        device_id: &str,
+        process_id: Option<u32>,
+    ) -> Result<Vec<AppWindow>, RobotError> {
+        self.require_device(device_id)?;
+        #[cfg(target_os = "macos")]
+        {
+            return Ok(windows_for_process(&native_listed_windows()?, process_id));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = process_id;
+            Ok(vec![])
+        }
+    }
+
+    async fn select_ui_target(&self, device_id: &str, target: UiTarget) -> Result<(), RobotError> {
+        self.require_device(device_id)?;
+        if let Some(process_id) = target.process_id {
+            if process_id == 0 || process_id > i32::MAX as u32 {
+                return Err(RobotError::InvalidInput(
+                    "processId must be a positive 32-bit integer".into(),
+                ));
+            }
+            *self.active_process_id.lock().await = Some(process_id as i32);
+        }
+        if let Some(window_id) = target.window_id {
+            *self.active_window_id.lock().await = Some(window_id);
+        }
+        if self.active_process_id.lock().await.is_none() {
+            return Err(RobotError::InvalidInput(
+                "select a running app before querying elements".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn activate_ui_target(
+        &self,
+        device_id: &str,
+        target: UiTarget,
+    ) -> Result<(), RobotError> {
+        self.select_ui_target(device_id, target.clone()).await?;
+        let Some(process_id) = *self.active_process_id.lock().await else {
+            return Err(RobotError::InvalidInput(
+                "select a running app before activating it".into(),
+            ));
+        };
+        self.apple_script(
+            "on run argv\n tell application \"System Events\" to set frontmost of (first process whose unix id is (item 1 of argv as integer)) to true\nend run",
+            &[process_id.to_string()],
+        )
+        .await
     }
 
     async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {
@@ -1271,6 +1518,51 @@ mod tests {
         assert_eq!(elements[0].text.as_deref(), Some("New Tab"));
         assert_eq!(elements[0].bounds.right, 36);
         assert!(elements[0].clickable);
+    }
+
+    #[test]
+    fn running_apps_are_unique_processes_sorted_by_name() {
+        let windows = [
+            DesktopWindow {
+                process_id: 20,
+                window_id: "1".into(),
+                owner: "Chrome".into(),
+                title: "Tab A".into(),
+            },
+            DesktopWindow {
+                process_id: 20,
+                window_id: "2".into(),
+                owner: "Chrome".into(),
+                title: "Tab B".into(),
+            },
+            DesktopWindow {
+                process_id: 8,
+                window_id: "3".into(),
+                owner: "Calculator".into(),
+                title: String::new(),
+            },
+        ];
+        let apps = running_apps_from_windows(&windows);
+        assert_eq!(
+            apps,
+            [
+                RunningApp {
+                    process_id: 8,
+                    name: "Calculator".into(),
+                    bundle_id: None,
+                },
+                RunningApp {
+                    process_id: 20,
+                    name: "Chrome".into(),
+                    bundle_id: None,
+                },
+            ]
+        );
+        assert_eq!(windows_for_process(&windows, Some(20)).len(), 2);
+        assert_eq!(
+            windows_for_process(&windows, Some(8))[0].title,
+            "Calculator"
+        );
     }
 }
 

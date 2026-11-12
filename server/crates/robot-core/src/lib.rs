@@ -43,6 +43,34 @@ pub struct DesktopDisplay {
     pub bounds: Bounds,
 }
 
+/// A process currently showing a window on a desktop host.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningApp {
+    pub process_id: u32,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+}
+
+/// One window belonging to a running desktop process.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AppWindow {
+    pub window_id: String,
+    pub process_id: u32,
+    pub title: String,
+    #[serde(default)]
+    pub focused: bool,
+}
+
+/// Request-scoped accessibility target. Omitted fields keep the previous selection.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UiTarget {
+    pub process_id: Option<u32>,
+    pub window_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ScreenshotOptions {
     pub app_id: Option<String>,
@@ -349,6 +377,36 @@ pub trait Robot: Send + Sync {
         Err(RobotError::Unsupported(format!(
             "listing installed apps is not supported for device {device_id}"
         )))
+    }
+    async fn list_running_apps(&self, device_id: &str) -> Result<Vec<RunningApp>, RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "listing running apps is not supported for device {device_id}"
+        )))
+    }
+    async fn list_app_windows(
+        &self,
+        device_id: &str,
+        _process_id: Option<u32>,
+    ) -> Result<Vec<AppWindow>, RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "listing windows is not supported for device {device_id}"
+        )))
+    }
+    /// Remember the process/window used by later element queries in this session.
+    ///
+    /// Listing elements does not require bringing that target to the foreground.
+    async fn select_ui_target(&self, device_id: &str, _target: UiTarget) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "UI target selection is not supported for device {device_id}"
+        )))
+    }
+    /// Bring the selected process/window to the foreground. Separate from Get elements.
+    async fn activate_ui_target(
+        &self,
+        device_id: &str,
+        target: UiTarget,
+    ) -> Result<(), RobotError> {
+        self.select_ui_target(device_id, target).await
     }
     async fn boot_device(&self, device_id: &str) -> Result<(), RobotError> {
         Err(RobotError::Unsupported(format!(
@@ -714,6 +772,31 @@ impl Robot for RobotRegistry {
     }
     async fn list_installed_apps(&self, id: &str) -> Result<Value, RobotError> {
         self.driver_for(id).await?.list_installed_apps(id).await
+    }
+    async fn list_running_apps(&self, id: &str) -> Result<Vec<RunningApp>, RobotError> {
+        self.driver_for(id).await?.list_running_apps(id).await
+    }
+    async fn list_app_windows(
+        &self,
+        id: &str,
+        process_id: Option<u32>,
+    ) -> Result<Vec<AppWindow>, RobotError> {
+        self.driver_for(id)
+            .await?
+            .list_app_windows(id, process_id)
+            .await
+    }
+    async fn select_ui_target(&self, id: &str, target: UiTarget) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .select_ui_target(id, target)
+            .await
+    }
+    async fn activate_ui_target(&self, id: &str, target: UiTarget) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .activate_ui_target(id, target)
+            .await
     }
     async fn boot_device(&self, id: &str) -> Result<(), RobotError> {
         self.driver_for(id).await?.boot_device(id).await

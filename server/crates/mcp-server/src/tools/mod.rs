@@ -48,7 +48,7 @@ impl ToolRegistry {
             runner_status::definition(),
         ];
         definitions.extend(app::definitions());
-        definitions.push(apps::definition());
+        definitions.extend(apps::definitions());
         definitions.extend(recording::definitions());
         definitions.extend(stream::definitions());
         definitions.extend(screen::definitions());
@@ -74,6 +74,11 @@ impl ToolRegistry {
             app::INSTALL_NAME => app::install(&self.robot, &params.arguments).await,
             app::UNINSTALL_NAME => app::uninstall(&self.robot, &params.arguments).await,
             apps::LIST_INSTALLED_APPS_NAME => apps::list_apps(&self.robot, &params.arguments).await,
+            apps::LIST_RUNNING_APPS_NAME => {
+                apps::list_running_apps(&self.robot, &params.arguments).await
+            }
+            apps::LIST_WINDOWS_NAME => apps::list_windows(&self.robot, &params.arguments).await,
+            apps::ACTIVATE_APP_NAME => apps::activate_app(&self.robot, &params.arguments).await,
             navigation::OPEN_URL_NAME => navigation::open_url(&self.robot, &params.arguments).await,
             input::TYPE_KEYS_NAME => input::type_keys(&self.robot, &params.arguments).await,
             input::PRESS_IME_ACTION_NAME => {

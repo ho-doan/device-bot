@@ -143,6 +143,49 @@ class DeviceReadiness {
       '${diagnostics == null ? '' : '\n\n${((diagnostics!['checks'] as List?) ?? []).map((check) => '${check['name']}: ${check['status']} — ${check['detail']}').join('\n')}'}';
 }
 
+class RunningApp {
+  const RunningApp({
+    required this.processId,
+    required this.name,
+    this.bundleId,
+  });
+
+  factory RunningApp.fromJson(Map<String, dynamic> json) => RunningApp(
+    processId: json['processId'] as int,
+    name: json['name'] as String,
+    bundleId: json['bundleId'] as String?,
+  );
+
+  final int processId;
+  final String name;
+  final String? bundleId;
+
+  String get label => '$name · pid $processId';
+}
+
+class AppWindow {
+  const AppWindow({
+    required this.windowId,
+    required this.processId,
+    required this.title,
+    this.focused = false,
+  });
+
+  factory AppWindow.fromJson(Map<String, dynamic> json) => AppWindow(
+    windowId: json['windowId'] as String,
+    processId: json['processId'] as int,
+    title: json['title'] as String? ?? '',
+    focused: json['focused'] == true,
+  );
+
+  final String windowId;
+  final int processId;
+  final String title;
+  final bool focused;
+
+  String get label => title.trim().isEmpty ? 'Window $windowId' : title;
+}
+
 class InstalledApp {
   const InstalledApp({
     required this.name,

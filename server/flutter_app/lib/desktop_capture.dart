@@ -2,9 +2,16 @@ import 'package:flutter/material.dart';
 import 'models.dart';
 
 class DesktopCaptureSettings {
-  const DesktopCaptureSettings({required this.appId, required this.display});
+  const DesktopCaptureSettings({
+    required this.appId,
+    required this.display,
+    this.processId,
+    this.windowId,
+  });
   final String appId;
   final DesktopDisplay display;
+  final int? processId;
+  final String? windowId;
 }
 
 class DesktopCaptureDialog extends StatefulWidget {
@@ -12,10 +19,16 @@ class DesktopCaptureDialog extends StatefulWidget {
     super.key,
     required this.apps,
     required this.displays,
+    this.runningApps,
+    this.windowsFor,
+    this.onActivate,
     this.previous,
   });
   final Future<List<InstalledApp>> apps;
   final Future<List<DesktopDisplay>> displays;
+  final Future<List<RunningApp>>? runningApps;
+  final Future<List<AppWindow>> Function(int processId)? windowsFor;
+  final Future<void> Function(int processId, String? windowId)? onActivate;
   final DesktopCaptureSettings? previous;
   @override
   State<DesktopCaptureDialog> createState() => _DesktopCaptureDialogState();
@@ -26,6 +39,56 @@ class _DesktopCaptureDialogState extends State<DesktopCaptureDialog> {
     text: widget.previous?.appId,
   );
   String? _displayId;
+  int? _processId;
+  String? _windowId;
+  List<AppWindow> _windows = const [];
+  bool _activating = false;
+  String? _activateError;
+
+  @override
+  void initState() {
+    super.initState();
+    _processId = widget.previous?.processId;
+    _windowId = widget.previous?.windowId;
+    if (_processId != null) {
+      _loadWindows(_processId!);
+    }
+  }
+
+  Future<void> _loadWindows(int processId) async {
+    final loader = widget.windowsFor;
+    if (loader == null) return;
+    try {
+      final windows = await loader(processId);
+      if (!mounted || _processId != processId) return;
+      setState(() {
+        _windows = windows;
+        if (!_windows.any((window) => window.windowId == _windowId)) {
+          _windowId = _windows.firstOrNull?.windowId;
+        }
+      });
+    } on Object catch (error) {
+      if (mounted) setState(() => _activateError = error.toString());
+    }
+  }
+
+  Future<void> _activate() async {
+    final processId = _processId;
+    final activate = widget.onActivate;
+    if (processId == null || activate == null || _activating) return;
+    setState(() {
+      _activating = true;
+      _activateError = null;
+    });
+    try {
+      await activate(processId, _windowId);
+    } on Object catch (error) {
+      if (mounted) setState(() => _activateError = error.toString());
+    } finally {
+      if (mounted) setState(() => _activating = false);
+    }
+  }
+
   @override
   void dispose() {
     _app.dispose();
@@ -52,9 +115,117 @@ class _DesktopCaptureDialogState extends State<DesktopCaptureDialog> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Text(
-                  'The target app will be focused for capture. QC will return to the foreground afterwards.',
+                  'Select a running app and window to read elements without activating. Use Activate only when the target must come to the foreground. Capture still focuses the app, then returns QC.',
                 ),
                 const SizedBox(height: 16),
+                if (widget.runningApps != null)
+                  FutureBuilder<List<RunningApp>>(
+                    future: widget.runningApps,
+                    builder: (context, runningSnapshot) {
+                      final apps = runningSnapshot.data ?? const <RunningApp>[];
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (runningSnapshot.connectionState ==
+                              ConnectionState.waiting)
+                            const LinearProgressIndicator(),
+                          if (runningSnapshot.hasError)
+                            Text(
+                              'Could not list running apps: ${runningSnapshot.error}',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
+                              ),
+                            ),
+                          if (apps.isNotEmpty)
+                            DropdownButtonFormField<int>(
+                              key: const Key('running-app'),
+                              isExpanded: true,
+                              initialValue:
+                                  apps.any((app) => app.processId == _processId)
+                                  ? _processId
+                                  : null,
+                              decoration: const InputDecoration(
+                                labelText: 'Running app',
+                              ),
+                              items: apps
+                                  .map(
+                                    (app) => DropdownMenuItem(
+                                      value: app.processId,
+                                      child: Text(
+                                        app.label,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (value) {
+                                if (value == null) return;
+                                final selected = apps.firstWhere(
+                                  (app) => app.processId == value,
+                                );
+                                setState(() {
+                                  _processId = value;
+                                  _windowId = null;
+                                  _windows = const [];
+                                  _app.text = selected.name;
+                                });
+                                _loadWindows(value);
+                              },
+                            ),
+                          if (_windows.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            DropdownButtonFormField<String>(
+                              key: const Key('running-window'),
+                              isExpanded: true,
+                              initialValue:
+                                  _windows.any(
+                                    (window) => window.windowId == _windowId,
+                                  )
+                                  ? _windowId
+                                  : null,
+                              decoration: const InputDecoration(
+                                labelText: 'Window',
+                              ),
+                              items: _windows
+                                  .map(
+                                    (window) => DropdownMenuItem(
+                                      value: window.windowId,
+                                      child: Text(
+                                        window.label,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (value) =>
+                                  setState(() => _windowId = value),
+                            ),
+                          ],
+                          if (widget.onActivate != null) ...[
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                              key: const Key('activate-target'),
+                              onPressed: _processId == null || _activating
+                                  ? null
+                                  : _activate,
+                              icon: const Icon(Icons.front_hand_outlined),
+                              label: Text(
+                                _activating ? 'Activating…' : 'Activate',
+                              ),
+                            ),
+                          ],
+                          if (_activateError != null)
+                            Text(
+                              _activateError!,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
+                              ),
+                            ),
+                          const SizedBox(height: 16),
+                        ],
+                      );
+                    },
+                  ),
                 FutureBuilder<List<InstalledApp>>(
                   future: widget.apps,
                   builder: (context, appsSnapshot) {
@@ -150,13 +321,19 @@ class _DesktopCaptureDialogState extends State<DesktopCaptureDialog> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: display == null || _app.text.trim().isEmpty
+            onPressed:
+                display == null ||
+                    (_app.text.trim().isEmpty && _processId == null)
                 ? null
                 : () => Navigator.pop(
                     context,
                     DesktopCaptureSettings(
-                      appId: _app.text.trim(),
+                      appId: _app.text.trim().isEmpty
+                          ? 'pid ${_processId!}'
+                          : _app.text.trim(),
                       display: display,
+                      processId: _processId,
+                      windowId: _windowId,
                     ),
                   ),
             child: const Text('Capture'),

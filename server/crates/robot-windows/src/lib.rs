@@ -15,7 +15,8 @@ use std::{
 
 use async_trait::async_trait;
 use robot_core::{
-    Bounds, DeviceState, ImeAction, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
+    AppWindow, Bounds, DeviceState, ImeAction, Platform, Point, Robot, RobotDevice, RobotError,
+    RunningApp, UiElement, UiTarget,
 };
 use serde_json::{Value, json};
 use tokio::{process::Command, sync::Mutex};
@@ -148,6 +149,85 @@ $targetPid = [uint32]0
             .await
             .map(|_| ())
     }
+
+    async fn listed_windows(
+        &self,
+        process_id: Option<u32>,
+    ) -> Result<Vec<WindowProcess>, RobotError> {
+        let filter = process_id
+            .map(|id| format!(" | Where-Object {{ $_.Id -eq {id} }}"))
+            .unwrap_or_default();
+        let script = format!(
+            r#"
+$windows = Get-Process{filter} | Where-Object {{ $_.MainWindowHandle -ne 0 }} | ForEach-Object {{
+  [pscustomobject]@{{
+    processId = $_.Id
+    name = $_.ProcessName
+    windowId = [string]([int64]$_.MainWindowHandle)
+    title = $_.MainWindowTitle
+  }}
+}}
+if ($null -eq $windows) {{ '[]' }} else {{ @($windows) | ConvertTo-Json -Depth 3 -Compress }}
+"#
+        );
+        let output = self.powershell(script).await?;
+        parse_window_processes(&output)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WindowProcess {
+    process_id: u32,
+    name: String,
+    window_id: String,
+    title: String,
+}
+
+fn parse_window_processes(output: &[u8]) -> Result<Vec<WindowProcess>, RobotError> {
+    let value = serde_json::from_slice::<Value>(output).map_err(|error| {
+        RobotError::CommandFailed(format!("PowerShell returned invalid window JSON: {error}"))
+    })?;
+    let rows = match value {
+        Value::Null => vec![],
+        Value::Array(values) => values,
+        other => vec![other],
+    };
+    rows.into_iter()
+        .map(|row| {
+            let object = row.as_object().ok_or_else(|| {
+                RobotError::CommandFailed("window list entries must be objects".into())
+            })?;
+            let process_id = object
+                .get("processId")
+                .and_then(Value::as_u64)
+                .filter(|value| *value > 0 && *value <= u64::from(u32::MAX))
+                .ok_or_else(|| RobotError::CommandFailed("window processId is invalid".into()))?
+                as u32;
+            let name = object
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .trim();
+            Ok(WindowProcess {
+                process_id,
+                name: if name.is_empty() {
+                    format!("pid {process_id}")
+                } else {
+                    name.into()
+                },
+                window_id: object
+                    .get("windowId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                title: object
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            })
+        })
+        .collect()
 }
 
 fn ps_quote(value: &str) -> String {
@@ -459,6 +539,82 @@ impl Robot for WindowsRobot {
         }])
     }
 
+    async fn list_running_apps(&self, device_id: &str) -> Result<Vec<RunningApp>, RobotError> {
+        self.require_device(device_id)?;
+        let windows = self.listed_windows(None).await?;
+        let mut apps = Vec::new();
+        for window in &windows {
+            if apps
+                .iter()
+                .any(|app: &RunningApp| app.process_id == window.process_id)
+            {
+                continue;
+            }
+            apps.push(RunningApp {
+                process_id: window.process_id,
+                name: window.name.clone(),
+                bundle_id: None,
+            });
+        }
+        apps.sort_by(|left, right| {
+            left.name
+                .to_lowercase()
+                .cmp(&right.name.to_lowercase())
+                .then(left.process_id.cmp(&right.process_id))
+        });
+        Ok(apps)
+    }
+
+    async fn list_app_windows(
+        &self,
+        device_id: &str,
+        process_id: Option<u32>,
+    ) -> Result<Vec<AppWindow>, RobotError> {
+        self.require_device(device_id)?;
+        Ok(self
+            .listed_windows(process_id)
+            .await?
+            .into_iter()
+            .map(|window| AppWindow {
+                window_id: window.window_id,
+                process_id: window.process_id,
+                title: if window.title.is_empty() {
+                    window.name
+                } else {
+                    window.title
+                },
+                focused: false,
+            })
+            .collect())
+    }
+
+    async fn select_ui_target(&self, device_id: &str, target: UiTarget) -> Result<(), RobotError> {
+        self.require_device(device_id)?;
+        if let Some(process_id) = target.process_id {
+            if process_id == 0 {
+                return Err(RobotError::InvalidInput(
+                    "processId must be a positive 32-bit integer".into(),
+                ));
+            }
+            *self.active_process_id.lock().await = Some(process_id);
+        }
+        if self.active_process_id.lock().await.is_none() {
+            return Err(RobotError::InvalidInput(
+                "select a running app before querying elements".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn activate_ui_target(
+        &self,
+        device_id: &str,
+        target: UiTarget,
+    ) -> Result<(), RobotError> {
+        self.select_ui_target(device_id, target).await?;
+        self.activate_target().await
+    }
+
     async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {
         self.require_device(device_id)?;
         let script = r#"
@@ -738,6 +894,14 @@ mod tests {
 
     #[test]
     fn parses_process_id_output() {
+        let windows = parse_window_processes(
+            br#"[{"processId":20,"name":"chrome","windowId":"111","title":"Tab A"},{"processId":8,"name":"Calculator","windowId":"222","title":""}]"#,
+        )
+        .unwrap();
+        assert_eq!(windows[0].process_id, 20);
+        assert_eq!(windows[1].title, "");
+        assert_eq!(windows[1].name, "Calculator");
+
         assert_eq!(parse_process_id(b"\r\n1234\r\n").unwrap(), 1234);
         assert_eq!(parse_process_id("\u{feff}5678\n".as_bytes()).unwrap(), 5678);
         assert!(parse_process_id(b"not-a-process").is_err());

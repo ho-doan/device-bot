@@ -106,6 +106,37 @@ class McpClient {
     await callTool('mobile_launch_app', {'deviceId': deviceId, 'appId': appId});
   }
 
+  Future<List<RunningApp>> listRunningApps(String deviceId) async {
+    final result = await callTool('mobile_list_running_apps', {
+      'deviceId': deviceId,
+    });
+    return ((result.structuredContent?['apps'] as List?) ?? const [])
+        .map((value) => RunningApp.fromJson(value as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<AppWindow>> listWindows(String deviceId, {int? processId}) async {
+    final result = await callTool('mobile_list_windows', {
+      'deviceId': deviceId,
+      'processId': ?processId,
+    });
+    return ((result.structuredContent?['windows'] as List?) ?? const [])
+        .map((value) => AppWindow.fromJson(value as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> activateApp(
+    String deviceId, {
+    required int processId,
+    String? windowId,
+  }) async {
+    await callTool('mobile_activate_app', {
+      'deviceId': deviceId,
+      'processId': processId,
+      'windowId': ?windowId,
+    });
+  }
+
   Future<List<InstalledApp>> listInstalledApps(String deviceId) async {
     final result = await callTool('mobile_list_installed_apps', {
       'deviceId': deviceId,
@@ -342,8 +373,14 @@ class McpClient {
     String? filter,
     int? maxResults,
     String source = 'auto',
+    int? processId,
+    String? windowId,
   }) async {
-    final arguments = <String, dynamic>{'deviceId': deviceId};
+    final arguments = <String, dynamic>{
+      'deviceId': deviceId,
+      'processId': ?processId,
+      'windowId': ?windowId,
+    };
     if (source != 'auto') arguments['source'] = source;
     if (filter != null && filter.trim().isNotEmpty) {
       arguments['filter'] = filter;
@@ -372,14 +409,25 @@ class McpClient {
   /// Use a whole Flutter snapshot when native controls have no labels. Never
   /// merge nodes across trees: their order, identity and coordinates can differ.
   Future<({List<AdminElement> elements, String? warning})> inspectElements(
-    String deviceId,
-  ) async {
-    final elements = await listElements(deviceId);
+    String deviceId, {
+    int? processId,
+    String? windowId,
+  }) async {
+    final elements = await listElements(
+      deviceId,
+      processId: processId,
+      windowId: windowId,
+    );
     if (elements.isNotEmpty &&
         elements.first.source != 'flutter' &&
         elements.any((element) => !element.hasLabel)) {
       try {
-        final flutter = await listElements(deviceId, source: 'flutter');
+        final flutter = await listElements(
+          deviceId,
+          source: 'flutter',
+          processId: processId,
+          windowId: windowId,
+        );
         if (flutter.isNotEmpty) return (elements: flutter, warning: null);
         return (
           elements: elements,

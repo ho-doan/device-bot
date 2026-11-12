@@ -492,12 +492,15 @@ successful empty tree.
 | `mobile_install_app` | `{ "deviceId": "emulator-5554", "apkPath": "/host/app.apk" }` | Install/replace APK confirmation |
 | `mobile_uninstall_app` | `{ "deviceId": "emulator-5554", "appId": "com.example.app" }` | Uninstall confirmation |
 | `mobile_list_installed_apps` | `{ "deviceId": "device-id" }` | Installed-app inventory for Android, macOS, iOS, or Windows; the result is structured JSON |
+| `mobile_list_running_apps` | `{ "deviceId": "macos-host" }` | Processes that currently have windows on macOS or Windows. Distinct from installed apps |
+| `mobile_list_windows` | `{ "deviceId": "macos-host", "processId": 42 }` | Windows for a running process; omit `processId` to list every on-screen window |
+| `mobile_activate_app` | `{ "deviceId": "macos-host", "processId": 42, "windowId": "7" }` | Bring that process, and optionally one window, to the foreground. Separate from listing elements |
 | `mobile_type_keys` | `{ "deviceId": "emulator-5554", "text": "babyshake" }` | Text-input confirmation |
 | `mobile_press_ime_action` | `{ "deviceId": "emulator-5554", "action": "next" }` | Presses `next`, `done`, `go`, `search`, or `send` on the focused editor. Android sends KEYCODE_ENTER only when `dumpsys input_method` reports that same action |
 | `mobile_take_screenshot` | `{ "deviceId": "emulator-5554" }` | MCP `image` content (`image/png`, Base64) |
 | `mobile_click_on_screen_at_coordinates` | `{ "deviceId": "emulator-5554", "x": 100, "y": 240 }` | Text confirmation |
 | `mobile_swipe_on_screen` | `{ "deviceId": "emulator-5554", "startX": 100, "startY": 800, "endX": 100, "endY": 200 }` | Swipe confirmation; optional `durationMs` |
-| `mobile_list_elements_on_screen` | `{ "deviceId": "emulator-5554", "elementType": "textField", "filter": "Save", "maxResults": 20 }` | `structuredContent.elements`. `elementType` and `filter` are AND conditions applied before `maxResults`. `textField` includes password fields. Omitted `focused`, `checked`, or `selected` means unknown |
+| `mobile_list_elements_on_screen` | `{ "deviceId": "emulator-5554", "elementType": "textField", "filter": "Save", "maxResults": 20 }` | `structuredContent.elements`. `elementType` and `filter` are AND conditions applied before `maxResults`. `textField` includes password fields. Omitted `focused`, `checked`, or `selected` means unknown. Optional `processId`/`windowId` select a macOS/Windows target without activating it |
 
 ## iOS Simulator tools
 

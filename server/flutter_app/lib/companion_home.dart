@@ -361,6 +361,14 @@ class _CompanionHomeState extends State<CompanionHome> {
         builder: (context) => DesktopCaptureDialog(
           apps: _client().listInstalledApps(device.id),
           displays: _client().listDisplays(device.id),
+          runningApps: _client().listRunningApps(device.id),
+          windowsFor: (processId) =>
+              _client().listWindows(device.id, processId: processId),
+          onActivate: (processId, windowId) => _client().activateApp(
+            device.id,
+            processId: processId,
+            windowId: windowId,
+          ),
           previous: _desktopCaptures[device.id],
         ),
       );
@@ -463,7 +471,11 @@ class _CompanionHomeState extends State<CompanionHome> {
       displayId: capture?.display.id,
     );
     try {
-      final inspection = await client.inspectElements(device.id);
+      final inspection = await client.inspectElements(
+        device.id,
+        processId: capture?.processId,
+        windowId: capture?.windowId,
+      );
       return _InspectionData(
         image: shot.bytes,
         labelsOnImage: shot.annotated,

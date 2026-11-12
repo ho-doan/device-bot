@@ -85,6 +85,19 @@ void main() {
     expect(app.version, '1.2.3');
   });
 
+  test('parses running apps and window labels', () {
+    final app = RunningApp.fromJson({'processId': 42, 'name': 'Calculator'});
+    final window = AppWindow.fromJson({
+      'windowId': '7',
+      'processId': 42,
+      'title': 'Calc',
+      'focused': true,
+    });
+    expect(app.label, 'Calculator · pid 42');
+    expect(window.label, 'Calc');
+    expect(window.focused, isTrue);
+  });
+
   test('scales logical accessibility bounds to a retina screenshot', () {
     final element = AdminElement.fromJson({
       'className': 'button',

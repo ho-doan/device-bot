@@ -62,6 +62,63 @@ void main() {
     },
   );
 
+  testWidgets(
+    'selects a running app and window, then activates without capturing',
+    (tester) async {
+      DesktopCaptureSettings? result;
+      final activated = <String>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () async {
+                  result = await showDialog<DesktopCaptureSettings>(
+                    context: context,
+                    builder: (_) => DesktopCaptureDialog(
+                      apps: Future.value(const []),
+                      displays: Future.value(const [mainScreen]),
+                      runningApps: Future.value(const [
+                        RunningApp(processId: 42, name: 'Calculator'),
+                      ]),
+                      windowsFor: (processId) async => [
+                        AppWindow(
+                          windowId: '7',
+                          processId: processId,
+                          title: 'Calc',
+                        ),
+                      ],
+                      onActivate: (processId, windowId) async {
+                        activated.add('$processId:${windowId ?? ''}');
+                      },
+                    ),
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('running-app')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Calculator · pid 42').last);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('running-window')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('activate-target')));
+      await tester.pumpAndSettle();
+      expect(activated, ['42:7']);
+      expect(result, isNull);
+      await tester.tap(find.text('Capture'));
+      await tester.pumpAndSettle();
+      expect(result?.processId, 42);
+      expect(result?.windowId, '7');
+      expect(result?.appId, 'Calculator');
+    },
+  );
+
   test(
     'elements on a different display are excluded; negative bounds are supported',
     () {

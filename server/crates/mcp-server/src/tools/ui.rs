@@ -12,7 +12,7 @@ pub(super) fn definition() -> ToolDefinition {
     ToolDefinition {
         name: LIST_ELEMENTS_NAME.into(),
         title: Some("List accessibility elements on screen".into()),
-        description: "Return normalized accessibility elements with a one-based `index` in query tree order (snapshot-local, not a persistent ID). `position` selects first, last, or a one-based match after filtering. Use its bounds for tap, typing focus, or scroll gestures. On Chrome pages, the driver automatically enables Flutter Web accessibility when its standard opt-in placeholder is present. source=auto queries native first and uses an opt-in Flutter bridge only when native has no matches. source=native or flutter selects one tree; native errors and ambiguous matches are never hidden. Optional `filter` and `elementType` are combined with AND and applied before `maxResults`. `elementType` is one of textField, button, link, staticText, checkBox, switch, image, radio, or slider. textField includes password, search, and multiline editors. An unknown type is an error, not an empty element list. `focused`, `checked`, and `selected` are omitted when the driver cannot observe them; omission means unknown, not false. `value` is the native editor value when the platform exposes one.".into(),
+        description: "Return normalized accessibility elements with a one-based `index` in query tree order (snapshot-local, not a persistent ID). `position` selects first, last, or a one-based match after filtering. Use its bounds for tap, typing focus, or scroll gestures. On Chrome pages, the driver automatically enables Flutter Web accessibility when its standard opt-in placeholder is present. source=auto queries native first and uses an opt-in Flutter bridge only when native has no matches. source=native or flutter selects one tree; native errors and ambiguous matches are never hidden. Optional `filter` and `elementType` are combined with AND and applied before `maxResults`. `elementType` is one of textField, button, link, staticText, checkBox, switch, image, radio, or slider. textField includes password, search, and multiline editors. An unknown type is an error, not an empty element list. `focused`, `checked`, and `selected` are omitted when the driver cannot observe them; omission means unknown, not false. `value` is the native editor value when the platform exposes one. On macOS/Windows, optional `processId` and `windowId` select a running app without activating it; use `mobile_activate_app` to bring that target to the foreground.".into(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -25,7 +25,9 @@ pub(super) fn definition() -> ToolDefinition {
                 "source": { "type": "string", "enum": ["auto", "native", "flutter"], "default": "auto" },
                 "position": { "description": "One-based position in tree order after type/text filtering, before maxResults. Use first, last, or a positive integer. Positions belong to this snapshot only.", "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "string", "enum": ["first", "last"] }] },
                 "maxResults": { "type": "integer", "minimum": 1, "maximum": 100 },
-                "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 60000 }
+                "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 60000 },
+                "processId": { "type": "integer", "minimum": 1, "description": "Running process to query. Desktop only. Does not activate the app." },
+                "windowId": { "type": "string", "minLength": 1, "description": "Window from mobile_list_windows. Desktop only." }
             },
             "required": ["deviceId"],
             "additionalProperties": false
@@ -76,6 +78,15 @@ pub(super) async fn list_elements(robot: &Arc<dyn Robot>, arguments: &Value) -> 
         Ok(None) => None,
         Err(error) => return error,
     };
+    let target = match super::apps::ui_target(arguments) {
+        Ok(target) => target,
+        Err(error) => return error,
+    };
+    if target.process_id.is_some() || target.window_id.is_some() {
+        if let Err(error) = robot.select_ui_target(&device_id, target).await {
+            return ToolResult::execution_error(error.to_string());
+        }
+    }
     let source = arguments
         .get("source")
         .and_then(Value::as_str)

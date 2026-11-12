@@ -1,6 +1,6 @@
 # QC semantics — giới hạn hiện tại
 
-- Ngày: 2026-11-12. Cập nhật: **2026-11-12 — semantics QC đã vá trong UI**; chọn app/cửa sổ đang chạy vẫn là việc riêng.
+- Ngày: 2026-11-12. Cập nhật: **2026-11-12 — semantics QC đã vá; chọn app/cửa sổ đang chạy rồi Get elements đã có API + UI.**
 - Đánh giá sơ bộ qua mã nguồn (CodeGraph) và Accessibility của QC trên macOS; chưa kiểm tra toàn bộ màn hình hay VoiceOver.
 - Semantics đã có tên hành động kèm thiết bị, nhóm từng device, nhãn/giá trị ô nhập, live-region cho lỗi/kết quả, và tên/trạng thái chọn trên inspector/live.
 
@@ -15,12 +15,12 @@
 
 ## Chọn app/cửa sổ để đọc elements trên macOS và Windows
 
-- **Đọc elements không nhất thiết phải activate app đích.** macOS đã đọc AX theo PID đã chọn; Windows đã truy vấn UI Automation theo PID, cho phép QC giữ foreground. Nếu chưa chọn PID thì cả hai lấy app foreground. Đây là kết luận từ mã, chưa xác minh thực tế trên Windows trong phiên này.
-- Hiện PID được ghi nhớ qua `launch_app`; macOS còn activate app ở bước đó. API `mobile_list_elements_on_screen` chưa nhận trực tiếp `appId/PID/windowId`, nên chưa có luồng chọn target độc lập với Launch.
-- Hướng QC cần bổ sung: **chọn app đang chạy → chọn cửa sổ → Get elements**, có nút **Activate** riêng khi cần. Phân biệt app đã cài với process/cửa sổ đang chạy; nhiều instance phải chọn được target cụ thể. Target cần thuộc session/request tương ứng khi có nhiều người dùng remote.
-- Giới hạn: app phải đang chạy, có quyền và cung cấp cây Accessibility/UIA. macOS hiện lấy `AXFocusedWindow` của app đã chọn; cần xử lý trường hợp không có cửa sổ này. App ẩn/minimized hoặc control chưa render có thể không cung cấp đủ elements.
-- Đọc background không bảo đảm click tọa độ/gõ phím cũng làm background được; cần kiểm tra focus/activate riêng cho từng hành động.
-- Mã đã đối chiếu: `robot-macos/src/lib.rs` (`native_frontmost_application`, `native_accessibility_elements`, `launch_app`), `robot-windows/src/lib.rs` (`uia_elements`, `build_uia_script`, `launch_app`), `mcp-server/src/tools/ui.rs`.
+- **Đọc elements không activate app đích.** QC chọn process/cửa sổ đang chạy; `mobile_list_elements_on_screen` nhận `processId`/`windowId` và gọi `select_ui_target` (ghi nhớ PID/window trong session) rồi query. Nút **Activate** gọi `mobile_activate_app` riêng.
+- Công cụ mới: `mobile_list_running_apps`, `mobile_list_windows`, `mobile_activate_app`. Dialog Capture desktop liệt kê process đang có cửa sổ, cửa sổ của process đó, và Activate; Capture vẫn dùng app/display cho screenshot.
+- macOS: enumerate cửa sổ qua `CGWindowList`; đọc AX theo PID đã chọn; nếu không có `AXFocusedWindow` thì lấy cửa sổ đầu trong `AXWindows`; `windowId` khớp title / CG window number / index. Windows: liệt kê process có `MainWindowHandle`; UIA vẫn theo PID (không chọn từng HWND).
+- Target thuộc session MCP hiện tại (`select_ui_target` trên driver của session), không phải global foreground.
+- Giới hạn: app phải đang chạy, có quyền Accessibility / Screen Recording / UIA. Tiêu đề cửa sổ macOS có thể trống nếu chưa cấp Screen Recording — fallback theo process. App ẩn/minimized hoặc control chưa render có thể không cung cấp đủ elements. Click/gõ vẫn cần focus; Activate là bước riêng.
+- Cây Accessibility QC (mục 4) vẫn mở; không thuộc phạm vi chọn app/cửa sổ.
 
 ## Phạm vi cần xác minh khi quay lại
 
@@ -29,6 +29,4 @@
 - macOS driver còn thiếu drag/swipe; tách khỏi vấn đề semantics của QC.
 - Video Chrome vẫn là giới hạn riêng: [ghi chú Web Live](2026-11-12-chrome-web-live-video-limit.md).
 
-Mã cần xem lại: `server/flutter_app/lib/dashboard.dart`, `companion_home.dart`, `web_navigation.dart`, `android_live.dart`, `live_recording_review.dart`, `flow_import.dart`.
-
-Chưa sửa code trong lần ghi nhận này.
+Mã: `robot-core` (`RunningApp`, `AppWindow`, `UiTarget`), `robot-macos`, `robot-windows`, `mcp-server/src/tools/apps.rs` + `ui.rs`, `server/flutter_app/lib/desktop_capture.dart`, `companion_home.dart`, `mcp_client.dart`.

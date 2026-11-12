@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use device_bot::Server;
 use device_mcp_protocol::{JsonRpcRequest, PROTOCOL_VERSION};
 use robot_core::{
-    Bounds, DeviceState, ElementType, ImeAction, Platform, Point, Robot, RobotDevice, RobotError,
-    UiElement,
+    AppWindow, Bounds, DeviceState, ElementType, ImeAction, Platform, Point, Robot, RobotDevice,
+    RobotError, RunningApp, UiElement, UiTarget,
 };
 use serde_json::{Value, json};
 
@@ -13,6 +13,9 @@ use serde_json::{Value, json};
 struct RecordingRobot {
     taps: Mutex<Vec<(String, Point)>>,
     actions: Mutex<Vec<String>>,
+    running_apps: Mutex<Vec<RunningApp>>,
+    windows: Mutex<Vec<AppWindow>>,
+    selected: Mutex<Vec<String>>,
 }
 
 #[async_trait]
@@ -33,6 +36,55 @@ impl Robot for RecordingRobot {
             "deviceId": device_id,
             "apps": [],
         }))
+    }
+
+    async fn list_running_apps(&self, device_id: &str) -> Result<Vec<RunningApp>, RobotError> {
+        self.actions
+            .lock()
+            .unwrap()
+            .push(format!("running:{device_id}"));
+        Ok(self.running_apps.lock().unwrap().clone())
+    }
+
+    async fn list_app_windows(
+        &self,
+        device_id: &str,
+        process_id: Option<u32>,
+    ) -> Result<Vec<AppWindow>, RobotError> {
+        self.actions
+            .lock()
+            .unwrap()
+            .push(format!("windows:{device_id}:{}", process_id.unwrap_or(0)));
+        Ok(self
+            .windows
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|window| process_id.is_none_or(|id| window.process_id == id))
+            .cloned()
+            .collect())
+    }
+
+    async fn select_ui_target(&self, device_id: &str, target: UiTarget) -> Result<(), RobotError> {
+        self.selected.lock().unwrap().push(format!(
+            "{device_id}:{}:{}",
+            target.process_id.unwrap_or(0),
+            target.window_id.unwrap_or_default()
+        ));
+        Ok(())
+    }
+
+    async fn activate_ui_target(
+        &self,
+        device_id: &str,
+        target: UiTarget,
+    ) -> Result<(), RobotError> {
+        self.actions.lock().unwrap().push(format!(
+            "activate:{device_id}:{}:{}",
+            target.process_id.unwrap_or(0),
+            target.window_id.unwrap_or_default()
+        ));
+        Ok(())
     }
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
@@ -278,6 +330,9 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
             "mobile_install_app",
             "mobile_uninstall_app",
             "mobile_list_installed_apps",
+            "mobile_list_running_apps",
+            "mobile_list_windows",
+            "mobile_activate_app",
             "mobile_start_screen_recording",
             "mobile_stop_screen_recording",
             "mobile_start_stream",
@@ -286,7 +341,8 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
             "mobile_list_displays",
             "mobile_take_screenshot",
             "mobile_click_on_screen_at_coordinates",
-            "mobile_swipe_on_screen"
+            "mobile_swipe_on_screen",
+            "mobile_run_flow"
         ]
     );
 
@@ -835,4 +891,109 @@ async fn element_position_is_one_based_and_applied_before_result_limit() {
             .unwrap();
         assert_eq!(response["result"]["isError"], true);
     }
+}
+
+#[tokio::test]
+async fn running_app_and_window_selection_is_independent_of_activation() {
+    let robot = Arc::new(RecordingRobot {
+        running_apps: Mutex::new(vec![RunningApp {
+            process_id: 42,
+            name: "Calculator".into(),
+            bundle_id: None,
+        }]),
+        windows: Mutex::new(vec![AppWindow {
+            window_id: "7".into(),
+            process_id: 42,
+            title: "Calc".into(),
+            focused: true,
+        }]),
+        ..RecordingRobot::default()
+    });
+    let mut server = Server::new(robot.clone());
+    ready(&mut server).await;
+
+    let apps = server
+        .handle(request(
+            2,
+            "tools/call",
+            json!({
+                "name": "mobile_list_running_apps",
+                "arguments": { "deviceId": "emulator-5554" }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        apps["result"]["structuredContent"]["apps"][0]["processId"],
+        42
+    );
+
+    let windows = server
+        .handle(request(
+            3,
+            "tools/call",
+            json!({
+                "name": "mobile_list_windows",
+                "arguments": { "deviceId": "emulator-5554", "processId": 42 }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        windows["result"]["structuredContent"]["windows"][0]["windowId"],
+        "7"
+    );
+
+    let elements = server
+        .handle(request(
+            4,
+            "tools/call",
+            json!({
+                "name": "mobile_list_elements_on_screen",
+                "arguments": {
+                    "deviceId": "emulator-5554",
+                    "processId": 42,
+                    "windowId": "7"
+                }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        elements["result"]["structuredContent"]["elements"][0]["text"],
+        "Submit"
+    );
+    assert_eq!(
+        robot.selected.lock().unwrap().as_slice(),
+        ["emulator-5554:42:7"]
+    );
+    assert!(
+        !robot
+            .actions
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|action| action.starts_with("activate:"))
+    );
+
+    let activated = server
+        .handle(request(
+            5,
+            "tools/call",
+            json!({
+                "name": "mobile_activate_app",
+                "arguments": {
+                    "deviceId": "emulator-5554",
+                    "processId": 42,
+                    "windowId": "7"
+                }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_ne!(activated["result"]["isError"], true);
+    assert_eq!(
+        robot.actions.lock().unwrap().last().unwrap(),
+        "activate:emulator-5554:42:7"
+    );
 }

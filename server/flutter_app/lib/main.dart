@@ -10,11 +10,13 @@ class MobileMcpCompanion extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const colors = ColorScheme.dark(
-      primary: Color(0xFF0F172A),
+      primary: Color(0xFF93C5FD),
+      primaryContainer: Color(0xFF1E3A5F),
+      onPrimaryContainer: Color(0xFFDBEAFE),
       secondary: Color(0xFF1E293B),
       surface: Color(0xFF0E1223),
       onSurface: Color(0xFFF8FAFC),
-      onPrimary: Color(0xFFFFFFFF),
+      onPrimary: Color(0xFF0F172A),
       onSecondary: Color(0xFFFFFFFF),
       error: Color(0xFFDC2626),
     );

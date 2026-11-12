@@ -16,11 +16,11 @@ void main() {
       final sessions = <String>[];
 
       server.listen((request) async {
-      if (request.method == 'DELETE') {
-        request.response.statusCode = 204;
-        await request.response.close();
-        return;
-      }
+        if (request.method == 'DELETE') {
+          request.response.statusCode = 204;
+          await request.response.close();
+          return;
+        }
         expect(request.uri.path, '/mcp');
         expect(
           request.headers.value(HttpHeaders.authorizationHeader),
@@ -183,11 +183,11 @@ void main() {
         'clickable': true,
       };
       server.listen((request) async {
-      if (request.method == 'DELETE') {
-        request.response.statusCode = 204;
-        await request.response.close();
-        return;
-      }
+        if (request.method == 'DELETE') {
+          request.response.statusCode = 204;
+          await request.response.close();
+          return;
+        }
         final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
         var result = <String, dynamic>{};
         if (body['method'] == 'initialize') {
@@ -255,11 +255,11 @@ void main() {
       var expire = true;
       final actions = <Map<String, dynamic>>[];
       server.listen((request) async {
-      if (request.method == 'DELETE') {
-        request.response.statusCode = 204;
-        await request.response.close();
-        return;
-      }
+        if (request.method == 'DELETE') {
+          request.response.statusCode = 204;
+          await request.response.close();
+          return;
+        }
         final body = jsonDecode(await utf8.decoder.bind(request).join()) as Map;
         var result = <String, dynamic>{};
         if (body['method'] == 'initialize') {
@@ -324,6 +324,80 @@ void main() {
       ]);
     },
   );
+
+  test('runFlow calls mobile_run_flow with the yaml document', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    Map<String, dynamic>? arguments;
+    server.listen((request) async {
+      if (request.method == 'DELETE') {
+        request.response.statusCode = 204;
+        await request.response.close();
+        return;
+      }
+      final body =
+          jsonDecode(await utf8.decoder.bind(request).join())
+              as Map<String, dynamic>;
+      if (body['method'] == 'initialize') {
+        request.response.headers.set('mcp-session-id', 'flow');
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'id': body['id'],
+            'result': {
+              'protocolVersion': '2025-11-25',
+              'capabilities': {'tools': {}},
+              'serverInfo': {'name': 'device-bot', 'version': '0.1.0'},
+            },
+          }),
+        );
+        await request.response.close();
+        return;
+      }
+      if (body['method'] == 'notifications/initialized') {
+        request.response.statusCode = HttpStatus.accepted;
+        await request.response.close();
+        return;
+      }
+      if (body['method'] == 'tools/list') {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'id': body['id'],
+            'result': {'tools': []},
+          }),
+        );
+        await request.response.close();
+        return;
+      }
+      final params = body['params'] as Map<String, dynamic>;
+      arguments = Map<String, dynamic>.from(params['arguments'] as Map);
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'id': body['id'],
+          'result': {
+            'content': [
+              {'type': 'text', 'text': 'PASS'},
+            ],
+            'structuredContent': {'status': 'PASS', 'steps': []},
+          },
+        }),
+      );
+      await request.response.close();
+    });
+    final client = McpClient(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      bearerToken: 'token',
+    );
+    addTearDown(client.dispose);
+    final report = await client.runFlow('version: 2\nname: qc\nsteps: []\n');
+    expect(arguments?['yaml'], contains('name: qc'));
+    expect(report['status'], 'PASS');
+  });
 }
 
 void lockRecoveryTests() {
@@ -336,11 +410,11 @@ void lockRecoveryTests() {
         var locked = true;
         final warnings = <DeviceReadiness>[];
         server.listen((request) async {
-      if (request.method == 'DELETE') {
-        request.response.statusCode = 204;
-        await request.response.close();
-        return;
-      }
+          if (request.method == 'DELETE') {
+            request.response.statusCode = 204;
+            await request.response.close();
+            return;
+          }
           final body =
               jsonDecode(await utf8.decoder.bind(request).join()) as Map;
           var result = <String, dynamic>{};

@@ -327,6 +327,7 @@ class _CompanionHomeState extends State<CompanionHome> {
         onInput: (input) => device.platform == 'chrome'
             ? client.sendWebInput(device.id, input)
             : client.sendAndroidInput(device.id, input),
+        onRunFlow: client.runFlow,
       ),
     );
   }

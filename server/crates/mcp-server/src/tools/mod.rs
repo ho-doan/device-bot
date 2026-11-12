@@ -5,6 +5,7 @@ mod apps;
 mod arguments;
 mod batch;
 mod device;
+mod flow;
 mod input;
 mod navigation;
 mod recording;
@@ -51,6 +52,7 @@ impl ToolRegistry {
         definitions.extend(recording::definitions());
         definitions.extend(stream::definitions());
         definitions.extend(screen::definitions());
+        definitions.push(flow::definition());
         definitions
     }
 
@@ -59,6 +61,7 @@ impl ToolRegistry {
         params: CallToolParams,
     ) -> Result<ToolResult, device_mcp_protocol::RpcError> {
         let mut result = match params.name.as_str() {
+            flow::NAME => Box::pin(flow::run(&self.robot, &params.arguments)).await,
             stream::START_NAME => {
                 stream::start(&self.robot, &self.streams, &params.arguments).await
             }

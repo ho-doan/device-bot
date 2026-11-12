@@ -17,9 +17,11 @@ class LiveRecording {
   final String name =
       'live_${DateTime.now().toUtc().toIso8601String().replaceAll(RegExp(r'[^0-9]'), '')}';
   final List<String> _steps = [];
+  int _nextSequence = 1;
   Map<String, dynamic> context = {};
   String? savedPath;
   int get count => _steps.length;
+  List<String> get steps => List.unmodifiable(_steps);
   bool get canExport =>
       platform != 'chrome' ||
       (context['url'] is String &&
@@ -30,7 +32,8 @@ class LiveRecording {
     List<AdminElement> elements,
     AdminElement? selected,
   ) {
-    final sequence = count + 1;
+    // Deleting an earlier action must not reuse an existing YAML step ID.
+    final sequence = _nextSequence++;
     final action = input['action'];
     if (action == 'tap' && selected != null) {
       return buildInspectorFlowYaml(
@@ -94,6 +97,15 @@ class LiveRecording {
 
   Future<void> commit(String step) async {
     _steps.add(step);
+    await _save();
+  }
+
+  Future<void> removeAt(int index) async {
+    _steps.removeAt(index);
+    await _save();
+  }
+
+  Future<void> _save() async {
     if (directory == null || !canExport) return;
     await directory!.create(recursive: true);
     final file = File('${directory!.path}/$name.yaml');

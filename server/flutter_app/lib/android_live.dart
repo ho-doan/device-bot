@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:file_selector/file_selector.dart';
 import 'live_recording.dart';
+import 'live_recording_review.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -73,6 +74,7 @@ class AndroidLiveDialog extends StatefulWidget {
     required this.deviceName,
     required this.connect,
     required this.onInput,
+    this.onRunFlow,
     this.openVideo,
     this.recording,
     this.platform = 'android',
@@ -86,6 +88,9 @@ class AndroidLiveDialog extends StatefulWidget {
   final Stream<AndroidLiveUpdate> Function() connect;
   final Future<void> Function(Map<String, dynamic> input) onInput;
 
+  /// Replays the reviewed YAML through `mobile_run_flow` on the QC session.
+  final Future<Map<String, dynamic>> Function(String yaml)? onRunFlow;
+
   @override
   State<AndroidLiveDialog> createState() => _AndroidLiveDialogState();
 }
@@ -93,6 +98,8 @@ class AndroidLiveDialog extends StatefulWidget {
 class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   late final LiveRecording _recording;
   final TextEditingController _text = TextEditingController();
+  final ScrollController _elementScroll = ScrollController();
+  static const _elementHeight = 48.0;
   StreamSubscription<AndroidLiveUpdate>? _subscription;
   Future<void> _inputs = Future<void>.value();
   AndroidVideoSession? _video;
@@ -100,6 +107,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   String? _source;
   String? _status;
   int? _selectedIndex;
+  AdminElement? _deviceFocus;
   bool _stopped = false;
   InspectorFlowAction _yamlAction = InspectorFlowAction.assertVisible;
   Offset? _panOrigin;
@@ -133,9 +141,72 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   void dispose() {
     unawaited(_subscription?.cancel());
     _text.dispose();
+    _elementScroll.dispose();
     _video?.removeListener(_videoChanged);
     unawaited(_video?.close().catchError((Object _) {}));
     super.dispose();
+  }
+
+  int? _matchingElement(AdminElement? previous, List<AdminElement> elements) {
+    if (previous == null) return null;
+    final candidates = elements.indexed.where(
+      (entry) =>
+          entry.$2.className == previous.className &&
+          entry.$2.source == previous.source,
+    );
+    final id = previous.resourceId?.trim();
+    if (id != null && id.isNotEmpty) {
+      final matches = candidates
+          .where((entry) => entry.$2.resourceId?.trim() == id)
+          .toList();
+      if (matches.length == 1) return matches.single.$1;
+    }
+    final described = candidates.where(
+      (entry) =>
+          entry.$2.text == previous.text &&
+          entry.$2.contentDescription == previous.contentDescription,
+    );
+    final exact = described
+        .where((entry) => _boundsDelta(entry.$2.bounds, previous.bounds) == 0)
+        .firstOrNull;
+    if (exact != null) return exact.$1;
+    // A live refresh shifts bounds by a few pixels. Keep the same node.
+    return _closest(described, previous.bounds, 48) ??
+        _closest(candidates, previous.bounds, 24);
+  }
+
+  bool _sameFocus(AdminElement? previous, AdminElement next) {
+    if (previous == null) return false;
+    if (previous.className != next.className ||
+        previous.source != next.source) {
+      return false;
+    }
+    final id = previous.resourceId?.trim();
+    if (id != null && id.isNotEmpty) return id == next.resourceId?.trim();
+    if (previous.contentDescription != next.contentDescription) return false;
+    return _boundsDelta(previous.bounds, next.bounds) <= 48;
+  }
+
+  int _boundsDelta(AdminBounds a, AdminBounds b) {
+    final left = (a.left - b.left).abs();
+    final top = (a.top - b.top).abs();
+    final right = (a.right - b.right).abs();
+    final bottom = (a.bottom - b.bottom).abs();
+    return [left, top, right, bottom].reduce((x, y) => x > y ? x : y);
+  }
+
+  int? _closest(
+    Iterable<(int, AdminElement)> candidates,
+    AdminBounds bounds,
+    int maxDelta,
+  ) {
+    (int, int)? best;
+    for (final entry in candidates) {
+      final distance = _boundsDelta(entry.$2.bounds, bounds);
+      if (distance > maxDelta) continue;
+      if (best == null || distance < best.$2) best = (entry.$1, distance);
+    }
+    return best?.$1;
   }
 
   void _onUpdate(AndroidLiveUpdate update) {
@@ -144,29 +215,67 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
       case AndroidLiveFrame():
         break;
       case AndroidLiveElements(:final elements, :final source):
+        final previous = _selectedIndex == null
+            ? null
+            : _elements[_selectedIndex!];
+        final focused = elements.indexWhere((e) => e.focused == true);
+        final nextFocus = focused < 0 ? null : elements[focused];
+        final focusMoved =
+            nextFocus != null && !_sameFocus(_deviceFocus, nextFocus);
+        // A refresh that first reports the already-focused field must not
+        // replace a row the operator just selected.
+        final followFocus =
+            focusMoved && (_selectedIndex == null || _deviceFocus != null);
+        final selection = followFocus
+            ? focused
+            : _matchingElement(previous, elements);
+        final reveal =
+            selection != null && (followFocus || selection != _selectedIndex);
         setState(() {
-          final previous = _selectedIndex == null
-              ? null
-              : _elements[_selectedIndex!];
           _elements = elements;
           _source = source;
-          if (previous != null) {
-            final match = elements.indexWhere(
-              (element) =>
-                  element.className == previous.className &&
-                  element.resourceId == previous.resourceId &&
-                  element.source == previous.source &&
-                  element.bounds.left == previous.bounds.left &&
-                  element.bounds.top == previous.bounds.top &&
-                  element.bounds.right == previous.bounds.right &&
-                  element.bounds.bottom == previous.bounds.bottom,
-            );
-            _selectedIndex = match < 0 ? null : match;
-          }
+          _selectedIndex = selection;
+          if (nextFocus != null) _deviceFocus = nextFocus;
         });
+        if (reveal) _revealSelected();
       case AndroidLiveStatus(:final message):
         setState(() => _status = message);
     }
+  }
+
+  void _inspect(int? index) {
+    setState(() => _selectedIndex = index);
+    _revealSelected();
+  }
+
+  /// Brings the selected row into view. A live update can arrive before the
+  /// list has a scroll extent, so a zero extent is retried on the next frame.
+  void _revealSelected([int attempt = 0]) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final index = _selectedIndex;
+      if (!mounted || index == null || !_elementScroll.hasClients) return;
+      final position = _elementScroll.position;
+      if (!position.hasViewportDimension || position.viewportDimension <= 0) {
+        if (attempt < 8) _revealSelected(attempt + 1);
+        return;
+      }
+      final top = index * _elementHeight;
+      final bottom = top + _elementHeight;
+      final viewBottom = position.pixels + position.viewportDimension;
+      if (top >= position.pixels && bottom <= viewBottom) return;
+      if (position.maxScrollExtent <= 0 &&
+          bottom > position.viewportDimension &&
+          attempt < 8) {
+        _revealSelected(attempt + 1);
+        return;
+      }
+      final raw = top < position.pixels
+          ? top
+          : bottom - position.viewportDimension;
+      final offset = raw.clamp(0.0, position.maxScrollExtent);
+      if ((position.pixels - offset).abs() < 1) return;
+      position.jumpTo(offset);
+    });
   }
 
   Future<void> _openVideo() async {
@@ -177,7 +286,9 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         return;
       }
       _video = video;
-      if (_recording.context.isEmpty) _recording.context = video.recordingContext;
+      if (_recording.context.isEmpty) {
+        _recording.context = video.recordingContext;
+      }
       video.addListener(_videoChanged);
       if (widget.platform == 'chrome') _connectInspection();
       setState(() {});
@@ -265,9 +376,42 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
 
   void _select(Offset devicePoint) {
     final element = elementAtDevicePoint(_elements, devicePoint);
-    setState(() {
-      _selectedIndex = element == null ? null : _elements.indexOf(element);
-    });
+    _inspect(element == null ? null : _elements.indexOf(element));
+  }
+
+  Future<String> _runRecording() async {
+    await _inputs;
+    final report = await widget.onRunFlow!(_recording.toYaml());
+    final status = report['status']?.toString() ?? 'finished';
+    final error = report['error']?.toString();
+    final steps = report['steps'];
+    var failed = 0;
+    if (steps is List) {
+      for (final step in steps) {
+        if (step is Map && step['status'] == 'failed') failed++;
+      }
+    }
+    final directory = report['artifactDirectory']?.toString();
+    return [
+      'Run $status',
+      if (failed > 0) '$failed failed step${failed == 1 ? '' : 's'}',
+      if (error != null && error.isNotEmpty) error,
+      if (directory != null && directory.isNotEmpty) directory,
+    ].join('\n');
+  }
+
+  Future<void> _reviewRecording() async {
+    await _inputs;
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => LiveRecordingReview(
+        recording: _recording,
+        onExport: _exportRecording,
+        onRun: widget.onRunFlow == null ? null : _runRecording,
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   void _tapSelected() {
@@ -319,11 +463,9 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
           actions: [
             TextButton.icon(
               key: const Key('live-export-yaml'),
-              onPressed: _recording.count > 0 && _recording.canExport
-                  ? _exportRecording
-                  : null,
+              onPressed: _recording.count > 0 ? _reviewRecording : null,
               icon: const Icon(Icons.save_alt),
-              label: Text('Export YAML (${_recording.count})'),
+              label: Text('Review YAML (${_recording.count})'),
             ),
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -455,50 +597,53 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                     child: Column(
                       children: [
                         Expanded(
-                          child: CustomScrollView(
-                            slivers: [
-                              if (selected != null)
-                                SliverToBoxAdapter(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(12),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        Text(
-                                          selected.name,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        SelectableText(
-                                          'Selector: ${selected.selector}\n${selected.className}\n'
-                                          '${selected.bounds.left},${selected.bounds.top}  ${selected.bounds.width}×${selected.bounds.height}',
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.bodySmall,
-                                        ),
-                                        const SizedBox(height: 8),
-                                        FilledButton.icon(
-                                          key: const Key(
-                                            'android-live-tap-selected',
-                                          ),
-                                          onPressed:
-                                              selected.clickable &&
-                                                  selected.enabled
-                                              ? _tapSelected
-                                              : null,
-                                          icon: const Icon(
-                                            Icons.touch_app_outlined,
-                                          ),
-                                          label: const Text('Tap selected'),
-                                        ),
-                                        Row(
+                          child: LayoutBuilder(
+                            builder: (context, constraints) => Column(
+                              children: [
+                                if (selected != null)
+                                  SizedBox(
+                                    height: math.min(
+                                      260,
+                                      constraints.maxHeight * .6,
+                                    ),
+                                    child: SingleChildScrollView(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(12),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
                                           children: [
-                                            Expanded(
-                                              child:
-                                                  DropdownButton<
-                                                    InspectorFlowAction
-                                                  >(
+                                            Text(
+                                              selected.name,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            FilledButton.icon(
+                                              key: const Key(
+                                                'android-live-tap-selected',
+                                              ),
+                                              onPressed:
+                                                  selected.clickable &&
+                                                      selected.enabled
+                                                  ? _tapSelected
+                                                  : null,
+                                              icon: const Icon(
+                                                Icons.touch_app_outlined,
+                                              ),
+                                              label: const Text('Tap selected'),
+                                            ),
+                                            SelectableText(
+                                              'Selector: ${selected.selector}\n${selected.className}\n'
+                                              '${selected.bounds.left},${selected.bounds.top}  ${selected.bounds.width}×${selected.bounds.height}',
+                                              style: Theme.of(
+                                                context,
+                                              ).textTheme.bodySmall,
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: DropdownButton<InspectorFlowAction>(
                                                     isExpanded: true,
                                                     value: _yamlAction,
                                                     items: const [
@@ -552,53 +697,99 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                                       }
                                                     },
                                                   ),
+                                                ),
+                                                IconButton(
+                                                  tooltip: 'Copy YAML',
+                                                  onPressed: () =>
+                                                      _copyYaml(selected),
+                                                  icon: const Icon(
+                                                    Icons.copy_outlined,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
-                                            IconButton(
-                                              tooltip: 'Copy YAML',
-                                              onPressed: () =>
-                                                  _copyYaml(selected),
-                                              icon: const Icon(
-                                                Icons.copy_outlined,
+                                            SizedBox(
+                                              height: 100,
+                                              child: SingleChildScrollView(
+                                                child: SelectableText(
+                                                  _yamlFor(selected),
+                                                  key: const Key(
+                                                    'android-live-yaml',
+                                                  ),
+                                                  style: const TextStyle(
+                                                    fontFamily: 'monospace',
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
                                               ),
                                             ),
                                           ],
                                         ),
-                                        SizedBox(
-                                          height: 100,
-                                          child: SingleChildScrollView(
-                                            child: SelectableText(
-                                              _yamlFor(selected),
-                                              key: const Key(
-                                                'android-live-yaml',
-                                              ),
-                                              style: const TextStyle(
-                                                fontFamily: 'monospace',
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
+                                      ),
                                     ),
                                   ),
+                                Expanded(
+                                  child: ListView.builder(
+                                    key: const Key('live-element-list'),
+                                    controller: _elementScroll,
+                                    itemExtent: _elementHeight,
+                                    itemCount: _elements.length,
+                                    itemBuilder: (context, index) {
+                                      final element = _elements[index];
+                                      final colors = Theme.of(
+                                        context,
+                                      ).colorScheme;
+                                      final selectedRow =
+                                          index == _selectedIndex;
+                                      final foreground = selectedRow
+                                          ? colors.onPrimaryContainer
+                                          : colors.onSurface;
+                                      return ListTile(
+                                        key: ValueKey(
+                                          'android-live-element-$index',
+                                        ),
+                                        selected: selectedRow,
+                                        selectedColor:
+                                            colors.onPrimaryContainer,
+                                        textColor: colors.onSurface,
+                                        iconColor: foreground,
+                                        selectedTileColor:
+                                            colors.primaryContainer,
+                                        tileColor: colors.surface,
+                                        // A filled focus highlight paints over
+                                        // the label. Keep the row color on the
+                                        // tile and use a hairline instead.
+                                        focusColor: const Color(0x00000000),
+                                        hoverColor: const Color(0x1493C5FD),
+                                        splashColor: const Color(0x3393C5FD),
+                                        shape: RoundedRectangleBorder(
+                                          side: BorderSide(
+                                            color: selectedRow
+                                                ? colors.onPrimaryContainer
+                                                : const Color(0x00000000),
+                                          ),
+                                        ),
+                                        title: Text(
+                                          element.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(color: foreground),
+                                        ),
+                                        trailing: selectedRow
+                                            ? Icon(
+                                                Icons.check,
+                                                size: 18,
+                                                color: foreground,
+                                              )
+                                            : null,
+                                        dense: true,
+                                        onTap: () => _inspect(index),
+                                      );
+                                    },
+                                  ),
                                 ),
-                              SliverList.builder(
-                                itemCount: _elements.length,
-                                itemBuilder: (context, index) {
-                                  final element = _elements[index];
-                                  return ListTile(
-                                    key: ValueKey(
-                                      'android-live-element-$index',
-                                    ),
-                                    selected: index == _selectedIndex,
-                                    title: Text(element.name),
-                                    dense: true,
-                                    onTap: () =>
-                                        setState(() => _selectedIndex = index),
-                                  );
-                                },
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                         Padding(

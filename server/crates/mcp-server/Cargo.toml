@@ -6,6 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+robot-flow = { path = "../robot-flow" }
 robot-stream = { path = "../robot-stream" }
 axum.workspace = true
 base64 = "0.22.1"
@@ -27,6 +29,5 @@ uuid.workspace = true
 libc.workspace = true
 
 [dev-dependencies]
-async-trait.workspace = true
 serde_json.workspace = true
 tower.workspace = true

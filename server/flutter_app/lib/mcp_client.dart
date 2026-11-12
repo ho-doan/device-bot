@@ -398,6 +398,12 @@ class McpClient {
     return (elements: elements, warning: null);
   }
 
+  /// Runs a robot-flow YAML scenario in a separate case session.
+  Future<Map<String, dynamic>> runFlow(String yaml) async {
+    final result = await callTool('mobile_run_flow', {'yaml': yaml});
+    return result.structuredContent ?? const {};
+  }
+
   Future<McpToolResult> callTool(
     String name,
     Map<String, dynamic> arguments,

@@ -12,9 +12,8 @@ steps:
     launch_app:
       app_id: Safari
   - id: open_chatgpt
-    open_url:
-      url: https://chatgpt.com
-      app_id: Safari
+    launch_app:
+      app_id: https://chatgpt.com
   - id: settle_browser
     wait:
       ms: 3000

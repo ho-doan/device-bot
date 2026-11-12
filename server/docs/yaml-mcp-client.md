@@ -187,7 +187,7 @@ not establish native device parity; see the recorded verification results.
 | Step | Meaning |
 | --- | --- |
 | `select_device` | Exactly one available device matching ID/name/platform/state |
-| `launch_app`, `open_url` | Map to the existing MCP tools; launch is not cold-reset |
+| `launch_app` | Shared launch: HTTP/HTTPS `app_id` uses `mobile_open_url`; native app IDs/paths use `mobile_launch_app`. Launch is not cold-reset |
 | `tap`, `type_text`, `swipe` | Existing coordinate/text MCP calls |
 | `tap_element`, `focus_field` | Fresh unique actionable match; optional native tap/focus proof |
 | `fill_field` | Focus, type or run explicit replacement recipe, then verify |
@@ -216,10 +216,11 @@ the existing native text/description representation remains the fallback. MCP er
 EOF, timeouts, Unsupported and capped/truncated queries fail the case. A tool
 appearing in `tools/list` does not prove support on every device driver.
 
-Version-1 action names remain usable through MCP. The old `open_url.app_id`
-contract cannot be represented by the current Chrome-only MCP navigation tool,
-so it fails preflight explicitly. The old macOS/Safari direct-driver examples
-are not equivalent MCP flows. Screenshots in v1 retain their explicit path
+`launch_app` is the single YAML launch action in both versions. Supply a native
+app identifier/executable path or an HTTP/HTTPS URL through `app_id`. The separate
+`open_url` action has been removed; migrate its `url` value to `launch_app.app_id`.
+The MCP navigation tool still requires a Chrome page; the old macOS/Safari
+direct-driver examples are not equivalent MCP flows. Screenshots in v1 retain their explicit path
 semantics; v2 paths stay under the case artifact directory.
 
 ## Evidence and adoption

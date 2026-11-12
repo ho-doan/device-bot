@@ -247,22 +247,8 @@ impl FlowRunner {
                     }
                     calls.push(("mobile_list_available_devices", json!({})))
                 }
-                "launch_app" => calls.push((
-                    "mobile_launch_app",
-                    json!({"deviceId":"<selected>","appId":required(args,"app_id")?}),
-                )),
-                "open_url" => {
-                    // Current MCP open_url is Chrome navigation only. A v1 app_id
-                    // cannot be represented faithfully, so fail instead of drop it.
-                    if args.get("app_id").is_some() {
-                        return Err(
-                            "open_url.app_id has no equivalent in the current MCP schema".into(),
-                        );
-                    }
-                    calls.push((
-                        "mobile_open_url",
-                        json!({"deviceId":"<selected>","url":required(args,"url")?}),
-                    ));
+                "launch_app" => {
+                    calls.push(app_launch_call("<selected>", required(args, "app_id")?))
                 }
                 "screenshot" => {
                     self.artifact_path(required(args, "path")?)?;
@@ -503,19 +489,10 @@ impl FlowRunner {
                 self.execute_steps(&children).await?;
             }
             "launch_app" => {
-                self.call(
-                    "mobile_launch_app",
-                    json!({"deviceId":self.device_id()?,"appId":required(args,"app_id")?}),
-                )
-                .await?;
+                let (tool, arguments) =
+                    app_launch_call(self.device_id()?, required(args, "app_id")?);
+                self.call(tool, arguments).await?;
                 self.values.clear();
-            }
-            "open_url" => {
-                self.call(
-                    "mobile_open_url",
-                    json!({"deviceId":self.device_id()?,"url":required(args,"url")?}),
-                )
-                .await?;
             }
             "type_text" => {
                 self.call(
@@ -1284,6 +1261,22 @@ fn collect_secrets(value: &Value, out: &mut Vec<String>) {
 }
 
 // A scoped platform is authoritative; never silently call a tool on a different device.
+// The YAML launch contract accepts a native app identifier/path or a web URL.
+// Keep preflight and execution on the same MCP tool and argument schema.
+fn app_launch_call(device_id: &str, app_id: &str) -> (&'static str, Value) {
+    if app_id.starts_with("http://") || app_id.starts_with("https://") {
+        (
+            "mobile_open_url",
+            json!({"deviceId": device_id, "url": app_id}),
+        )
+    } else {
+        (
+            "mobile_launch_app",
+            json!({"deviceId": device_id, "appId": app_id}),
+        )
+    }
+}
+
 fn route_tool_arguments(arguments: &mut Value, device_id: &str) -> Result<()> {
     let object = arguments
         .as_object_mut()

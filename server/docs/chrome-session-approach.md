@@ -46,9 +46,8 @@ differ, but QC must not have a separate browser-launch implementation.
   external setup step.
 - Keep credentials in the ignored local env file; do not include them in this
   document, code, commands printed as evidence or reports.
-- Preserve explicit test limitations. AAT-1188 checks form rendering;
-  AAT-1191 exercises input and Login. Do not conflate these or call PARTIAL a
-  verified successful login.
+- Preserve explicit test limitations. Form rendering and successful input/login
+  are separate checks. Do not call PARTIAL a verified successful login.
 
 ## Current code and runtime state
 
@@ -56,14 +55,15 @@ differ, but QC must not have a separate browser-launch implementation.
   session by default; `DEVICE_BOT_CHROME_DEBUG_ADDRESS` explicitly selects attach
   mode. This is the earlier approach and is to be replaced for the agreed mode.
 - Temporary profiles, child-process ownership, five-second CDP deadlines and
-  cancellable recording capture were implemented. YAML cases AAT-1188/AAT-1191
-  have a browser-boot step; the AstroTalk runner has an `auto` device option.
+  cancellable recording capture were implemented. YAML cases can declare
+  browser initialization through `mobile_boot_device` with `chrome:browser`.
 - A prototype macOS LaunchServices launcher was then added to the shared driver
   while diagnosing QC-only slowness. Its 11 Chrome unit tests passed, but it was
   not live-tested, packaged or deployed. It is not the agreed final approach;
   review/remove that prototype when implementing shared-browser contexts.
-- Do not blindly reset the working tree: it contains the changes above and the
-  untracked `astrotalk/` workspace with local scenario changes/test data.
+- Do not blindly reset the working tree: preserve unrelated local changes.
+  Keep customer application checkouts, scenarios and private data outside this
+  robot repository. Robot regression tests use synthetic fixtures.
 - The last local QC bundle update predates the LaunchServices prototype and
   still uses the separate-process approach. It is under
   `artifacts/qc-release/smoke/Device Bot QC.app`.
@@ -71,9 +71,9 @@ differ, but QC must not have a separate browser-launch implementation.
   although short-lived YAML/stdio tests had succeeded. The exact cause of that
   QC-only delay was not established. Do not claim it was fixed by a clean
   profile or native launch.
-- Prior evidence is in `artifacts/chrome-case-lifecycle/RESULTS.md` and
-  `artifacts/astrotalk-AAT-1188-retest/RESULTS.md`; it documents the earlier
-  implementation, not validation of the new shared-browser approach.
+- Prior generic evidence is in `artifacts/chrome-case-lifecycle/RESULTS.md`;
+  it documents the earlier implementation, not validation of the new
+  shared-browser approach. Customer evidence is maintained outside this repo.
 
 ## Resume checklist
 

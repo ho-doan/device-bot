@@ -598,7 +598,7 @@ steps:
       name: mobile_boot_device
       arguments: {deviceId: 'chrome:browser'}
   - select_device: {platform: chrome, state: available}
-  - open_url: {url: 'https://example.com'}
+  - launch_app: {app_id: 'https://example.com'}
 ```
 
 `mobile_start_screen_recording` on macOS writes an MP4 from AVFoundation and

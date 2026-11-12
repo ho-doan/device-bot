@@ -13,12 +13,12 @@ pub(super) fn definition() -> ToolDefinition {
     ToolDefinition {
         name: TYPE_KEYS_NAME.into(),
         title: Some("Type text on a mobile device".into()),
-        description: "Type text into the currently focused field on the selected device.".into(),
+        description: "Type text into the currently focused field. Set clear=true to clear the focused field instead; text may be empty for clear.".into(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "deviceId": { "type": "string", "minLength": 1 },
-                "text": { "type": "string", "minLength": 1 }
+                "text": { "type": "string" }, "clear": { "type": "boolean" }
             },
             "required": ["deviceId", "text"],
             "additionalProperties": false
@@ -51,6 +51,12 @@ pub(super) async fn type_keys(robot: &Arc<dyn Robot>, arguments: &Value) -> Tool
         Ok(value) => value,
         Err(error) => return error,
     };
+    if arguments.get("clear").and_then(Value::as_bool) == Some(true) {
+        return match robot.clear_text(&device_id).await {
+            Ok(()) => ToolResult::text("Focused field cleared"),
+            Err(e) => ToolResult::execution_error(e.to_string()),
+        };
+    }
     let text = match required_string(arguments, "text") {
         Ok(value) => value,
         Err(error) => return error,

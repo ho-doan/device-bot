@@ -122,7 +122,7 @@ void main() {
     },
   );
 
-  testWidgets('live control is offered only for Android devices', (
+  testWidgets('live control is offered for Android and Chrome devices', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -165,9 +165,11 @@ void main() {
     final buttons = tester.widgetList<IconButton>(
       find.widgetWithIcon(IconButton, Icons.videocam_outlined),
     );
-    expect(buttons, hasLength(2));
-    expect(buttons.first.onPressed, isNotNull);
-    expect(buttons.last.onPressed, isNull);
+    expect(buttons, hasLength(3));
+    final list = buttons.toList();
+    expect(list[0].onPressed, isNotNull);
+    expect(list[1].onPressed, isNull);
+    expect(list[2].onPressed, isNotNull);
   });
 
   testWidgets(

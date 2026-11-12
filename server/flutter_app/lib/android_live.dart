@@ -71,11 +71,13 @@ class AndroidLiveDialog extends StatefulWidget {
     required this.connect,
     required this.onInput,
     this.openVideo,
+    this.platform = 'android',
     super.key,
   });
 
   final Future<AndroidVideoSession> Function()? openVideo;
   final String deviceName;
+  final String platform;
   final Stream<AndroidLiveUpdate> Function() connect;
   final Future<void> Function(Map<String, dynamic> input) onInput;
 
@@ -101,6 +103,12 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   void initState() {
     super.initState();
     if (widget.openVideo != null) unawaited(_openVideo());
+    if (widget.platform != 'chrome' || widget.openVideo == null) {
+      _connectInspection();
+    }
+  }
+
+  void _connectInspection() {
     _subscription = widget.connect().listen(
       _onUpdate,
       onError: (Object error) {
@@ -161,6 +169,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
       }
       _video = video;
       video.addListener(_videoChanged);
+      if (widget.platform == 'chrome') _connectInspection();
       setState(() {});
     } on Object catch (error) {
       if (mounted) setState(() => _status = error.toString());
@@ -259,6 +268,13 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                 key: const Key('android-live-status'),
               ),
             ),
+            if (widget.platform == 'chrome')
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  'In Chrome, choose This Tab and allow sharing. Reopen Live after navigation or resizing.',
+                ),
+              ),
             if (_status != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -518,7 +534,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                 key: const Key('android-live-type'),
                                 controller: _text,
                                 decoration: const InputDecoration(
-                                  labelText: 'Text for focused Android field',
+                                  labelText: 'Text for focused field',
                                   isDense: true,
                                 ),
                                 onChanged: (_) => setState(() {}),
@@ -545,7 +561,11 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                         )
                                         ? () => _send({'action': 'clear'})
                                         : null,
-                                    child: const Text('Clear Android field'),
+                                    child: Text(
+                                      widget.platform == 'chrome'
+                                          ? 'Clear web field'
+                                          : 'Clear Android field',
+                                    ),
                                   ),
                                 ],
                               ),

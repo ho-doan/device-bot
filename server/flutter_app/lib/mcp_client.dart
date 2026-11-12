@@ -65,8 +65,11 @@ class McpClient {
         .toList();
   }
 
-  Future<void> bootDevice(String deviceId) async {
-    await callTool('mobile_boot_device', {'deviceId': deviceId});
+  Future<void> bootDevice(String deviceId, {bool restart = false}) async {
+    await callTool('mobile_boot_device', {
+      'deviceId': deviceId,
+      if (restart) 'restart': true,
+    });
   }
 
   Future<DeviceReadiness> runnerStatus(
@@ -186,6 +189,47 @@ class McpClient {
 
   Future<void> stopAndroidStream(String streamId) async {
     await callTool('mobile_stop_stream', {'streamId': streamId});
+  }
+
+  Stream<AndroidLiveUpdate> watchWebLive(String deviceId) async* {
+    while (!_disposed) {
+      yield AndroidLiveElements(
+        elements: await listElements(deviceId),
+        source: 'native',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 1200));
+    }
+  }
+
+  Future<void> sendWebInput(String deviceId, Map<String, dynamic> input) async {
+    switch (input['action']) {
+      case 'tap':
+        await callTool('mobile_click_on_screen_at_coordinates', {
+          'deviceId': deviceId,
+          'x': input['x'],
+          'y': input['y'],
+        });
+      case 'swipe':
+        await callTool('mobile_swipe_on_screen', {
+          'deviceId': deviceId,
+          'startX': input['x'],
+          'startY': input['y'],
+          'endX': input['endX'],
+          'endY': input['endY'],
+          'durationMs': input['durationMs'],
+        });
+      case 'type':
+        await callTool('mobile_type_keys', {
+          'deviceId': deviceId,
+          'text': input['text'],
+        });
+      case 'clear':
+        await callTool('mobile_type_keys', {
+          'deviceId': deviceId,
+          'text': '',
+          'clear': true,
+        });
+    }
   }
 
   /// Inspection metadata only; video arrives independently over WebRTC.

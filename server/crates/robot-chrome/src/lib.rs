@@ -33,6 +33,7 @@ use tokio::{
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 mod connection;
+mod live;
 mod startup;
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -432,6 +433,31 @@ fn value_i32(value: &Value, key: &str) -> i32 {
 
 #[async_trait]
 impl Robot for ChromeRobot {
+    async fn negotiate_native_video(
+        &self,
+        id: &str,
+        offer: &str,
+    ) -> Result<Option<robot_core::NativeVideoStream>, RobotError> {
+        self.start_live(id, offer).await.map(Some)
+    }
+    async fn restart_device(&self, id: &str) -> Result<(), RobotError> {
+        if id != "chrome:browser" {
+            self.page(id).await?;
+        }
+        let _ = self.close_session().await;
+        self.start_browser("chrome:browser").await
+    }
+    async fn clear_text(&self, id: &str) -> Result<(), RobotError> {
+        let target = self.page(id).await?;
+        let response = self.cdp(&target, "Runtime.evaluate", json!({"expression": "(() => { const e=document.activeElement; if (!e || e.disabled || e.readOnly || !(e.isContentEditable || /^(INPUT|TEXTAREA)$/.test(e.tagName))) throw new Error('Focus an editable field first'); e.focus(); document.execCommand('selectAll',false,null); document.execCommand('delete',false,null); return true; })()", "returnByValue":true})).await?;
+        if response.get("exceptionDetails").is_some() {
+            return Err(RobotError::InvalidInput(
+                "Focus an editable field before clearing text".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn fork_session(&self) -> Option<Arc<dyn Robot>> {
         let mut robot = Self::new(self.debug_address.clone());
         robot.discovery_file = self.discovery_file.clone();
@@ -691,23 +717,14 @@ impl Robot for ChromeRobot {
         _duration_ms: Option<u64>,
     ) -> Result<(), RobotError> {
         let target = self.page(device_id).await?;
-        self.dispatch_mouse(&target, "mousePressed", start, Some("left"))
-            .await?;
-        for step in 1..=12 {
-            let fraction = f64::from(step) / 12.0;
-            self.dispatch_mouse(
-                &target,
-                "mouseMoved",
-                Point {
-                    x: start.x + (end.x - start.x) * fraction,
-                    y: start.y + (end.y - start.y) * fraction,
-                },
-                None,
-            )
-            .await?;
-        }
-        self.dispatch_mouse(&target, "mouseReleased", end, Some("left"))
-            .await
+        self.cdp(
+            &target,
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseWheel", "x":start.x,"y":start.y,
+            "deltaX":start.x-end.x,"deltaY":start.y-end.y}),
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn install_app(&self, device_id: &str, _apk_path: &str) -> Result<(), RobotError> {

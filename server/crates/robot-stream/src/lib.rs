@@ -49,8 +49,30 @@ impl StreamManager {
         if offer.len() > 128 * 1024 {
             return Err(RobotError::InvalidInput("SDP offer is too large".into()));
         }
-        let offer = RTCSessionDescription::offer(offer)
+        let validated_offer = RTCSessionDescription::offer(offer.clone())
             .map_err(|e| RobotError::InvalidInput(e.to_string()))?;
+        if let Some(native) = robot.negotiate_native_video(device_id, &offer).await? {
+            let id = uuid::Uuid::new_v4().to_string();
+            let answer = StreamAnswer {
+                stream_id: id.clone(),
+                sdp: native.sdp,
+                width: native.width,
+                height: native.height,
+            };
+            self.sessions
+                .lock()
+                .await
+                .retain(|_, session| !session.done.is_finished());
+            self.sessions.lock().await.insert(
+                id,
+                Session {
+                    stop: native.stop,
+                    done: native.done,
+                },
+            );
+            return Ok(answer);
+        }
+        let offer = validated_offer;
         let mut media = MediaEngine::default();
         let capability = RTCRtpCodecCapability {
             mime_type: MIME_TYPE_H264.into(),

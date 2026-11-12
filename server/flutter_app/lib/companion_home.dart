@@ -285,15 +285,37 @@ class _CompanionHomeState extends State<CompanionHome> {
     }
   }
 
+  Future<void> _restartWeb(AdminDevice device) async {
+    if (_busyDevices.contains(device.id)) return;
+    setState(() => _busyDevices.add(device.id));
+    try {
+      await _client().bootDevice(device.id, restart: true);
+      if (mounted) _refresh();
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not restart web session: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busyDevices.remove(device.id));
+    }
+  }
+
   void _showAndroidLive(AdminDevice device) {
     final client = _client();
     showDialog<void>(
       context: context,
       builder: (context) => AndroidLiveDialog(
         deviceName: device.name,
-        connect: () => client.watchAndroidLive(device.id),
+        connect: () => device.platform == 'chrome'
+            ? client.watchWebLive(device.id)
+            : client.watchAndroidLive(device.id),
+        platform: device.platform,
         openVideo: () => AndroidVideoSession.connect(client, device.id),
-        onInput: (input) => client.sendAndroidInput(device.id, input),
+        onInput: (input) => device.platform == 'chrome'
+            ? client.sendWebInput(device.id, input)
+            : client.sendAndroidInput(device.id, input),
       ),
     );
   }
@@ -473,6 +495,7 @@ class _CompanionHomeState extends State<CompanionHome> {
                             snapshot: _withLiveEvents(snapshot.requireData),
                             onViewScreenshot: _showScreenshot,
                             onLive: _showAndroidLive,
+                            onRestartWeb: _restartWeb,
                             onBootDevice: _bootDevice,
                             onLaunchApp: _launchApp,
                             onRunnerAction: _runnerAction,

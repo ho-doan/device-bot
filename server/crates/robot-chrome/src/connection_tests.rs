@@ -245,3 +245,20 @@ async fn dropped_client_disposes_context_without_closing_shared_browser() {
     assert_eq!(f.state.lock().unwrap().connections, 1);
     f.robot.close_session().await.unwrap();
 }
+
+#[tokio::test]
+async fn restart_replaces_only_the_requesting_case_context() {
+    let fixture = fixture().await;
+    let first = fixture.robot.fork_session().unwrap();
+    let second = fixture.robot.fork_session().unwrap();
+    first.boot_device("chrome:browser").await.unwrap();
+    second.boot_device("chrome:browser").await.unwrap();
+    let second_id = second.list_devices().await.unwrap()[0].id.clone();
+    let old_id = first.list_devices().await.unwrap()[0].id.clone();
+    first.restart_device("chrome:browser").await.unwrap();
+    assert_ne!(first.list_devices().await.unwrap()[0].id, old_id);
+    assert_eq!(second.list_devices().await.unwrap()[0].id, second_id);
+    assert_eq!(fixture.state.lock().unwrap().contexts.len(), 2);
+    first.close_session().await.unwrap();
+    second.close_session().await.unwrap();
+}

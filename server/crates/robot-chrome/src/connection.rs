@@ -80,7 +80,17 @@ impl BrowserConnection {
         })
         .await;
         match result {
-            Ok(result) => result,
+            Ok(Err(error)) => {
+                let message = error.to_string();
+                if message.contains("transport failed")
+                    || message.contains("could not send")
+                    || message.contains("closed the connection")
+                {
+                    self.poisoned = true;
+                }
+                Err(error)
+            }
+            Ok(Ok(result)) => Ok(result),
             // Keep the shared connection alive. The next request skips any late
             // response by ID; a case timeout must not dispose QC's other contexts.
             Err(_) => Err(RobotError::CommandFailed(format!(

@@ -59,9 +59,27 @@ impl ChromeRobot {
 
     async fn running_browser_endpoint(&self) -> Result<String, RobotError> {
         if let Some(path) = &self.discovery_file {
-            let contents = tokio::fs::read_to_string(path).await.map_err(|_| RobotError::CommandFailed(format!(
-                "Chrome remote debugging is not available at {}. Open Chrome, enable chrome://inspect/#remote-debugging, then allow the connection. No replacement browser was launched.", path.display())))?;
-            discovery_endpoint(&contents)
+            if let Ok(contents) = tokio::fs::read_to_string(path).await {
+                if let Ok(endpoint) = discovery_endpoint(&contents) {
+                    return Ok(endpoint);
+                }
+            }
+            // Existing Device Bot Chrome may own 9222 while the personal profile has
+            // no DevToolsActivePort. Validate /json/version rather than assuming a collision.
+            let body = tokio::time::timeout(Duration::from_secs(3), self.http_get("/json/version")).await
+                .map_err(|_| RobotError::CommandFailed("Chrome discovery timed out".into()))?
+                .map_err(|_| RobotError::CommandFailed(format!("Chrome remote debugging unavailable at {} and {}. Enable chrome://inspect/#remote-debugging or set DEVICE_BOT_CHROME_DEBUG_ADDRESS. No unrelated process was terminated.", path.display(), self.debug_address)))?;
+            let version: Value = serde_json::from_slice(&body)
+                .map_err(|e| RobotError::CommandFailed(e.to_string()))?;
+            version["webSocketDebuggerUrl"]
+                .as_str()
+                .filter(|s| s.starts_with("ws://127.0.0.1:") || s.starts_with("ws://localhost:"))
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    RobotError::CommandFailed(
+                        "Occupied endpoint is not a Chrome DevTools browser".into(),
+                    )
+                })
         } else {
             let body = tokio::time::timeout(Duration::from_secs(3), self.http_get("/json/version"))
                 .await
@@ -91,8 +109,16 @@ impl ChromeRobot {
         }
         let mut session = self.browser_session.lock().await;
         if let Some(current) = session.as_mut() {
-            current.targets().await?;
-            return Ok(());
+            if current
+                .targets()
+                .await
+                .is_ok_and(|targets| !targets.is_empty())
+            {
+                return Ok(());
+            }
+            if let Some(mut stale) = session.take() {
+                let _ = stale.close().await;
+            }
         }
         let connection = {
             let mut shared = self.browser_connection.lock().await;
@@ -138,6 +164,36 @@ impl ChromeRobot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn missing_profile_file_falls_back_to_valid_debug_endpoint() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut robot = ChromeRobot::new(listener.local_addr().unwrap().to_string());
+        robot.discovery_file =
+            Some(std::env::temp_dir().join("missing-personal-chrome-profile-port"));
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 2048];
+            socket.read(&mut request).await.unwrap();
+            let body = r#"{"webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/browser/test"}"#;
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        assert_eq!(
+            robot.running_browser_endpoint().await.unwrap(),
+            "ws://127.0.0.1:9222/devtools/browser/test"
+        );
+        server.await.unwrap();
+    }
+
     #[test]
     fn validates_local_discovery_metadata() {
         assert_eq!(
@@ -166,5 +222,27 @@ mod tests {
             .to_string();
         assert!(error.contains("chrome://inspect/#remote-debugging"));
         assert!(robot.browser_session.lock().await.is_none());
+    }
+}
+
+#[cfg(test)]
+mod physical_tests {
+    use super::*;
+    #[tokio::test]
+    #[ignore = "requires a running Chrome CDP endpoint on 9222"]
+    async fn real_chrome_missing_profile_start_restart_and_close_case() {
+        let mut robot = ChromeRobot::new("127.0.0.1:9222");
+        robot.discovery_file =
+            Some(std::env::temp_dir().join("device-bot-missing-profile-live-regression"));
+        robot.artifact_dir =
+            std::env::temp_dir().join(format!("device-bot-chrome-{}", std::process::id()));
+        robot.boot_device("chrome:browser").await.unwrap();
+        let original = robot.list_devices().await.unwrap()[0].id.clone();
+        assert_ne!(original, "chrome:browser");
+        robot.restart_device("chrome:browser").await.unwrap();
+        assert_ne!(robot.list_devices().await.unwrap()[0].id, original);
+        robot.close_session().await.unwrap();
+        assert_eq!(robot.list_devices().await.unwrap()[0].id, "chrome:browser");
+        println!("Missing profile + occupied Chrome endpoint: boot/restart/close passed");
     }
 }

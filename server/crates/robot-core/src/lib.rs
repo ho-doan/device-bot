@@ -291,9 +291,29 @@ pub struct VideoStream {
     pub frames: tokio::sync::mpsc::Receiver<Result<VideoFrame, RobotError>>,
 }
 
+/// Browser-native WebRTC media; Rust owns signaling and cancellation.
+pub struct NativeVideoStream {
+    pub sdp: String,
+    pub width: u32,
+    pub height: u32,
+    pub stop: tokio::sync::watch::Sender<bool>,
+    pub done: tokio::task::JoinHandle<()>,
+}
+
 /// Async, platform-independent device control boundary.
 #[async_trait]
 pub trait Robot: Send + Sync {
+    async fn negotiate_native_video(
+        &self,
+        _id: &str,
+        _offer: &str,
+    ) -> Result<Option<NativeVideoStream>, RobotError> {
+        Ok(None)
+    }
+    async fn restart_device(&self, id: &str) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported(format!("restart for {id}")))
+    }
+
     /// Encoded video only. Dropping the receiver stops capture and releases resources.
     async fn start_video_stream(&self, device_id: &str) -> Result<VideoStream, RobotError> {
         Err(RobotError::Unsupported(format!(
@@ -618,6 +638,20 @@ impl RobotRegistry {
 
 #[async_trait]
 impl Robot for RobotRegistry {
+    async fn negotiate_native_video(
+        &self,
+        id: &str,
+        offer: &str,
+    ) -> Result<Option<NativeVideoStream>, RobotError> {
+        self.driver_for(id)
+            .await?
+            .negotiate_native_video(id, offer)
+            .await
+    }
+    async fn restart_device(&self, id: &str) -> Result<(), RobotError> {
+        self.driver_for(id).await?.restart_device(id).await
+    }
+
     async fn start_video_stream(&self, id: &str) -> Result<VideoStream, RobotError> {
         self.driver_for(id).await?.start_video_stream(id).await
     }

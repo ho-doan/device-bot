@@ -9,6 +9,7 @@ class Dashboard extends StatelessWidget {
     required this.onBootDevice,
     required this.onLaunchApp,
     this.onLive,
+    this.onRestartWeb,
     this.onRunnerAction,
     this.busyDevices = const {},
     super.key,
@@ -19,6 +20,7 @@ class Dashboard extends StatelessWidget {
   final DashboardSnapshot snapshot;
   final ValueChanged<AdminDevice> onViewScreenshot;
   final ValueChanged<AdminDevice>? onLive;
+  final Future<void> Function(AdminDevice)? onRestartWeb;
   final Future<void> Function(AdminDevice) onBootDevice;
   final Future<void> Function(AdminDevice) onLaunchApp;
 
@@ -30,6 +32,7 @@ class Dashboard extends StatelessWidget {
           devices: snapshot.devices,
           onViewScreenshot: onViewScreenshot,
           onLive: onLive,
+          onRestartWeb: onRestartWeb,
           onBootDevice: onBootDevice,
           onLaunchApp: onLaunchApp,
           onRunnerAction: onRunnerAction,
@@ -62,6 +65,7 @@ class _DevicesPanel extends StatelessWidget {
     required this.devices,
     required this.onViewScreenshot,
     required this.onLive,
+    this.onRestartWeb,
     required this.onBootDevice,
     required this.onLaunchApp,
     required this.onRunnerAction,
@@ -73,6 +77,7 @@ class _DevicesPanel extends StatelessWidget {
   final Set<String> busyDevices;
   final ValueChanged<AdminDevice> onViewScreenshot;
   final ValueChanged<AdminDevice>? onLive;
+  final Future<void> Function(AdminDevice)? onRestartWeb;
   final Future<void> Function(AdminDevice) onBootDevice;
   final Future<void> Function(AdminDevice) onLaunchApp;
 
@@ -129,6 +134,14 @@ class _DevicesPanel extends StatelessWidget {
                                   : 'Start',
                             ),
                           ),
+                        if (device.platform == 'chrome' && onRestartWeb != null)
+                          OutlinedButton.icon(
+                            onPressed: busyDevices.contains(device.id)
+                                ? null
+                                : () => onRestartWeb!(device),
+                            icon: const Icon(Icons.restart_alt),
+                            label: const Text('Restart web session'),
+                          ),
                         IconButton(
                           tooltip: 'Launch app',
                           onPressed:
@@ -147,7 +160,8 @@ class _DevicesPanel extends StatelessWidget {
                               : () => onViewScreenshot(device),
                           icon: const Icon(Icons.screenshot_monitor),
                         ),
-                        if (onLive != null && device.platform == 'android')
+                        if (onLive != null &&
+                            ['android', 'chrome'].contains(device.platform))
                           IconButton(
                             tooltip: 'Live control',
                             onPressed:

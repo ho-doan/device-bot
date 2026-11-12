@@ -19,7 +19,7 @@ pub(super) fn definitions() -> [ToolDefinition; 2] {
             name: BOOT_NAME.into(),
             title: Some("Start a virtual device or Chrome".into()),
             description: "Start an iOS Simulator, Android AVD (avd:<name>) or local Chrome CDP browser (chrome:browser), and wait until ready. Refresh the device list afterwards: Android uses emulator-* IDs and Chrome uses chrome:<target-id> IDs for subsequent tools.".into(),
-            input_schema: json!({"type":"object","properties":{"deviceId":{"type":"string","minLength":1}},"required":["deviceId"],"additionalProperties":false}),
+            input_schema: json!({"type":"object","properties":{"deviceId":{"type":"string","minLength":1},"restart":{"type":"boolean"}},"required":["deviceId"],"additionalProperties":false}),
         },
     ]
 }
@@ -39,7 +39,16 @@ pub(super) async fn boot(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResul
     else {
         return ToolResult::execution_error("Missing or invalid argument: deviceId");
     };
-    match robot.boot_device(device_id).await {
+    let outcome = if arguments
+        .get("restart")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        robot.restart_device(device_id).await
+    } else {
+        robot.boot_device(device_id).await
+    };
+    match outcome {
         Ok(()) => ToolResult::text(format!("Booted {device_id}")),
         Err(error) => ToolResult::execution_error(error.to_string()),
     }

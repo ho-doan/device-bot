@@ -314,6 +314,32 @@ default, or one SSE `message` event when the client sends
 `Accept: text/event-stream`. `DELETE /mcp` with the same session header closes
 the in-memory session.
 
+## Web recovery and Live
+
+QC and YAML use the same Chrome `boot_device` path. If the personal Chrome
+`DevToolsActivePort` file is missing, discovery also validates the configured CDP
+endpoint (default `127.0.0.1:9222`). A healthy Chrome already using that port is
+reused. An unrelated service on the port produces an error and is never killed.
+Set `DEVICE_BOT_CHROME_DEBUG_ADDRESS` to use another endpoint.
+
+**Restart web session** sends `mobile_boot_device` with `restart: true`. It disposes
+only this MCP client's private case context, then creates a new one in the same
+browser. Other case contexts and personal browser windows remain open. Closed or
+stale case contexts are also recovered by the normal Start/YAML boot path.
+
+Web **Live control** uses browser-native `getDisplayMedia` and WebRTC with SDP and
+lifecycle managed by Rust. Unlike Android's H.264 adapter, browser video travels
+directly to the Flutter peer; Rust does not decode or re-encode it. There is no
+screenshot polling. In Chrome, choose **This Tab** and allow sharing. The source
+must be HTTPS or localhost. Region Capture binds the stream to the controlled
+document, rejecting a mismatched tab selection. Reopen Live after navigation or
+resizing. Sharing ends on Stop, session shutdown, navigation, resize, or peer loss.
+
+DOM inspection and inputs use the same MCP session as the private case (the root
+admin session cannot access another case). Select inspects and suggests YAML;
+Tap selected controls the page; drag scrolls; Send text and Clear web field act on
+the focused input. Only DOM metadata is refreshed periodically.
+
 ## Android realtime viewer
 
 Android Live uses scrcpy-server (MediaCodec H.264), ADB, the shared Rust

@@ -1,5 +1,19 @@
 ## Unreleased
 
+## 0.1.10 — 2026-11-12
+
+* Add `device-bot qc` to open the optional QC desktop app against the local MCP
+  server, plus a macOS packaging script and an unauthenticated `/health/live` check.
+* Unify YAML launch on `launch_app` for HTTP(S) URLs and native app identifiers.
+* Burn step captions and optional notes into run recordings, append a paginated
+  video summary, and keep recording through sensitive inputs without writing
+  secret values into evidence.
+* Start each Chrome MCP session in a fresh private profile with isolated client
+  state, and run YAML flows over HTTP MCP.
+* Accept short flags `-v`, `-h`, and `-u` for version, help, and upgrade.
+* Add a WPF Orbit example and physical-device smoke flows for SwiftUI, Compose
+  test tags, and React Native USB input.
+
 ## 0.1.9 — 2026-11-11
 
 * Fix Windows compilation of the shared screenshot module by qualifying its

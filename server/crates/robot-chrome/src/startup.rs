@@ -1,4 +1,4 @@
-//! Connect to the running Chrome; never launch or terminate the user's browser.
+//! Reuse available Chrome debugging, or enable it in a Device Bot profile.
 use super::*;
 
 pub(super) fn default_discovery_file() -> PathBuf {
@@ -47,22 +47,46 @@ fn discovery_endpoint(contents: &str) -> Result<String, RobotError> {
     Ok(format!("ws://127.0.0.1:{port}{path}"))
 }
 
+pub(super) async fn active_endpoint(path: &std::path::Path) -> Option<String> {
+    let contents = tokio::fs::read_to_string(path).await.ok()?;
+    let endpoint = discovery_endpoint(&contents).ok()?;
+    let address = endpoint.strip_prefix("ws://")?.split('/').next()?;
+    tokio::time::timeout(Duration::from_millis(500), TcpStream::connect(address))
+        .await
+        .ok()?
+        .ok()?;
+    Some(endpoint)
+}
+
 impl ChromeRobot {
     pub(super) fn offline_browser(&self) -> RobotDevice {
         RobotDevice {
             id: "chrome:browser".into(),
-            name: "Chrome — create private case window in running browser".into(),
+            name: "Chrome — web test session".into(),
             platform: Platform::Chrome,
             state: DeviceState::Offline,
         }
     }
 
     pub(super) async fn running_browser_endpoint(&self) -> Result<String, RobotError> {
+        if let Some(managed) = &self.managed_browser {
+            let mut managed = managed.lock().await;
+            if let Some(endpoint) = managed.existing_endpoint().await {
+                return Ok(endpoint);
+            }
+            match self.external_browser_endpoint().await {
+                Ok(endpoint) => Ok(endpoint),
+                Err(_) => managed.start().await,
+            }
+        } else {
+            self.external_browser_endpoint().await
+        }
+    }
+
+    async fn external_browser_endpoint(&self) -> Result<String, RobotError> {
         if let Some(path) = &self.discovery_file {
-            if let Ok(contents) = tokio::fs::read_to_string(path).await {
-                if let Ok(endpoint) = discovery_endpoint(&contents) {
-                    return Ok(endpoint);
-                }
+            if let Some(endpoint) = active_endpoint(path).await {
+                return Ok(endpoint);
             }
             // Existing Device Bot Chrome may own 9222 while the personal profile has
             // no DevToolsActivePort. Validate /json/version rather than assuming a collision.
@@ -174,7 +198,7 @@ mod tests {
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = [0; 2048];
-            socket.read(&mut request).await.unwrap();
+            assert!(socket.read(&mut request).await.unwrap() > 0);
             let body = r#"{"webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/browser/test"}"#;
             socket
                 .write_all(
@@ -209,6 +233,57 @@ mod tests {
             assert!(discovery_endpoint(data).is_err());
         }
     }
+
+    #[tokio::test]
+    async fn discovery_ignores_a_port_file_after_the_browser_exits() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let file = std::env::temp_dir().join(format!(
+            "device-bot-chrome-discovery-{}-{}",
+            std::process::id(),
+            REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        tokio::fs::write(&file, format!("{port}\n/devtools/browser/test\n"))
+            .await
+            .unwrap();
+        assert_eq!(
+            active_endpoint(&file).await,
+            Some(format!("ws://127.0.0.1:{port}/devtools/browser/test"))
+        );
+        drop(listener);
+        let endpoint = active_endpoint(&file).await;
+        tokio::fs::remove_file(&file).await.unwrap();
+        assert!(
+            endpoint.is_none(),
+            "stale discovery must not prevent automatic startup"
+        );
+    }
+
+    #[tokio::test]
+    async fn automatic_start_reports_a_missing_executable_without_creating_a_case() {
+        let root = std::env::temp_dir().join(format!(
+            "device-bot-chrome-missing-{}-{}",
+            std::process::id(),
+            REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut robot = ChromeRobot::new("127.0.0.1:0");
+        robot.managed_browser = Some(Arc::new(Mutex::new(managed::ManagedChrome::new(
+            root.join("profile"),
+            Some(root.join("missing-chrome")),
+        ))));
+        let error = robot
+            .boot_device("chrome:browser")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(robot.browser_session.lock().await.is_none());
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            error.contains("could not start Chrome with remote debugging"),
+            "{error}"
+        );
+        assert!(error.contains("missing-chrome"), "{error}");
+    }
     #[tokio::test]
     async fn missing_debugging_returns_setup_error_without_launching_a_browser() {
         let mut robot = ChromeRobot::new("127.0.0.1:0");
@@ -222,6 +297,73 @@ mod tests {
             .to_string();
         assert!(error.contains("chrome://inspect/#remote-debugging"));
         assert!(robot.browser_session.lock().await.is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn start_automatically_enables_debugging_in_a_separate_profile() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "device-bot-chrome-auto-{}-{}",
+            std::process::id(),
+            REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let executable = root.join("fake-chrome");
+        std::fs::write(
+            &executable,
+            format!(
+                r#"#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in --user-data-dir=*) profile="${{arg#*=}}";; esac
+done
+printf '%s\n' "$@" >> "$profile/launch-args"
+printf '{port}\n/devtools/browser/managed\n' > "$profile/DevToolsActivePort"
+exec sleep 60
+"#
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let profile = root.join("private profile");
+        let mut robot = ChromeRobot::new("127.0.0.1:0");
+        robot.discovery_file = Some(root.join("missing-personal-profile"));
+        robot.managed_browser = Some(Arc::new(Mutex::new(managed::ManagedChrome::new(
+            profile.clone(),
+            Some(executable),
+        ))));
+        let result = robot.running_browser_endpoint().await;
+        let again = if result.is_ok() {
+            Some(robot.running_browser_endpoint().await)
+        } else {
+            None
+        };
+        let args = std::fs::read_to_string(profile.join("launch-args")).unwrap_or_default();
+        // kill_on_drop also covers cleanup on the original failing implementation.
+        drop(robot);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            result.unwrap(),
+            format!("ws://127.0.0.1:{port}/devtools/browser/managed")
+        );
+        assert_eq!(
+            again.unwrap().unwrap(),
+            format!("ws://127.0.0.1:{port}/devtools/browser/managed")
+        );
+        assert_eq!(
+            args.lines()
+                .filter(|arg| *arg == "--remote-debugging-port=0")
+                .count(),
+            1,
+            "repeated Start must reuse the browser"
+        );
+        assert!(
+            args.lines()
+                .any(|arg| arg == "--remote-debugging-address=127.0.0.1")
+        );
+        assert!(args.contains("--user-data-dir="));
     }
 }
 

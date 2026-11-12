@@ -1,7 +1,8 @@
 //! Chrome driver using the local Chrome DevTools Protocol (CDP).
 //!
-//! Start Chrome with `--remote-debugging-port=9222`, or point
-//! `DEVICE_BOT_CHROME_DEBUG_ADDRESS` at another local DevTools endpoint.
+//! Start automatically enables loopback debugging in a Device Bot profile when
+//! no running Chrome debugger is available. `DEVICE_BOT_CHROME_DEBUG_ADDRESS`
+//! explicitly selects an existing DevTools endpoint instead.
 
 use std::{
     collections::HashMap,
@@ -34,6 +35,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 mod connection;
 mod live;
+mod managed;
 mod screencast;
 mod startup;
 
@@ -56,6 +58,7 @@ pub struct ChromeRobot {
     browser_session: Arc<Mutex<Option<connection::BrowserSession>>>,
     browser_connection: Arc<Mutex<Option<Arc<Mutex<connection::BrowserConnection>>>>>,
     discovery_file: Option<PathBuf>,
+    managed_browser: Option<Arc<Mutex<managed::ManagedChrome>>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -83,6 +86,7 @@ impl ChromeRobot {
             browser_session: Arc::default(),
             browser_connection: Arc::default(),
             discovery_file: None,
+            managed_browser: None,
         }
     }
 
@@ -99,6 +103,14 @@ impl ChromeRobot {
         robot.artifact_dir = std::env::var("DEVICE_BOT_ARTIFACT_DIR")
             .unwrap_or_else(|_| "artifacts".into())
             .into();
+        if explicit_address.is_none()
+            && std::env::var_os("DEVICE_BOT_CHROME_ACTIVE_PORT_FILE").is_none()
+        {
+            robot.managed_browser = Some(Arc::new(Mutex::new(managed::ManagedChrome::new(
+                robot.artifact_dir.join("chrome-profile"),
+                std::env::var_os("DEVICE_BOT_CHROME_PATH").map(PathBuf::from),
+            ))));
+        }
         robot.ffmpeg_path = std::env::var("DEVICE_BOT_FFMPEG_PATH").unwrap_or_else(|_| {
             [
                 "/opt/homebrew/opt/ffmpeg/bin/ffmpeg",
@@ -486,6 +498,7 @@ impl Robot for ChromeRobot {
         let mut robot = Self::new(self.debug_address.clone());
         robot.discovery_file = self.discovery_file.clone();
         robot.browser_connection = Arc::clone(&self.browser_connection);
+        robot.managed_browser = self.managed_browser.clone();
         robot.artifact_dir = self.artifact_dir.clone();
         robot.ffmpeg_path = self.ffmpeg_path.clone();
         Some(Arc::new(robot))

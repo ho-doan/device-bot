@@ -324,11 +324,16 @@ the in-memory session.
 
 ## Web recovery and Live
 
-QC and YAML use the same Chrome `boot_device` path. If the personal Chrome
-`DevToolsActivePort` file is missing, discovery also validates the configured CDP
-endpoint (default `127.0.0.1:9222`). A healthy Chrome already using that port is
-reused. An unrelated service on the port produces an error and is never killed.
-Set `DEVICE_BOT_CHROME_DEBUG_ADDRESS` to use another endpoint.
+QC and YAML use the same Chrome `boot_device` path. **Start** automatically
+prepares Remote Debugging: it reuses an available Chrome debugger, or launches
+Chrome with a Device Bot profile and a free loopback debugging port. No manual
+`chrome://inspect` setup is needed for this automatic path. Chrome's normal
+profile and its open windows are kept intact. The separate profile is required
+by Chrome 136+ when debugging is enabled with command-line flags.
+Set `DEVICE_BOT_CHROME_PATH` to override the executable. Set
+`DEVICE_BOT_CHROME_DEBUG_ADDRESS` or `DEVICE_BOT_CHROME_ACTIVE_PORT_FILE` to
+explicitly attach to an existing debugger; these overrides disable automatic
+browser startup. An unrelated service on a port is never stopped.
 
 **Restart web session** sends `mobile_boot_device` with `restart: true`. It disposes
 only this MCP client's private case context, then creates a new one in the same
@@ -653,13 +658,14 @@ Chrome pages are exposed when a DevTools endpoint is available. If it has no
 controllable page, discovery returns an offline `chrome:browser` row. Choose
 QC **Start** or call `mobile_boot_device` with `chrome:browser` to open a local
 Chrome automation session, then refresh to select a `chrome:<target-id>` page.
-By default, each MCP session starts its own Chrome on a free loopback port with
-a new private temporary profile. It does not attach to an old browser on port
-9222. The browser and profile are removed when the MCP session ends, including
-after a YAML case fails. `device-bot run` creates and closes its MCP subprocess
-per case, so the next case starts a new Chrome. Startup logs/session metadata
-remain in the artifact directory. Set `DEVICE_BOT_CHROME_PATH` to override its executable.
-Only loopback DevTools endpoints can be started automatically.
+Each case owns a disposable incognito context. Cases share the browser connection
+and, when automatic startup is needed, the Device Bot browser process. Its
+profile and startup log live in `<artifact-dir>/chrome-profile/`; repeated
+Start/Restart calls reuse that browser. The owned process is stopped when the
+last driver is dropped. Closing a case disposes only that case context. Personal
+Chrome windows and other active cases are kept intact.
+Set `DEVICE_BOT_CHROME_PATH` to override the executable.
+Automatic startup binds debugging to loopback on a free port.
 You can also start Chrome manually with a separate profile, for example:
 
 ```sh
@@ -668,7 +674,7 @@ google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/device-bot-chrom
 
 Setting `DEVICE_BOT_CHROME_DEBUG_ADDRESS` explicitly opts into attaching to that
 endpoint; an already-running external Chrome is not owned or closed by MCP.
-Unset this variable for a fresh browser per case. Each debuggable
+Unset this variable to enable automatic startup when needed. Each case's
 page appears as a `chrome:<target-id>` device and supports screenshots, mouse/keyboard
 input, URL navigation, and DOM-backed element discovery.
 

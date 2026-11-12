@@ -586,10 +586,22 @@ class _ConnectionForm extends StatelessWidget {
           children: [
             SizedBox(
               width: 340,
-              child: TextField(
-                controller: baseUrlController,
-                keyboardType: TextInputType.url,
-                decoration: const InputDecoration(labelText: 'MCP server URL'),
+              child: ListenableBuilder(
+                listenable: baseUrlController,
+                builder: (context, child) => Semantics(
+                  textField: true,
+                  identifier: 'mcp-server-url',
+                  label: 'MCP server URL',
+                  value: baseUrlController.text,
+                  child: child,
+                ),
+                child: TextField(
+                  controller: baseUrlController,
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    labelText: 'MCP server URL',
+                  ),
+                ),
               ),
             ),
             FilledButton.icon(
@@ -869,7 +881,10 @@ steps:
           Expanded(child: Text('${widget.device.name} element inspector')),
           IconButton(
             tooltip: 'Recapture screenshot and elements (indices may change)',
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(
+              Icons.refresh,
+              semanticLabel: 'Recapture screenshot and elements',
+            ),
             onPressed: () => setState(() {
               _selectedIndex = null;
               _inspection = widget.loadInspection();
@@ -978,10 +993,14 @@ class _InspectorSidebar extends StatelessWidget {
         if (elementsError != null && elements.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              elementsError!,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
+            child: Semantics(
+              liveRegion: true,
+              container: true,
+              child: Text(
+                elementsError!,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
           ),
         Text(
@@ -1016,8 +1035,9 @@ class _InspectorSidebar extends StatelessWidget {
                       return Semantics(
                         button: true,
                         selected: selectedIndex == index,
-                        label:
-                            'Element ${index + 1}: ${element.selector}, ${element.className}',
+                        label: element.semanticsLabel(
+                          selected: selectedIndex == index,
+                        ),
                         child: ListTile(
                           dense: true,
                           selected: selectedIndex == index,
@@ -1051,20 +1071,25 @@ class _InspectorSidebar extends StatelessWidget {
         else
           SizedBox(
             height: 154,
-            child: Card(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: SelectableText(
-                  'Selector / ID: ${selectedElement!.selector}\n'
-                  'Visible text: ${selectedElement!.text ?? '—'}\n'
-                  'Accessibility: ${selectedElement!.contentDescription ?? '—'}\n'
-                  'Class: ${selectedElement!.className}\n'
-                  'Bounds: ${selectedElement!.bounds.left}, ${selectedElement!.bounds.top} → '
-                  '${selectedElement!.bounds.right}, ${selectedElement!.bounds.bottom}\n'
-                  'State: ${selectedElement!.enabled ? 'enabled' : 'disabled'} · '
-                  '${selectedElement!.clickable ? 'clickable' : 'not clickable'}',
-                  style: Theme.of(context).textTheme.bodySmall,
+            child: Semantics(
+              liveRegion: true,
+              container: true,
+              label: selectedElement!.semanticsLabel(selected: true),
+              child: Card(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                child: Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: SelectableText(
+                    'Selector / ID: ${selectedElement!.selector}\n'
+                    'Visible text: ${selectedElement!.text ?? '—'}\n'
+                    'Accessibility: ${selectedElement!.contentDescription ?? '—'}\n'
+                    'Class: ${selectedElement!.className}\n'
+                    'Bounds: ${selectedElement!.bounds.left}, ${selectedElement!.bounds.top} → '
+                    '${selectedElement!.bounds.right}, ${selectedElement!.bounds.bottom}\n'
+                    'State: ${selectedElement!.enabled ? 'enabled' : 'disabled'} · '
+                    '${selectedElement!.clickable ? 'clickable' : 'not clickable'}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 ),
               ),
             ),
@@ -1081,7 +1106,7 @@ class _InspectorSidebar extends StatelessWidget {
             IconButton(
               tooltip: 'Copy YAML',
               onPressed: onCopyYaml,
-              icon: const Icon(Icons.copy_outlined),
+              icon: const Icon(Icons.copy_outlined, semanticLabel: 'Copy YAML'),
             ),
             FilledButton.icon(
               onPressed: selectedElement == null ? null : onAddToFlow,
@@ -1092,17 +1117,23 @@ class _InspectorSidebar extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Expanded(
-          child: TextField(
-            controller: yamlController,
-            expands: true,
-            maxLines: null,
-            minLines: null,
-            textAlignVertical: TextAlignVertical.top,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              hintText: 'Write a robot-flow YAML scenario…',
-              contentPadding: EdgeInsets.all(12),
+          child: Semantics(
+            textField: true,
+            identifier: 'yaml-flow-draft',
+            label: 'YAML flow draft',
+            child: TextField(
+              controller: yamlController,
+              expands: true,
+              maxLines: null,
+              minLines: null,
+              textAlignVertical: TextAlignVertical.top,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'YAML flow draft',
+                hintText: 'Write a robot-flow YAML scenario…',
+                contentPadding: EdgeInsets.all(12),
+              ),
             ),
           ),
         ),

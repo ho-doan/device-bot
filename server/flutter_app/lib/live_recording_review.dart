@@ -108,7 +108,10 @@ class _LiveRecordingReviewState extends State<LiveRecordingReview> {
                                     ? null
                                     : () =>
                                           _run(() => recording.removeAt(index)),
-                                icon: const Icon(Icons.delete_outline),
+                                icon: Icon(
+                                  Icons.delete_outline,
+                                  semanticLabel: 'Delete step ${index + 1}',
+                                ),
                               ),
                               children: [
                                 Padding(
@@ -142,9 +145,13 @@ class _LiveRecordingReviewState extends State<LiveRecordingReview> {
               if (_runSummary != null)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-                  child: SelectableText(
-                    _runSummary!,
-                    key: const Key('recording-run-result'),
+                  child: Semantics(
+                    liveRegion: true,
+                    container: true,
+                    child: SelectableText(
+                      _runSummary!,
+                      key: const Key('recording-run-result'),
+                    ),
                   ),
                 ),
               const Divider(height: 1),

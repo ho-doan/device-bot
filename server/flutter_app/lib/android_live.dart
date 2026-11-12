@@ -463,12 +463,16 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: Text(
-                _stopped
-                    ? 'Live mirror stopped.'
-                    : 'Select an element to inspect. Use Tap selected to control the device. Drag the video to scroll.'
-                          '${source == null ? '' : ' ${_elements.length} elements from the $source.'}',
-                key: const Key('android-live-status'),
+              child: Semantics(
+                liveRegion: true,
+                container: true,
+                child: Text(
+                  _stopped
+                      ? 'Live mirror stopped.'
+                      : 'Select an element to inspect. Use Tap selected to control the device. Drag the video to scroll.'
+                            '${source == null ? '' : ' ${_elements.length} elements from the $source.'}',
+                  key: const Key('android-live-status'),
+                ),
               ),
             ),
             if (widget.platform == 'chrome')
@@ -481,9 +485,16 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
             if (_status != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Text(
-                  _status!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                child: Semantics(
+                  liveRegion: true,
+                  container: true,
+                  child: Text(
+                    _status!,
+                    key: const Key('android-live-error'),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
                 ),
               ),
             Expanded(
@@ -491,7 +502,26 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                 children: [
                   Expanded(
                     child: video == null || !video.hasVideo
-                        ? const Center(child: CircularProgressIndicator())
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (_status != null) ...[
+                                    const Text('Retrying live video…'),
+                                    const SizedBox(height: 16),
+                                  ],
+                                  Semantics(
+                                    label: _status == null
+                                        ? 'Connecting live video'
+                                        : 'Retrying live video after error',
+                                    child: const CircularProgressIndicator(),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
                         : LayoutBuilder(
                             builder: (context, constraints) {
                               final viewport = Size(
@@ -689,6 +719,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                                       _copyYaml(selected),
                                                   icon: const Icon(
                                                     Icons.copy_outlined,
+                                                    semanticLabel: 'Copy YAML',
                                                   ),
                                                 ),
                                               ],
@@ -729,46 +760,53 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                       final foreground = selectedRow
                                           ? colors.onPrimaryContainer
                                           : colors.onSurface;
-                                      return ListTile(
-                                        key: ValueKey(
-                                          'android-live-element-$index',
-                                        ),
+                                      return Semantics(
+                                        button: true,
                                         selected: selectedRow,
-                                        selectedColor:
-                                            colors.onPrimaryContainer,
-                                        textColor: colors.onSurface,
-                                        iconColor: foreground,
-                                        selectedTileColor:
-                                            colors.primaryContainer,
-                                        tileColor: colors.surface,
-                                        // A filled focus highlight paints over
-                                        // the label. Keep the row color on the
-                                        // tile and use a hairline instead.
-                                        focusColor: const Color(0x00000000),
-                                        hoverColor: const Color(0x1493C5FD),
-                                        splashColor: const Color(0x3393C5FD),
-                                        shape: RoundedRectangleBorder(
-                                          side: BorderSide(
-                                            color: selectedRow
-                                                ? colors.onPrimaryContainer
-                                                : const Color(0x00000000),
+                                        label: element.semanticsLabel(
+                                          selected: selectedRow,
+                                        ),
+                                        child: ListTile(
+                                          key: ValueKey(
+                                            'android-live-element-$index',
                                           ),
+                                          selected: selectedRow,
+                                          selectedColor:
+                                              colors.onPrimaryContainer,
+                                          textColor: colors.onSurface,
+                                          iconColor: foreground,
+                                          selectedTileColor:
+                                              colors.primaryContainer,
+                                          tileColor: colors.surface,
+                                          // A filled focus highlight paints over
+                                          // the label. Keep the row color on the
+                                          // tile and use a hairline instead.
+                                          focusColor: const Color(0x00000000),
+                                          hoverColor: const Color(0x1493C5FD),
+                                          splashColor: const Color(0x3393C5FD),
+                                          shape: RoundedRectangleBorder(
+                                            side: BorderSide(
+                                              color: selectedRow
+                                                  ? colors.onPrimaryContainer
+                                                  : const Color(0x00000000),
+                                            ),
+                                          ),
+                                          title: Text(
+                                            element.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(color: foreground),
+                                          ),
+                                          trailing: selectedRow
+                                              ? Icon(
+                                                  Icons.check,
+                                                  size: 18,
+                                                  color: foreground,
+                                                )
+                                              : null,
+                                          dense: true,
+                                          onTap: () => _inspect(index),
                                         ),
-                                        title: Text(
-                                          element.name,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(color: foreground),
-                                        ),
-                                        trailing: selectedRow
-                                            ? Icon(
-                                                Icons.check,
-                                                size: 18,
-                                                color: foreground,
-                                              )
-                                            : null,
-                                        dense: true,
-                                        onTap: () => _inspect(index),
                                       );
                                     },
                                   ),
@@ -782,15 +820,21 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              TextField(
-                                key: const Key('android-live-type'),
-                                controller: _text,
-                                decoration: const InputDecoration(
-                                  labelText: 'Text for focused field',
-                                  isDense: true,
+                              Semantics(
+                                textField: true,
+                                identifier: 'live-text-for-focused-field',
+                                label: 'Text for focused field',
+                                value: _text.text,
+                                child: TextField(
+                                  key: const Key('android-live-type'),
+                                  controller: _text,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Text for focused field',
+                                    isDense: true,
+                                  ),
+                                  onChanged: (_) => setState(() {}),
+                                  onSubmitted: (_) => _submitText(),
                                 ),
-                                onChanged: (_) => setState(() {}),
-                                onSubmitted: (_) => _submitText(),
                               ),
                               const SizedBox(height: 8),
                               Wrap(

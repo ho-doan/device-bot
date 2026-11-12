@@ -44,6 +44,36 @@ void main() {
     expect(requests, ['http://localhost:3000/path?q=1']);
     expect(find.byType(WebUrlDialog), findsNothing);
   });
+  testWidgets('exposes the website URL field name, value, and live error', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    try {
+      await showUrlDialog(tester, (_) async {});
+      await tester.enterText(
+        find.byKey(const Key('web-url-input')),
+        'http://localhost:3000',
+      );
+      await tester.pump();
+      expect(find.bySemanticsLabel('Website URL'), findsWidgets);
+      expect(
+        tester.getSemantics(find.bySemanticsLabel('Website URL').first).value,
+        'http://localhost:3000',
+      );
+      await tester.enterText(find.byKey(const Key('web-url-input')), '');
+      await tester.tap(find.byKey(const Key('web-url-open')));
+      await tester.pump();
+      expect(
+        find.bySemanticsLabel(
+          'Enter a complete HTTP or HTTPS URL, such as http://localhost:3000.',
+        ),
+        findsOneWidget,
+      );
+    } finally {
+      handle.dispose();
+    }
+  });
+
   testWidgets('rejects invalid URLs without calling navigation', (
     tester,
   ) async {

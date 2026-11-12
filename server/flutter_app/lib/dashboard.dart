@@ -2,6 +2,21 @@ import 'package:flutter/material.dart';
 
 import 'models.dart';
 
+String deviceStatusLabel(AdminDevice device, {required bool busy}) {
+  if (busy) return 'Working';
+  if (device.state != 'available') return device.state;
+  return device.readiness?.label ?? 'Detected';
+}
+
+String launchActionLabel(AdminDevice device) => device.platform == 'chrome'
+    ? 'Open URL on ${device.name}'
+    : 'Launch app on ${device.name}';
+
+String screenshotActionLabel(AdminDevice device) =>
+    'Screenshot of ${device.name}';
+
+String liveActionLabel(AdminDevice device) => 'Live control of ${device.name}';
+
 class Dashboard extends StatelessWidget {
   const Dashboard({
     required this.snapshot,
@@ -97,143 +112,148 @@ class _DevicesPanel extends StatelessWidget {
             if (devices.isEmpty)
               const Text('No devices were reported by the MCP server.')
             else
-              ...devices.map(
-                (device) => Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    ListTile(
-                      key: ValueKey(device.id),
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(switch (device.platform) {
-                        'ios' => Icons.phone_iphone,
-                        'android' => Icons.android,
-                        'chrome' => Icons.web,
-                        _ => Icons.computer,
-                      }),
-                      title: Text(device.name),
-                      subtitle: SelectableText(device.id),
-                    ),
-                    Wrap(
-                      spacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        _StatusChip(
-                          status: device.state,
-                          readiness: device.readiness,
-                          busy: busyDevices.contains(device.id),
-                        ),
-                        if (device.canStart)
-                          OutlinedButton.icon(
-                            onPressed: busyDevices.contains(device.id)
+              ...devices.map((device) {
+                final busy = busyDevices.contains(device.id);
+                final status = deviceStatusLabel(device, busy: busy);
+                return Semantics(
+                  container: true,
+                  explicitChildNodes: true,
+                  identifier: 'device-${device.id}',
+                  label:
+                      '${device.name}. ${device.platform}. ${device.id}. $status',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      ListTile(
+                        key: ValueKey(device.id),
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(switch (device.platform) {
+                          'ios' => Icons.phone_iphone,
+                          'android' => Icons.android,
+                          'chrome' => Icons.web,
+                          _ => Icons.computer,
+                        }),
+                        title: Text(device.name),
+                        subtitle: SelectableText(device.id),
+                      ),
+                      Wrap(
+                        spacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          _StatusChip(
+                            status: device.state,
+                            readiness: device.readiness,
+                            busy: busy,
+                          ),
+                          if (device.canStart)
+                            OutlinedButton.icon(
+                              onPressed: busy
+                                  ? null
+                                  : () => onBootDevice(device),
+                              icon: const Icon(Icons.power_settings_new),
+                              label: Text(busy ? 'Starting…' : 'Start'),
+                            ),
+                          if (device.platform == 'chrome' &&
+                              onRestartWeb != null)
+                            OutlinedButton.icon(
+                              onPressed: busy
+                                  ? null
+                                  : () => onRestartWeb!(device),
+                              icon: const Icon(Icons.restart_alt),
+                              label: const Text('Restart web session'),
+                            ),
+                          IconButton(
+                            tooltip: launchActionLabel(device),
+                            onPressed: busy || device.state != 'available'
                                 ? null
-                                : () => onBootDevice(device),
-                            icon: const Icon(Icons.power_settings_new),
-                            label: Text(
-                              busyDevices.contains(device.id)
-                                  ? 'Starting…'
-                                  : 'Start',
+                                : () => onLaunchApp(device),
+                            icon: Icon(
+                              Icons.rocket_launch_outlined,
+                              semanticLabel: launchActionLabel(device),
                             ),
                           ),
-                        if (device.platform == 'chrome' && onRestartWeb != null)
-                          OutlinedButton.icon(
-                            onPressed: busyDevices.contains(device.id)
-                                ? null
-                                : () => onRestartWeb!(device),
-                            icon: const Icon(Icons.restart_alt),
-                            label: const Text('Restart web session'),
-                          ),
-                        IconButton(
-                          tooltip: device.platform == 'chrome'
-                              ? 'Open URL'
-                              : 'Launch app',
-                          onPressed:
-                              busyDevices.contains(device.id) ||
-                                  device.state != 'available'
-                              ? null
-                              : () => onLaunchApp(device),
-                          icon: const Icon(Icons.rocket_launch_outlined),
-                        ),
-                        IconButton(
-                          tooltip: 'Screenshot',
-                          onPressed:
-                              busyDevices.contains(device.id) ||
-                                  device.state != 'available'
-                              ? null
-                              : () => onViewScreenshot(device),
-                          icon: const Icon(Icons.screenshot_monitor),
-                        ),
-                        if (onLive != null &&
-                            ['android', 'chrome'].contains(device.platform))
                           IconButton(
-                            tooltip: 'Live control',
-                            onPressed:
-                                busyDevices.contains(device.id) ||
-                                    device.state != 'available'
+                            tooltip: screenshotActionLabel(device),
+                            onPressed: busy || device.state != 'available'
                                 ? null
-                                : () => onLive!(device),
-                            icon: const Icon(Icons.videocam_outlined),
+                                : () => onViewScreenshot(device),
+                            icon: Icon(
+                              Icons.screenshot_monitor,
+                              semanticLabel: screenshotActionLabel(device),
+                            ),
                           ),
-                      ],
-                    ),
-                    if (device.readiness?.state == 'trust_required' ||
-                        device.readiness?.state == 'device_locked')
-                      DeviceRecoveryWarning(
-                        detail: device.readiness!.detail,
-                        deviceLocked:
-                            device.readiness!.state == 'device_locked',
-                        onRetry:
-                            busyDevices.contains(device.id) ||
-                                onRunnerAction == null
-                            ? null
-                            : () => onRunnerAction!(
-                                device,
-                                device.readiness!.state == 'device_locked'
-                                    ? RunnerAction.health
-                                    : RunnerAction.prepare,
+                          if (onLive != null &&
+                              ['android', 'chrome'].contains(device.platform))
+                            IconButton(
+                              tooltip: liveActionLabel(device),
+                              onPressed: busy || device.state != 'available'
+                                  ? null
+                                  : () => onLive!(device),
+                              icon: Icon(
+                                Icons.videocam_outlined,
+                                semanticLabel: liveActionLabel(device),
                               ),
-                      )
-                    else if (device.readiness != null)
-                      Tooltip(
-                        message: device.readiness!.report,
-                        child: Text(
-                          device.readiness!.detail,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                            ),
+                        ],
                       ),
-                    if (device.platform == 'ios')
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8, bottom: 12),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            for (final action in RunnerAction.values)
-                              OutlinedButton.icon(
-                                onPressed:
-                                    busyDevices.contains(device.id) ||
-                                        onRunnerAction == null
-                                    ? null
-                                    : () => onRunnerAction!(device, action),
-                                icon: Icon(switch (action) {
-                                  RunnerAction.health =>
-                                    Icons.health_and_safety_outlined,
-                                  RunnerAction.prepare =>
-                                    Icons.download_outlined,
-                                  RunnerAction.reboot => Icons.restart_alt,
-                                }, size: 18),
-                                label: Text(switch (action) {
-                                  RunnerAction.health => 'Check health',
-                                  RunnerAction.prepare => 'Prepare / Install',
-                                  RunnerAction.reboot => 'Reboot helper',
-                                }),
-                              ),
-                          ],
+                      if (device.readiness?.state == 'trust_required' ||
+                          device.readiness?.state == 'device_locked')
+                        DeviceRecoveryWarning(
+                          detail: device.readiness!.detail,
+                          deviceLocked:
+                              device.readiness!.state == 'device_locked',
+                          onRetry:
+                              busyDevices.contains(device.id) ||
+                                  onRunnerAction == null
+                              ? null
+                              : () => onRunnerAction!(
+                                  device,
+                                  device.readiness!.state == 'device_locked'
+                                      ? RunnerAction.health
+                                      : RunnerAction.prepare,
+                                ),
+                        )
+                      else if (device.readiness != null)
+                        Tooltip(
+                          message: device.readiness!.report,
+                          child: Text(
+                            device.readiness!.detail,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
-                  ],
-                ),
-              ),
+                      if (device.platform == 'ios')
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8, bottom: 12),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final action in RunnerAction.values)
+                                OutlinedButton.icon(
+                                  onPressed: busy || onRunnerAction == null
+                                      ? null
+                                      : () => onRunnerAction!(device, action),
+                                  icon: Icon(switch (action) {
+                                    RunnerAction.health =>
+                                      Icons.health_and_safety_outlined,
+                                    RunnerAction.prepare =>
+                                      Icons.download_outlined,
+                                    RunnerAction.reboot => Icons.restart_alt,
+                                  }, size: 18),
+                                  label: Text(switch (action) {
+                                    RunnerAction.health => 'Check health',
+                                    RunnerAction.prepare => 'Prepare / Install',
+                                    RunnerAction.reboot => 'Reboot helper',
+                                  }),
+                                ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              }),
           ],
         ),
       ),
@@ -380,15 +400,18 @@ class _StatusChip extends StatelessWidget {
         : status != 'available'
         ? status
         : readiness?.label ?? 'Detected';
-    return Chip(
-      avatar: Icon(
-        available ? Icons.check_circle : Icons.pause_circle_outline,
-        size: 18,
+    return Semantics(
+      label: 'Status: $label',
+      child: Chip(
+        avatar: Icon(
+          available ? Icons.check_circle : Icons.pause_circle_outline,
+          size: 18,
+        ),
+        label: Text(label),
+        backgroundColor: available
+            ? const Color(0xFF14532D)
+            : const Color(0xFF78350F),
       ),
-      label: Text(label),
-      backgroundColor: available
-          ? const Color(0xFF14532D)
-          : const Color(0xFF78350F),
     );
   }
 }

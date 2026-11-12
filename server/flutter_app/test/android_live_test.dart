@@ -135,6 +135,36 @@ void main() {
     },
   );
 
+  testWidgets('live names the connecting spinner and reports video errors', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    final updates = StreamController<AndroidLiveUpdate>();
+    addTearDown(updates.close);
+    try {
+      await tester.pumpWidget(
+        _app(
+          home: AndroidLiveDialog(
+            deviceName: 'Phone',
+            connect: () => updates.stream,
+            onInput: (_) async {},
+          ),
+        ),
+      );
+      expect(find.bySemanticsLabel('Connecting live video'), findsOneWidget);
+      updates.add(const AndroidLiveStatus('adb failed'));
+      await tester.pump();
+      expect(find.text('adb failed'), findsOneWidget);
+      expect(find.text('Retrying live video…'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Retrying live video after error'),
+        findsOneWidget,
+      );
+    } finally {
+      handle.dispose();
+    }
+  });
+
   testWidgets('live control is offered for Android and Chrome devices', (
     tester,
   ) async {

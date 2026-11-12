@@ -63,20 +63,38 @@ class _WebUrlDialogState extends State<WebUrlDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              TextField(
-                key: const Key('web-url-input'),
-                controller: _url,
-                autofocus: true,
-                enabled: !_opening,
-                keyboardType: TextInputType.url,
-                decoration: InputDecoration(
-                  labelText: 'Website URL',
-                  hintText: 'http://localhost:3000',
-                  errorText: _error,
-                  errorMaxLines: 4,
+              ListenableBuilder(
+                listenable: _url,
+                builder: (context, child) => Semantics(
+                  textField: true,
+                  identifier: 'website-url',
+                  label: 'Website URL',
+                  value: _url.text,
+                  hint: 'http://localhost:3000',
+                  child: child,
                 ),
-                onSubmitted: (_) => _open(),
+                child: TextField(
+                  key: const Key('web-url-input'),
+                  controller: _url,
+                  autofocus: true,
+                  enabled: !_opening,
+                  keyboardType: TextInputType.url,
+                  decoration: InputDecoration(
+                    labelText: 'Website URL',
+                    hintText: 'http://localhost:3000',
+                    errorText: _error,
+                    errorMaxLines: 4,
+                  ),
+                  onSubmitted: (_) => _open(),
+                ),
               ),
+              if (_error != null)
+                Semantics(
+                  liveRegion: true,
+                  container: true,
+                  label: _error,
+                  child: const SizedBox.shrink(),
+                ),
               const SizedBox(height: 12),
               const Text(
                 'The page opens in this web case. Live uses tab sharing on HTTPS/localhost and automatic fallback on HTTP.',

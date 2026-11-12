@@ -11,12 +11,24 @@ import 'package:mobile_mcp_companion/main.dart';
 
 void main() {
   testWidgets('renders the MCP companion connection controls', (tester) async {
-    await tester.pumpWidget(const MobileMcpCompanion());
+    final handle = tester.ensureSemantics();
+    try {
+      await tester.pumpWidget(const MobileMcpCompanion());
 
-    expect(find.text('Device Bot Dev'), findsOneWidget);
-    expect(find.text('http://127.0.0.1:3338'), findsOneWidget);
-    expect(find.text('MCP server URL'), findsOneWidget);
-    expect(find.text('Bearer token (optional)'), findsNothing);
-    expect(find.text('Refresh'), findsOneWidget);
+      expect(find.text('Device Bot Dev'), findsOneWidget);
+      expect(find.text('http://127.0.0.1:3338'), findsOneWidget);
+      expect(find.text('MCP server URL'), findsOneWidget);
+      expect(find.text('Bearer token (optional)'), findsNothing);
+      expect(find.text('Refresh'), findsOneWidget);
+      expect(find.bySemanticsLabel('MCP server URL'), findsWidgets);
+      expect(
+        tester
+            .getSemantics(find.bySemanticsLabel('MCP server URL').first)
+            .value,
+        'http://127.0.0.1:3338',
+      );
+    } finally {
+      handle.dispose();
+    }
   });
 }

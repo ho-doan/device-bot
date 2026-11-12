@@ -41,6 +41,10 @@ void main() {
 
     expect(element.name, 'Save');
     expect(element.selector, 'save-button');
+    expect(
+      element.semanticsLabel(selected: true),
+      'Selected, Save, Button, clickable, enabled',
+    );
     expect(element.bounds.width, 100);
     expect(element.bounds.height, 40);
     expect(element.clickable, isTrue);

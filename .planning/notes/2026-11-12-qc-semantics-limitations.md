@@ -1,17 +1,17 @@
 # QC semantics — giới hạn hiện tại
 
-- Ngày: 2026-11-12. Trạng thái: **DEFERRED — ghi nhận để sửa sau**.
-- Đánh giá sơ bộ qua mã nguồn (CodeGraph/Serena) và Accessibility của QC trên macOS; chưa kiểm tra toàn bộ màn hình hay VoiceOver.
-- Kết luận: **chưa đủ rõ để bot thao tác ổn định chỉ dựa vào semantics**. Một số nút có tên, nhưng vẫn cần nhìn ảnh/tọa độ để xác định thao tác.
+- Ngày: 2026-11-12. Cập nhật: **2026-11-12 — semantics QC đã vá trong UI**; chọn app/cửa sổ đang chạy vẫn là việc riêng.
+- Đánh giá sơ bộ qua mã nguồn (CodeGraph) và Accessibility của QC trên macOS; chưa kiểm tra toàn bộ màn hình hay VoiceOver.
+- Semantics đã có tên hành động kèm thiết bị, nhóm từng device, nhãn/giá trị ô nhập, live-region cho lỗi/kết quả, và tên/trạng thái chọn trên inspector/live.
 
-## Các điểm cần sửa sau
+## Các điểm đã sửa
 
-1. **Nút icon thiếu tên trong Accessibility:** Launch/Open URL, Screenshot, Live có tooltip trong mã nhưng snapshot chỉ hiện `button` không tên. Cần tên hành động kèm thiết bị, ví dụ “Open URL on Google”.
-2. **Ô nhập thiếu nhãn/giá trị khi đọc:** MCP server URL và Website URL có nhãn trên giao diện nhưng snapshot chỉ hiện `text field`. Lỗi URL trống hiện trên màn hình nhưng không xuất hiện trong snapshot. Cần kiểm tra cả nhãn, giá trị và liên kết lỗi với ô nhập.
-3. **Thiếu ngữ cảnh từng thiết bị:** nhiều nút Start/Check health và trạng thái Detected nằm trong một nhóm lớn. Cần nhóm semantics riêng cho mỗi thiết bị, gồm tên/ID/trạng thái/hành động.
+1. **Nút icon có tên Accessibility:** Launch/Open URL, Screenshot, Live dùng `semanticLabel` kèm tên thiết bị, ví dụ “Open URL on Google”.
+2. **Ô nhập có nhãn và giá trị:** MCP server URL và Website URL expose label + value; lỗi URL trống là live-region.
+3. **Ngữ cảnh từng thiết bị:** mỗi device là một nhóm semantics gồm tên/platform/ID/trạng thái; chip trạng thái có nhãn `Status: …`.
 4. **Cây Accessibility chưa ổn định:** có lần Live hiển thị đầy đủ nhưng snapshot chỉ có cửa sổ; sau thao tác quay về Home mới có các control. Cần phân biệt nguyên nhân ở Flutter/macOS hay công cụ đọc. Chưa kết luận lỗi thuộc riêng QC.
-5. **Trạng thái chờ/lỗi chưa rõ:** Live có thể báo lỗi video nhưng vẫn hiện spinner; thông báo Live và kết quả chạy flow chưa có live-region rõ như một số panel khác. Cần trạng thái đang làm gì, thất bại ở đâu và hành động tiếp theo.
-6. **Inspector còn khó chọn chắc chắn:** tên node có thể là class/CSS hoặc nội dung nhiễu; hàng chọn node khác với nút “Tap selected”. Key theo index không phải định danh mục tiêu ổn định. Cần tên và trạng thái chọn rõ hơn.
+5. **Trạng thái chờ/lỗi:** spinner Live có tên “Connecting live video”; lỗi video là live-region và spinner đổi thành “Retrying live video after error”; kết quả chạy YAML trong review cũng là live-region.
+6. **Inspector/live list:** mỗi hàng có tên (text/id/class), clickable/enabled/focused, và trạng thái Selected; YAML draft có nhãn ô nhập.
 
 ## Chọn app/cửa sổ để đọc elements trên macOS và Windows
 

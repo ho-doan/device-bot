@@ -281,6 +281,19 @@ class AdminElement {
     contentDescription,
   ].any((value) => value != null && value.trim().isNotEmpty);
 
+  /// Accessibility name for inspector/live lists, including selection state.
+  String semanticsLabel({bool selected = false}) {
+    return [
+      if (selected) 'Selected',
+      if (index != null) 'Element $index',
+      name,
+      className,
+      if (clickable) 'clickable' else 'static',
+      if (enabled) 'enabled' else 'disabled',
+      if (focused == true) 'focused',
+    ].join(', ');
+  }
+
   String get name {
     for (final value in [text, contentDescription, resourceId]) {
       if (value != null && value.trim().isNotEmpty) return value.trim();

@@ -23,6 +23,8 @@ const BATCH: &str = "mobile_execute_ui_actions";
 
 #[derive(Debug, Serialize)]
 pub struct StepReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     pub id: String,
     pub action: String,
     pub status: String,
@@ -59,6 +61,7 @@ pub struct FlowRunner {
     limitations: Vec<String>,
     version: u32,
     active_step: Option<(String, String)>,
+    active_note: Option<String>,
     video_overlay: Option<crate::video::VideoOverlay>,
 }
 
@@ -80,6 +83,7 @@ impl FlowRunner {
             limitations: Vec::new(),
             version: 2,
             active_step: None,
+            active_note: None,
             video_overlay: None,
         }
     }
@@ -142,6 +146,7 @@ impl FlowRunner {
                 .any(|s| s.id == *id && s.status == "failed")
             {
                 self.steps.push(StepReport {
+                    note: self.active_note.as_ref().map(|note| self.redact(note)),
                     id: id.clone(),
                     action: action.clone(),
                     status: "failed".into(),
@@ -385,9 +390,11 @@ impl FlowRunner {
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
             let parent = self.active_step.clone();
+            let parent_note = self.active_note.clone();
             for step in steps {
                 let (action, args) = step.action.iter().next().unwrap();
                 self.active_step = Some((step.id.clone().unwrap_or_default(), action.clone()));
+                self.active_note = step.note.clone();
                 if self.recording && action != "stop_screen_recording" {
                     if let Some(overlay) = self.video_overlay.as_mut() {
                         overlay.mark(step.id.as_deref().unwrap_or(""), action, args);
@@ -413,6 +420,7 @@ impl FlowRunner {
                 .unwrap_or_else(|_| Err("step timeout".into()));
                 self.step_device = previous_device;
                 self.steps.push(StepReport {
+                    note: step.note.as_ref().map(|note| self.redact(note)),
                     id: step.id.clone().unwrap_or_default(),
                     action: action.clone(),
                     status: if result.is_err() {
@@ -427,6 +435,7 @@ impl FlowRunner {
                 });
                 if result.is_ok() {
                     self.active_step = parent.clone();
+                    self.active_note = parent_note.clone();
                 }
                 result.map_err(|e| {
                     format!("step {} ({action}): {e}", step.id.as_deref().unwrap_or("?"))
@@ -999,9 +1008,11 @@ impl FlowRunner {
 
     /// Render step/action/test-input captions into the finalized CLI video.
     /// Caption input stays in memory and is not serialized into the flow report.
-    pub async fn annotate_video(&self) -> Result<()> {
+    pub async fn annotate_video(&self, report: &FlowReport) -> Result<()> {
         if let Some(overlay) = &self.video_overlay {
-            overlay.render(&self.directory).await?;
+            overlay
+                .render(&self.directory, &report.steps, &report.status)
+                .await?;
         }
         Ok(())
     }

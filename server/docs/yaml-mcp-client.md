@@ -61,6 +61,11 @@ below; query/tap polling has a bounded attempt count. Ctrl-C/SIGTERM attempts
 recording cleanup and closes the server process. An unresponsive transport can
 prevent graceful recording cleanup; that failure is reported, not hidden.
 
+When an outer step deadline cancels a stdio request, the transport preserves
+partially read JSON lines and drains late responses only for known outstanding
+request IDs. This keeps recording cleanup correlated with its own response.
+Unrelated IDs and actual transport/RPC timeouts still fail explicitly.
+
 ## One scenario, target profiles
 
 The v2 scenario contains the sequence and assertions. Target/profile YAML contains
@@ -257,6 +262,28 @@ and video timestamps, without input values. Caption text files are temporary
 and removed after rendering; the regular report/query/MCP trace redaction is
 unchanged. Caption times are scaled to the encoded video duration because some
 recorders drop frames instead of preserving wall-clock timestamps.
+
+Step captions use the recorded result: green `[PASS]`, red `[FAIL]`, or yellow
+`[INCOMPLETE]` when no completed result is available. These colors describe bot
+execution; successful tap dispatch alone does not prove a screen transition.
+A paginated summary at the end of the video lists all executed steps, their
+results and intent notes. It also shows the case result and PASS/FAIL counts;
+each page remains visible for 6–12 seconds. `video-summary.json` records those
+pages and their timestamps. The original recording remains unchanged.
+
+An optional step-level `note` describes intent without changing execution:
+
+```yaml
+- id: login-user
+  note: Nhập tên đăng nhập của tài khoản kiểm thử
+  fill_field:
+    target: username
+    text_from_env: TEST_USERNAME
+```
+
+Notes appear in `report.json`, video captions and the final summary. Recipe
+children inherit the calling step's note when they have no note of their own.
+Notes are literal text, not a second action or an MCP argument.
 
 Video captions require `ffmpeg` with `drawtext` and a sibling `ffprobe` binary.
 On macOS install `ffmpeg-full` (also used by

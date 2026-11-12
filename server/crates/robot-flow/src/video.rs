@@ -1,4 +1,5 @@
 //! Step captions rendered into the recorded artifact, independently of the app UI.
+use crate::runner::StepReport;
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -89,7 +90,12 @@ impl VideoOverlay {
         self.duration = Some(self.started.elapsed().as_secs_f64().max(0.001));
     }
 
-    pub(crate) async fn render(&self, directory: &Path) -> Result<(), String> {
+    pub(crate) async fn render(
+        &self,
+        directory: &Path,
+        steps: &[StepReport],
+        case_status: &str,
+    ) -> Result<(), String> {
         let input = directory.join("video.mp4");
         if !input.is_file() || self.cues.is_empty() {
             return Ok(());
@@ -127,12 +133,28 @@ impl VideoOverlay {
             .as_u64()
             .filter(|w| *w > 0 && *w <= 16384)
             .ok_or("video step overlay: missing video width")?;
+        let height = metadata["streams"][0]["height"]
+            .as_u64()
+            .filter(|h| *h > 0 && *h <= 16384)
+            .ok_or("video step overlay: missing video height")?;
         let font = (width / 64).clamp(16, 30);
         let columns = (width / font).max(20) as usize;
         let labels: Vec<_> = self
             .cues
             .iter()
-            .map(|cue| wrap(&cue.label, columns))
+            .map(|cue| {
+                let state = cue_state(cue, steps);
+                let (heading, details) = cue.label.split_once('\n').unwrap_or((&cue.label, ""));
+                let note = steps
+                    .iter()
+                    .find(|step| step.id == cue.id && step.action == cue.action)
+                    .and_then(|step| step.note.as_deref());
+                let label = match note {
+                    Some(note) => format!("[{}] {heading}\n{note}\n{details}", state.label()),
+                    None => format!("[{}] {}", state.label(), cue.label),
+                };
+                wrap(&label, columns)
+            })
             .collect();
         let rows = labels
             .iter()
@@ -174,14 +196,18 @@ impl VideoOverlay {
                 .map_err(|e| format!("video step overlay: {e}"))?;
             // textfile + expansion=none keeps %, braces, quotes and backslashes literal.
             // Paths in this filter are controlled relative names, never user input.
-            filter.push_str(&format!(",drawtext=textfile={filename}:expansion=none{font_option}:fontcolor=white:fontsize={font}:x=12:y=12:line_spacing=6:enable='gte(t,{start:.6})*lt(t,{end:.6})'"));
+            let state = cue_state(cue, steps);
+            filter.push_str(&format!(",drawtext=textfile={filename}:expansion=none{font_option}:fontcolor={}:fontsize={font}:x=12:y=12:line_spacing=6:enable='gte(t,{start:.6})*lt(t,{end:.6})'", state.color()));
             timeline.push(TimelineCue {
                 id: &cue.id,
                 action: &cue.action,
                 runner_seconds: cue.at,
                 video_seconds: start,
+                status: state.label(),
             });
         }
+        let summary = Summary::new(steps, case_status, width, height + header, font, duration);
+        summary.append_filters(&mut filter, &work, font_option, font)?;
         filter.push_str("[captioned]");
         fs::write(work.join("filter.txt"), filter)
             .map_err(|e| format!("video step overlay: {e}"))?;
@@ -240,6 +266,11 @@ impl VideoOverlay {
             serde_json::to_vec_pretty(&timeline).unwrap(),
         )
         .map_err(|e| format!("video step overlay: {e}"))?;
+        fs::write(
+            directory.join("video-summary.json"),
+            serde_json::to_vec_pretty(&summary).unwrap(),
+        )
+        .map_err(|e| format!("video summary: {e}"))?;
         Ok(())
     }
 }
@@ -250,6 +281,219 @@ struct TimelineCue<'a> {
     action: &'a str,
     runner_seconds: f64,
     video_seconds: f64,
+    status: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum StepState {
+    Pass,
+    Fail,
+    Incomplete,
+}
+
+impl StepState {
+    fn from_status(status: &str) -> Self {
+        match status {
+            "passed" | "PASS" => Self::Pass,
+            "failed" | "FAIL" => Self::Fail,
+            _ => Self::Incomplete,
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Pass => "PASS",
+            Self::Fail => "FAIL",
+            Self::Incomplete => "INCOMPLETE",
+        }
+    }
+    fn color(self) -> &'static str {
+        match self {
+            Self::Pass => "0x4ade80",
+            Self::Fail => "0xf87171",
+            Self::Incomplete => "0xfacc15",
+        }
+    }
+}
+
+fn cue_state(cue: &Cue, steps: &[StepReport]) -> StepState {
+    steps
+        .iter()
+        .find(|step| step.id == cue.id && step.action == cue.action)
+        .map_or(StepState::Incomplete, |step| {
+            StepState::from_status(&step.status)
+        })
+}
+
+#[derive(Serialize)]
+struct SummaryRow {
+    id: String,
+    action: String,
+    status: StepState,
+    note: Option<String>,
+    text: String,
+    y: u64,
+}
+
+#[derive(Serialize)]
+struct SummaryPage {
+    start_seconds: f64,
+    end_seconds: f64,
+    rows: Vec<SummaryRow>,
+}
+
+#[derive(Serialize)]
+struct Summary {
+    case_status: String,
+    passed: usize,
+    failed: usize,
+    incomplete: usize,
+    content_duration_seconds: f64,
+    end_seconds: f64,
+    title: String,
+    footer_y: u64,
+    pages: Vec<SummaryPage>,
+}
+
+impl Summary {
+    fn new(
+        steps: &[StepReport],
+        case_status: &str,
+        width: u64,
+        height: u64,
+        font: u64,
+        start: f64,
+    ) -> Self {
+        let passed = steps
+            .iter()
+            .filter(|step| StepState::from_status(&step.status) == StepState::Pass)
+            .count();
+        let failed = steps
+            .iter()
+            .filter(|step| StepState::from_status(&step.status) == StepState::Fail)
+            .count();
+        let incomplete = steps.len() - passed - failed;
+        let columns = (width.saturating_sub(24) / font).max(10) as usize;
+        let line_height = font * 3 / 2 + 8;
+        let title = wrap(
+            &format!(
+                "SUMMARY | RESULT: {case_status}\nPASS {passed} / FAIL {failed} / INCOMPLETE {incomplete}"
+            ),
+            columns,
+        );
+        let top = 12 + title.lines().count() as u64 * line_height;
+        let footer_y = height.saturating_sub(line_height + 12);
+        let capacity = footer_y.saturating_sub(top + 12).max(line_height);
+        let max_lines = (capacity / line_height).max(1) as usize;
+        let mut pages = vec![SummaryPage {
+            start_seconds: start,
+            end_seconds: start,
+            rows: Vec::new(),
+        }];
+        let mut used = 0;
+        for step in steps {
+            let status = StepState::from_status(&step.status);
+            let mut text = format!("[{}] {} | {}", status.label(), step.id, step.action);
+            if let Some(note) = &step.note {
+                text.push_str(&format!("\n{note}"));
+            }
+            let text = wrap(&text, columns);
+            let lines: Vec<_> = text.lines().collect();
+            for chunk in lines.chunks(max_lines) {
+                let row_height = chunk.len() as u64 * line_height;
+                let current = pages.last().unwrap();
+                if !current.rows.is_empty()
+                    && (used + row_height > capacity || current.rows.len() >= 12)
+                {
+                    pages.push(SummaryPage {
+                        start_seconds: start,
+                        end_seconds: start,
+                        rows: Vec::new(),
+                    });
+                    used = 0;
+                }
+                pages.last_mut().unwrap().rows.push(SummaryRow {
+                    id: step.id.clone(),
+                    action: step.action.clone(),
+                    status,
+                    note: step.note.clone(),
+                    text: chunk.join("\n"),
+                    y: top + used,
+                });
+                used += row_height;
+            }
+        }
+        let mut end = start;
+        for page in &mut pages {
+            let lines: usize = page.rows.iter().map(|row| row.text.lines().count()).sum();
+            page.start_seconds = end;
+            end += (lines as f64 * 0.7).clamp(6., 12.);
+            page.end_seconds = end;
+        }
+        Self {
+            case_status: case_status.into(),
+            passed,
+            failed,
+            incomplete,
+            content_duration_seconds: start,
+            end_seconds: end,
+            title,
+            footer_y,
+            pages,
+        }
+    }
+
+    fn append_filters(
+        &self,
+        filter: &mut String,
+        work: &Path,
+        font_option: &str,
+        font: u64,
+    ) -> Result<(), String> {
+        let start = self.content_duration_seconds;
+        let extra = self.end_seconds - start;
+        filter.push_str(&format!(",tpad=stop_mode=clone:stop_duration={extra:.6},drawbox=x=0:y=0:w=iw:h=ih:color=0x111827:t=fill:enable='gte(t,{start:.6})'"));
+        let mut text = |filename: String,
+                        value: &str,
+                        color: &str,
+                        y: u64,
+                        from: f64,
+                        to: f64|
+         -> Result<(), String> {
+            fs::write(work.join(&filename), value).map_err(|e| format!("video summary: {e}"))?;
+            filter.push_str(&format!(",drawtext=textfile={filename}:expansion=none{font_option}:fontcolor={color}:fontsize={font}:x=12:y={y}:line_spacing=6:enable='gte(t,{from:.6})*lt(t,{to:.6})'"));
+            Ok(())
+        };
+        text(
+            "summary-title.txt".into(),
+            &self.title,
+            StepState::from_status(&self.case_status).color(),
+            12,
+            start,
+            self.end_seconds,
+        )?;
+        for (index, page) in self.pages.iter().enumerate() {
+            for (row_index, row) in page.rows.iter().enumerate() {
+                text(
+                    format!("summary-{index:03}-{row_index:03}.txt"),
+                    &row.text,
+                    row.status.color(),
+                    row.y,
+                    page.start_seconds,
+                    page.end_seconds,
+                )?;
+            }
+            text(
+                format!("summary-page-{index:03}.txt"),
+                &format!("PAGE {} / {}", index + 1, self.pages.len()),
+                "white",
+                self.footer_y,
+                page.start_seconds,
+                page.end_seconds,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 struct WorkDirectory(PathBuf);
@@ -326,6 +570,42 @@ fn wrap(text: &str, columns: usize) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn summary_paginates_all_step_results_and_intent_notes() {
+        let steps: Vec<_> = (0..35)
+            .map(|i| StepReport {
+                id: format!("step-{i}"),
+                action: "tap_element".into(),
+                status: if i == 34 { "failed" } else { "passed" }.into(),
+                note: Some("Bấm nút để mở màn hình cần kiểm tra".into()),
+                error: None,
+            })
+            .collect();
+        let summary = Summary::new(&steps, "FAIL", 720, 600, 20, 10.);
+        assert_eq!(summary.passed, 34);
+        assert_eq!(summary.failed, 1);
+        assert!(summary.pages.len() > 1);
+        assert_eq!(
+            summary
+                .pages
+                .iter()
+                .map(|page| page.rows.len())
+                .sum::<usize>(),
+            35
+        );
+        assert!(
+            summary
+                .pages
+                .iter()
+                .all(|page| page.end_seconds > page.start_seconds && page.rows.len() <= 12)
+        );
+        for (i, row) in summary.pages.iter().flat_map(|page| &page.rows).enumerate() {
+            assert_eq!(row.id, format!("step-{i}"));
+            assert!(row.text.contains("Bấm nút"));
+            assert!(row.y < summary.footer_y);
+        }
+    }
 
     #[test]
     fn captions_include_resolved_test_input_without_filter_interpolation() {
@@ -422,12 +702,33 @@ mod tests {
         );
         overlay.cues[1].at = 1.;
         overlay.duration = Some(2.);
-        overlay.render(&path).await.unwrap();
+        let steps = vec![
+            StepReport {
+                id: "test.input".into(),
+                action: "fill_field".into(),
+                status: "passed".into(),
+                note: Some("Nhập mật khẩu kiểm thử".into()),
+                error: None,
+            },
+            StepReport {
+                id: "test.scroll".into(),
+                action: "scroll".into(),
+                status: "failed".into(),
+                note: Some("Cuộn để tìm nội dung cần kiểm tra".into()),
+                error: Some("element missing".into()),
+            },
+        ];
+        overlay.render(&path, &steps, "FAIL").await.unwrap();
         assert!(path.join("video-original.mp4").is_file());
         assert!(!path.join(".video-overlay").exists());
         let timeline = fs::read_to_string(path.join("video-steps.json")).unwrap();
         assert!(timeline.contains("test.input"));
         assert!(!timeline.contains("DEMO"));
+        let summary: Value =
+            serde_json::from_slice(&fs::read(path.join("video-summary.json")).unwrap()).unwrap();
+        assert_eq!(summary["passed"], 1);
+        assert_eq!(summary["failed"], 1);
+        assert!(summary["end_seconds"].as_f64().unwrap() > 2.);
         let mut frames = Vec::new();
         for time in ["0.5", "1.5"] {
             let mut extract = Command::new(&ffmpeg);
@@ -447,17 +748,54 @@ mod tests {
                 ]);
             let frame = output(extract, 15).await.unwrap();
             assert_eq!(frame.len(), 320 * 60 * 3);
+            let green = time == "0.5";
             assert!(
-                frame
-                    .chunks_exact(3)
-                    .any(|pixel| pixel.iter().all(|v| *v > 200)),
-                "caption has no white text pixels"
+                frame.chunks_exact(3).any(|p| if green {
+                    p[1] > 160 && p[0] < 150 && p[2] < 180
+                } else {
+                    p[0] > 180 && p[1] < 170 && p[2] < 170
+                }),
+                "step caption has wrong status color"
             );
             frames.push(frame);
         }
         assert_ne!(
             frames[0], frames[1],
             "step caption did not change over time"
+        );
+        let summary_time = summary["pages"][0]["start_seconds"].as_f64().unwrap() + 1.;
+        let mut extract = Command::new(&ffmpeg);
+        extract
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                &summary_time.to_string(),
+                "-i",
+            ])
+            .arg(path.join("video.mp4"))
+            .args([
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ]);
+        let frame = output(extract, 15).await.unwrap();
+        assert!(
+            frame
+                .chunks_exact(3)
+                .any(|p| p[1] > 160 && p[0] < 150 && p[2] < 180),
+            "summary lacks green PASS row"
+        );
+        assert!(
+            frame
+                .chunks_exact(3)
+                .any(|p| p[0] > 180 && p[1] < 170 && p[2] < 170),
+            "summary lacks red FAIL row"
         );
     }
 }

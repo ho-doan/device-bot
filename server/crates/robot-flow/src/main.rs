@@ -223,7 +223,7 @@ async fn main() {
                             .run(&flow, &profile, &o.confirmed, Duration::from_secs(o.case))
                             .await;
                         if !o.dry {
-                            if let Err(error) = runner.annotate_video().await {
+                            if let Err(error) = runner.annotate_video(&report).await {
                                 report.status = "FAIL".into();
                                 if let Some(existing) = report.error.as_mut() {
                                     existing.push_str(&format!("; {error}"));

@@ -22,6 +22,8 @@ pub struct FlowDocument {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Step {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<String>,
     #[serde(default)]
     pub id: Option<String>,
@@ -500,6 +502,9 @@ fn expand(
             stack.push(name);
             let mut expanded = expand(recipe, p, &local, stack, &format!("{id}."))?;
             for child in &mut expanded {
+                if child.note.is_none() {
+                    child.note = step.note.clone();
+                }
                 if child.platform.is_none() {
                     child.platform = platform.clone();
                 }
@@ -619,6 +624,7 @@ fn expand(
             }
         }
         result.push(Step {
+            note: step.note.clone(),
             platform,
             id: Some(id),
             action: BTreeMap::from([(action.clone(), args)]),
@@ -675,6 +681,27 @@ fn check_keys(args: &Value, allowed: &str) -> Result<()> {
 #[cfg(test)]
 mod input_metadata_tests {
     use super::*;
+
+    #[test]
+    fn intent_notes_are_metadata_and_inherit_through_recipes() {
+        let flow = FlowDocument::from_yaml("version: 2\nname: notes\nsteps:\n- id: prepare\n  note: Mở form đăng nhập\n  run: {recipe: ready}\n").unwrap();
+        let mut profile = Profile::default();
+        profile.recipes.insert(
+            "ready".into(),
+            serde_yaml::from_str(
+                "- wait: {ms: 1}\n- note: Chờ giao diện ổn định\n  wait: {ms: 2}\n",
+            )
+            .unwrap(),
+        );
+        let steps = compile(&flow, &profile).unwrap();
+        assert_eq!(steps[0].note.as_deref(), Some("Mở form đăng nhập"));
+        assert_eq!(steps[1].note.as_deref(), Some("Chờ giao diện ổn định"));
+        assert!(
+            steps
+                .iter()
+                .all(|step| step.action.len() == 1 && !step.action.contains_key("note"))
+        );
+    }
 
     #[test]
     fn environment_configuration_does_not_inject_sensitive_flags() {

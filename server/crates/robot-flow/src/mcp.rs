@@ -1,10 +1,14 @@
 //! Portable, single-session MCP stdio client. No platform driver dependencies.
-use std::{collections::BTreeMap, process::Stdio, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    process::Stdio,
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{Child, ChildStdin, ChildStdout, Command},
     time::timeout,
 };
@@ -21,8 +25,9 @@ pub trait Mcp: Send {
 pub struct StdioMcp {
     child: Child,
     input: Option<ChildStdin>,
-    output: BufReader<ChildStdout>,
+    output: Lines<BufReader<ChildStdout>>,
     next_id: u64,
+    pending: BTreeSet<u64>,
     timeout: Duration,
     poisoned: bool,
 }
@@ -41,9 +46,10 @@ impl StdioMcp {
             .map_err(|e| format!("start MCP server: {e}"))?;
         Ok(Self {
             input: child.stdin.take(),
-            output: BufReader::new(child.stdout.take().ok_or("missing MCP stdout")?),
+            output: BufReader::new(child.stdout.take().ok_or("missing MCP stdout")?).lines(),
             child,
             next_id: 1,
+            pending: BTreeSet::new(),
             timeout,
             poisoned: false,
         })
@@ -66,21 +72,20 @@ impl Mcp for StdioMcp {
         }
         let id = self.next_id;
         self.next_id += 1;
+        self.pending.insert(id);
         let limit = self.timeout;
         let result = timeout(limit, async {
             self.send(json!({"jsonrpc":"2.0", "id":id, "method":method, "params":params}))
                 .await?;
             loop {
-                let mut line = String::new();
-                if self
+                // Lines keeps its partial buffer across outer step cancellation;
+                // read_line with a stack-local String loses that prefix.
+                let line = self
                     .output
-                    .read_line(&mut line)
+                    .next_line()
                     .await
                     .map_err(|e| e.to_string())?
-                    == 0
-                {
-                    return Err(format!("MCP EOF while awaiting {method}"));
-                }
+                    .ok_or_else(|| format!("MCP EOF while awaiting {method}"))?;
                 if line.len() > 32 * 1024 * 1024 {
                     return Err("MCP message exceeds 32 MiB".into());
                 }
@@ -90,8 +95,17 @@ impl Mcp for StdioMcp {
                     continue;
                 }
                 if value.get("id") != Some(&json!(id)) {
+                    // Outer step cancellation may leave an earlier request's
+                    // response unread. Drain only replies to known issued IDs;
+                    // unrelated or future IDs remain protocol errors.
+                    if let Some(previous) = value.get("id").and_then(Value::as_u64) {
+                        if previous < id && self.pending.remove(&previous) {
+                            continue;
+                        }
+                    }
                     return Err("MCP response ID mismatch".into());
                 }
+                self.pending.remove(&id);
                 if let Some(error) = value.get("error") {
                     return Err(format!("MCP protocol error: {error}"));
                 }

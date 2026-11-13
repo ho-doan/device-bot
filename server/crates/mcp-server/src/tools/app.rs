@@ -9,9 +9,28 @@ use super::arguments::required_string;
 pub(super) const LAUNCH_NAME: &str = "mobile_launch_app";
 pub(super) const INSTALL_NAME: &str = "mobile_install_app";
 pub(super) const UNINSTALL_NAME: &str = "mobile_uninstall_app";
+pub(super) const TERMINATE_NAME: &str = "mobile_terminate_app";
+pub(super) const TERMINATE_ALL_NAME: &str = "mobile_terminate_all_apps";
 
-pub(super) fn definitions() -> [ToolDefinition; 3] {
+pub(super) fn definitions() -> [ToolDefinition; 5] {
     [
+        ToolDefinition {
+            name: TERMINATE_NAME.into(),
+            title: Some("Force-stop an Android app".into()),
+            description: "Force-stop an Android package for the current user. Omit appId to stop the foreground app.".into(),
+            input_schema: json!({"type":"object", "properties":{
+                "deviceId":{"type":"string", "minLength":1},
+                "appId":{"type":"string", "minLength":3}
+            }, "required":["deviceId"], "additionalProperties":false}),
+        },
+        ToolDefinition {
+            name: TERMINATE_ALL_NAME.into(),
+            title: Some("Force-stop all Android user apps".into()),
+            description: "Force-stop all third-party installed Android apps for the current user. System apps are excluded. Does not uninstall apps or clear their data.".into(),
+            input_schema: json!({"type":"object", "properties":{
+                "deviceId":{"type":"string", "minLength":1}
+            }, "required":["deviceId"], "additionalProperties":false}),
+        },
         ToolDefinition {
             name: LAUNCH_NAME.into(),
             title: Some("Launch a mobile app".into()),
@@ -82,6 +101,46 @@ pub(super) async fn uninstall(robot: &Arc<dyn Robot>, arguments: &Value) -> Tool
     };
     match robot.uninstall_app(&device_id, &app_id).await {
         Ok(()) => ToolResult::text(format!("Uninstalled {app_id}")),
+        Err(error) => ToolResult::execution_error(error.to_string()),
+    }
+}
+
+pub(super) async fn terminate(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResult {
+    let device_id = match required_string(arguments, "deviceId") {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let app_id = if arguments.get("appId").is_some() {
+        match required_string(arguments, "appId") {
+            Ok(value) => value,
+            Err(error) => return error,
+        }
+    } else {
+        match robot.stream_context(&device_id).await {
+            Ok(context) => match context["appId"].as_str().filter(|app| !app.is_empty()) {
+                Some(app) => app.to_owned(),
+                None => {
+                    return ToolResult::execution_error(
+                        "No foreground app was found. Specify appId to stop an app.",
+                    );
+                }
+            },
+            Err(error) => return ToolResult::execution_error(error.to_string()),
+        }
+    };
+    match robot.terminate_app(&device_id, &app_id).await {
+        Ok(()) => ToolResult::text(format!("Stopped {app_id}")),
+        Err(error) => ToolResult::execution_error(error.to_string()),
+    }
+}
+
+pub(super) async fn terminate_all(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResult {
+    let device_id = match required_string(arguments, "deviceId") {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    match robot.terminate_all_apps(&device_id).await {
+        Ok(apps) => ToolResult::text(format!("Stopped {} user apps", apps.len())),
         Err(error) => ToolResult::execution_error(error.to_string()),
     }
 }

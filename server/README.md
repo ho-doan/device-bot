@@ -65,6 +65,19 @@ the default is 8765.
 
 ### QC desktop app
 
+QC includes the `device_bot_flutter` bridge so its own controls can be inspected
+in release builds. The screenshot inspector offers Auto, Native and Flutter
+trees. Auto also tries the bridge when native accessibility exposes only an
+empty Flutter host; explicit Flutter selection reports a missing bridge instead
+of silently returning native nodes. Screenshot labels always use the selected
+tree. Other Flutter apps must embed and start the bridge themselves.
+
+Android Live offers **Kill app** (the foreground package) and **Kill all apps**
+(all third-party packages installed for the current Android user). Both use
+force-stop, preserve app data and keep the live device connection open. These
+operations are also exposed as `mobile_terminate_app` and
+`mobile_terminate_all_apps`; `mobile_terminate_app` accepts an optional `appId`.
+
 For a standalone macOS QC build, unzip `device-bot-qc-v<VERSION>-aarch64-apple-darwin.zip`,
 move **Device Bot QC.app** to Applications, and open it. This package includes
 QC, the native MCP server, the YAML/report tools, and XCTest assets; Flutter and
@@ -285,12 +298,30 @@ device-bot -u
 
 `-v` is `--version`, `-h` is `--help`, and `-u` is `--upgrade`.
 
-On Windows, `--upgrade` schedules the PowerShell installer, exits the running
-server, waits for that process to release the `.exe`, and then replaces it.
+On Windows, `--upgrade` schedules the PowerShell installer and exits the calling
+process. After downloading and validating the replacement tools, the installer
+stops the backend, QC, report/flow tools and bundled capture processes running
+from the installation being replaced, then waits for them to exit before copying
+files. Active sessions end; start `device-bot qc` or `device-bot mcp --listen
+0.0.0.0:3337` again after installation. Other installation directories and
+unrelated services on the same port are left running.
 Development builds under `target/` refuse automatic upgrade; install a
 release binary first. Network failures are reported and never alter the
 current binary. Re-running either platform installer is also a supported
 manual upgrade path.
+
+Chrome Live fallback requires FFmpeg with `libx264`. The Windows installer
+installs a checksum-verified portable FFmpeg build, including its license, under
+`ffmpeg/` next to Device Bot. The macOS installer checks an existing FFmpeg or
+uses Homebrew to install `ffmpeg-full` when missing. Install Homebrew first if it
+is unavailable. Both installers validate the encoder before replacing tools.
+GUI launches discover the installed encoder without relying on terminal PATH;
+`DEVICE_BOT_FFMPEG_PATH` overrides discovery.
+
+For an existing macOS installation missing FFmpeg, run `brew install ffmpeg`,
+then restart the Device Bot backend. If using the keg-only `ffmpeg-full` build
+with an older Device Bot release, set `DEVICE_BOT_FFMPEG_PATH` to
+`$(brew --prefix ffmpeg-full)/bin/ffmpeg` in the shell that starts the backend.
 
 ## HTTP transport and auth
 

@@ -461,10 +461,9 @@ fn paint(image: &mut RgbaImage, x: i32, y: i32, color: [u8; 4]) {
     }
     let alpha = u32::from(color[3]);
     let inverse = 255 - alpha;
-    for channel in 0..3 {
-        pixel.0[channel] = ((u32::from(color[channel]) * alpha
-            + u32::from(pixel.0[channel]) * inverse)
-            / 255) as u8;
+    for (channel, component) in color.iter().enumerate().take(3) {
+        pixel.0[channel] =
+            ((u32::from(*component) * alpha + u32::from(pixel.0[channel]) * inverse) / 255) as u8;
     }
     pixel.0[3] = 255;
 }
@@ -552,7 +551,7 @@ fn blit_bitmap(image: &mut RgbaImage, glyph: char, x: i32, y: i32) {
                 for dx in 0..2 {
                     paint(
                         image,
-                        x + column as i32 * 2 + dx,
+                        x + column * 2 + dx,
                         y + row as i32 * 2 + dy,
                         LABEL_TEXT,
                     );

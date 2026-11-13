@@ -1,8 +1,7 @@
 # Chrome Web Live video — giới hạn hiện tại
 
-- Trạng thái: **DEFERRED — chưa sửa xong**.
+- Trạng thái: **OPEN — chưa sửa xong**.
 - Ngày ghi nhận: 2026-11-12.
-- Quyết định: người dùng yêu cầu ghi chú và xử lý sau; dừng điều tra/sửa video trong phiên này.
 - Môi trường quan sát: macOS, Chrome 157.0.8103.52, QC desktop, trang `https://google.com` / `https://www.google.com`.
 
 ## Hiện tượng còn tồn tại
@@ -36,11 +35,38 @@ vẫn báo không được. **Không coi lỗi video đã được khắc phục
   quyết định từ chối chia sẻ của người dùng.
 - 18 kiểm thử Rust, 3 kiểm thử JavaScript và Clippy đã đạt. Chúng xác nhận các
   nhánh logic/cleanup; **không xác nhận Web Live video hoạt động end-to-end**.
-- Binary global đã được cập nhật bằng build local; chưa phát hành các thay đổi
-  video này lên GitHub. Source/fallback hiện tại vẫn cần được đánh giá lại khi
-  tiếp tục công việc.
+- Source/fallback đã nằm trong release v0.1.13. Vẫn cần xác minh video end-to-end như các mục bên dưới.
 
 ## Khi tiếp tục
+
+### Tiến độ 2026-11-13 (chưa đóng lỗi)
+
+- Đã dùng Serena đọc luồng native capture, CDP/FFmpeg, WebRTC receiver và hộp
+  thoại Live. Phía QC trước đây coi SDP answer là kết nối xong và vẫn hiển thị
+  “Retrying…” sau lỗi dù không có lần thử lại đang chạy.
+- QC nay chờ renderer có kích thước video trước khi hoàn tất kết nối. Sau
+  20 giây kể từ khi nhận SDP answer mà chưa có frame, trả lỗi rõ ràng và đóng
+  peer, renderer, backend stream. Peer thất bại trước frame đầu cũng trả lỗi.
+- Lỗi mở video hoặc mất kết nối hiển thị nút **Retry live video**, không để
+  spinner báo đang retry. Chỉ thử lại khi người dùng nhấn nút; không tự lặp lại
+  yêu cầu chia sẻ sau khi bị từ chối. Retry đóng phiên cũ trước khi tạo phiên mới.
+- Chạy physical test CDP/FFmpeg trên Chrome 157.0.8103.78, HTTP qua địa chỉ LAN
+  của máy hiện tại: nhận keyframe H.264 1920×962 (9307 bytes), input cuộn làm
+  `scrollY = 50`. Đây là bằng chứng encoder/input, chưa phải video đến QC hay
+  kiểm thử từ máy LAN thứ hai.
+- Thêm regression tests cho SDP không có frame → timeout/cleanup, renderer có
+  frame, peer thất bại sớm, và lỗi chia sẻ → dừng spinner/Retry theo yêu cầu.
+  Chạy 4 file test Flutter liên quan: **26/26 đạt**; `flutter analyze --no-pub`
+  không có lỗi; `git diff --check` đạt.
+- Vẫn cần quan sát Google trong QC thực tế, hộp chọn Share và renderer end-to-end;
+  không coi các thay đổi xử lý lỗi này là đã sửa nguyên nhân native capture treo.
+- Báo lỗi trên máy cài Windows/macOS cho thấy fallback không tìm thấy FFmpeg.
+  Installer Windows nay tải FFmpeg portable, pin SHA-256 và kiểm libx264;
+  installer macOS kiểm FFmpeg, dùng Homebrew cài ffmpeg-full khi thiếu và giữ
+  đường dẫn encoder cạnh CLI. Driver ưu tiên bản cạnh executable và nhận cả
+  Homebrew ffmpeg-full khi GUI không có PATH terminal. 24 test packaging/installer
+  chạy bằng PowerShell trên macOS đạt; Rust discovery test và Clippy đạt.
+  Đây là thay đổi source chưa phát hành; vẫn cần xác minh installer trên Windows thật.
 
 1. Tái hiện trên đúng cửa sổ Chrome do Device Bot quản lý, ghi rõ hộp chọn tab có
    xuất hiện không và người dùng đã chọn Google / This Tab rồi nhấn Share chưa.

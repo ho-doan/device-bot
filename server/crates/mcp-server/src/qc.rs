@@ -98,10 +98,10 @@ fn live_state(address: SocketAddr) -> io::Result<LiveState> {
     let Some((headers, body)) = response.split_once("\r\n\r\n") else {
         return Err(occupied(address));
     };
-    if !headers
+    if headers
         .lines()
         .next()
-        .is_some_and(|line| line.split_whitespace().nth(1) == Some("200"))
+        .is_none_or(|line| line.split_whitespace().nth(1) != Some("200"))
     {
         return Err(occupied(address));
     }

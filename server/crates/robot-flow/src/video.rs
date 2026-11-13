@@ -163,7 +163,7 @@ impl VideoOverlay {
             .unwrap_or(1);
         // Fonts with CJK coverage have larger line metrics than their pixel size.
         // Reserve enough height so the last input line stays on the dark header.
-        let header = ((rows as u64 * (font * 3 / 2 + 8) + 24) + 1) / 2 * 2;
+        let header = (rows as u64 * (font * 3 / 2 + 8) + 24).div_ceil(2) * 2;
         let work = directory.join(".video-overlay");
         fs::create_dir_all(&work).map_err(|e| format!("video step overlay: {e}"))?;
         let _cleanup = WorkDirectory(work.clone());

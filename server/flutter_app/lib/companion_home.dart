@@ -359,6 +359,9 @@ class _CompanionHomeState extends State<CompanionHome> {
             ? client.sendWebInput(device.id, input)
             : client.sendAndroidInput(device.id, input),
         onRunFlow: client.runFlow,
+        onTerminateApps: device.platform == 'android'
+            ? (all) => client.terminateApps(device.id, all: all)
+            : null,
       ),
     );
   }
@@ -390,7 +393,8 @@ class _CompanionHomeState extends State<CompanionHome> {
       context: context,
       builder: (context) => _ScreenshotDialog(
         device: device,
-        loadInspection: () => _loadInspection(device, capture: capture),
+        loadInspection: (source) =>
+            _loadInspection(device, capture: capture, source: source),
       ),
     );
   }
@@ -470,12 +474,12 @@ class _CompanionHomeState extends State<CompanionHome> {
   Future<_InspectionData> _loadInspection(
     AdminDevice device, {
     DesktopCaptureSettings? capture,
+    String source = 'auto',
   }) async {
-    // Capture the labeled screenshot first, then read the tree for the sidebar.
-    // The server draws element text onto the PNG. The canvas only adds the
-    // selected outline when that annotation is present.
+    // Draw labels from the chosen tree. Server annotations use native nodes
+    // and would have different indices after switching to a Flutter snapshot.
     final client = _client();
-    final shot = await client.takeAnnotatedScreenshot(
+    final image = await client.takeScreenshot(
       device.id,
       appId: capture?.appId,
       displayId: capture?.display.id,
@@ -483,12 +487,13 @@ class _CompanionHomeState extends State<CompanionHome> {
     try {
       final inspection = await client.inspectElements(
         device.id,
+        source: source,
         processId: capture?.processId,
         windowId: capture?.windowId,
       );
       return _InspectionData(
-        image: shot.bytes,
-        labelsOnImage: shot.annotated,
+        image: image,
+        labelsOnImage: false,
         elements: capture == null
             ? inspection.elements
             : inspection.elements
@@ -505,8 +510,8 @@ class _CompanionHomeState extends State<CompanionHome> {
       // A screenshot does not require an app context, while iOS XCTest UI
       // queries do. Keep the screenshot visible when the latter is unavailable.
       return _InspectionData(
-        image: shot.bytes,
-        labelsOnImage: shot.annotated,
+        image: image,
+        labelsOnImage: false,
         elements: const [],
         elementsError: elementInspectionErrorMessage(error),
         display: capture?.display,
@@ -611,15 +616,9 @@ class _ConnectionForm extends StatelessWidget {
           children: [
             SizedBox(
               width: 340,
-              child: ListenableBuilder(
-                listenable: baseUrlController,
-                builder: (context, child) => Semantics(
-                  textField: true,
-                  identifier: 'mcp-server-url',
-                  label: 'MCP server URL',
-                  value: baseUrlController.text,
-                  child: child,
-                ),
+              child: Semantics(
+                container: true,
+                identifier: 'mcp-server-url',
                 child: TextField(
                   controller: baseUrlController,
                   keyboardType: TextInputType.url,
@@ -632,15 +631,9 @@ class _ConnectionForm extends StatelessWidget {
             if (kIsWeb)
               SizedBox(
                 width: 280,
-                child: ListenableBuilder(
-                  listenable: tokenController,
-                  builder: (context, child) => Semantics(
-                    textField: true,
-                    identifier: 'mcp-bearer-token',
-                    label: 'Bearer token',
-                    value: tokenController.text,
-                    child: child,
-                  ),
+                child: Semantics(
+                  container: true,
+                  identifier: 'mcp-bearer-token',
                   child: TextField(
                     controller: tokenController,
                     obscureText: true,
@@ -663,7 +656,11 @@ class _ConnectionForm extends StatelessWidget {
             ),
             SizedBox(
               width: 340,
-              child: Semantics(liveRegion: true, child: Text(activityStatus)),
+              child: Semantics(
+                container: true,
+                liveRegion: true,
+                child: Text(activityStatus),
+              ),
             ),
           ],
         ),
@@ -845,7 +842,7 @@ class _ScreenshotDialog extends StatefulWidget {
   const _ScreenshotDialog({required this.device, required this.loadInspection});
 
   final AdminDevice device;
-  final Future<_InspectionData> Function() loadInspection;
+  final Future<_InspectionData> Function(String source) loadInspection;
 
   @override
   State<_ScreenshotDialog> createState() => _ScreenshotDialogState();
@@ -856,12 +853,13 @@ class _ScreenshotDialogState extends State<_ScreenshotDialog> {
   int? _selectedIndex;
   int _flowSequence = 0;
   late Future<_InspectionData> _inspection;
+  String _treeSource = 'auto';
 
   @override
   void initState() {
     super.initState();
     _yamlController = TextEditingController(text: _initialYaml());
-    _inspection = widget.loadInspection();
+    _inspection = widget.loadInspection(_treeSource);
   }
 
   @override
@@ -925,6 +923,24 @@ steps:
       title: Row(
         children: [
           Expanded(child: Text('${widget.device.name} element inspector')),
+          DropdownButton<String>(
+            key: const Key('inspector-tree-source'),
+            value: _treeSource,
+            hint: const Text('Element tree'),
+            items: const [
+              DropdownMenuItem(value: 'auto', child: Text('Auto tree')),
+              DropdownMenuItem(value: 'native', child: Text('Native tree')),
+              DropdownMenuItem(value: 'flutter', child: Text('Flutter tree')),
+            ],
+            onChanged: (source) {
+              if (source == null || source == _treeSource) return;
+              setState(() {
+                _treeSource = source;
+                _selectedIndex = null;
+                _inspection = widget.loadInspection(_treeSource);
+              });
+            },
+          ),
           IconButton(
             tooltip: 'Recapture screenshot and elements (indices may change)',
             icon: const Icon(
@@ -933,7 +949,7 @@ steps:
             ),
             onPressed: () => setState(() {
               _selectedIndex = null;
-              _inspection = widget.loadInspection();
+              _inspection = widget.loadInspection(_treeSource);
             }),
           ),
           Tooltip(
@@ -1164,9 +1180,8 @@ class _InspectorSidebar extends StatelessWidget {
         const SizedBox(height: 6),
         Expanded(
           child: Semantics(
-            textField: true,
+            container: true,
             identifier: 'yaml-flow-draft',
-            label: 'YAML flow draft',
             child: TextField(
               controller: yamlController,
               expands: true,

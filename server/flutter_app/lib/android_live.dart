@@ -78,12 +78,14 @@ class AndroidLiveDialog extends StatefulWidget {
     required this.onInput,
     this.onRunFlow,
     this.openVideo,
+    this.onTerminateApps,
     this.recording,
     this.platform = 'android',
     super.key,
   });
 
   final Future<AndroidVideoSession> Function()? openVideo;
+  final Future<String> Function(bool all)? onTerminateApps;
   final String deviceName;
   final String platform;
   final LiveRecording? recording;
@@ -105,6 +107,8 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   StreamSubscription<AndroidLiveUpdate>? _subscription;
   Future<void> _inputs = Future<void>.value();
   AndroidVideoSession? _video;
+  String? _videoError;
+  bool _terminatingApps = false;
   List<AdminElement> _elements = const [];
   String? _source;
   String? _status;
@@ -281,7 +285,16 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   }
 
   Future<void> _openVideo() async {
+    final previous = _video;
+    previous?.removeListener(_videoChanged);
+    setState(() {
+      _video = null;
+      _videoError = null;
+      _status = null;
+    });
     try {
+      await previous?.close();
+      if (!mounted) return;
       final video = await widget.openVideo!();
       if (!mounted) {
         await video.close();
@@ -295,16 +308,43 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
       if (widget.platform == 'chrome') _connectInspection();
       setState(() {});
     } on Object catch (error) {
-      if (mounted) setState(() => _status = error.toString());
+      if (mounted) {
+        setState(() {
+          _videoError = error.toString();
+          _status = _videoError;
+        });
+      }
     }
   }
 
   void _videoChanged() {
     if (mounted) {
       setState(() {
-        _status = _video?.status;
+        _videoError = _video?.status;
+        _status = _videoError;
       });
     }
+  }
+
+  void _terminateApps(bool all) {
+    if (_terminatingApps || widget.onTerminateApps == null) return;
+    setState(() => _terminatingApps = true);
+    _inputs = _inputs.then((_) async {
+      try {
+        final message = await widget.onTerminateApps!(all);
+        if (mounted) {
+          setState(() {
+            _status = message;
+            _selectedIndex = null;
+            _deviceFocus = null;
+          });
+        }
+      } on Object catch (error) {
+        if (mounted) setState(() => _status = error.toString());
+      } finally {
+        if (mounted) setState(() => _terminatingApps = false);
+      }
+    });
   }
 
   void _send(Map<String, dynamic> input) {
@@ -479,6 +519,44 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                 ),
               ),
             ),
+            if (widget.platform == 'android' && widget.onTerminateApps != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Tooltip(
+                      message: 'Force-stop the foreground Android app',
+                      child: OutlinedButton.icon(
+                        key: const Key('live-kill-app'),
+                        onPressed: _terminatingApps
+                            ? null
+                            : () => _terminateApps(false),
+                        icon: const Icon(Icons.stop_circle_outlined),
+                        label: const Text('Kill app'),
+                      ),
+                    ),
+                    Tooltip(
+                      message:
+                          'Force-stop all user-installed apps. System apps are excluded.',
+                      child: OutlinedButton.icon(
+                        key: const Key('live-kill-all-apps'),
+                        onPressed: _terminatingApps
+                            ? null
+                            : () => _terminateApps(true),
+                        icon: const Icon(Icons.stop),
+                        label: const Text('Kill all apps'),
+                      ),
+                    ),
+                    if (_terminatingApps) const Text('Stopping apps…'),
+                  ],
+                ),
+              ),
             if (widget.platform == 'chrome')
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
@@ -505,7 +583,16 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
               child: Row(
                 children: [
                   Expanded(
-                    child: video == null || !video.hasVideo
+                    child: _videoError != null
+                        ? Center(
+                            child: FilledButton.icon(
+                              key: const Key('live-retry-video'),
+                              onPressed: _openVideo,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Retry live video'),
+                            ),
+                          )
+                        : video == null || !video.hasVideo
                         ? Center(
                             child: Padding(
                               padding: const EdgeInsets.all(24),
@@ -825,10 +912,8 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               Semantics(
-                                textField: true,
+                                container: true,
                                 identifier: 'live-text-for-focused-field',
-                                label: 'Text for focused field',
-                                value: _text.text,
                                 child: TextField(
                                   key: const Key('android-live-type'),
                                   controller: _text,

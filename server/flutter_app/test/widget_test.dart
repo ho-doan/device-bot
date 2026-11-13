@@ -6,6 +6,8 @@
 // tree, read text, and verify that the values of widget properties are correct.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
 import 'package:mobile_mcp_companion/main.dart';
 
@@ -20,7 +22,21 @@ void main() {
       expect(find.text('MCP server URL'), findsOneWidget);
       expect(find.text('Bearer token (optional)'), findsNothing);
       expect(find.text('Refresh'), findsOneWidget);
-      expect(find.bySemanticsLabel('MCP server URL'), findsWidgets);
+      expect(find.bySemanticsLabel('MCP server URL'), findsOneWidget);
+      var fields = 0;
+      void countFields(SemanticsNode node) {
+        final data = node.getSemanticsData();
+        if (data.flagsCollection.isTextField && data.label == 'MCP server URL') {
+          fields++;
+        }
+        node.visitChildren((child) {
+          countFields(child);
+          return true;
+        });
+      }
+
+      countFields(tester.getSemantics(find.byType(Scaffold).first));
+      expect(fields, 1, reason: 'Do not create a second proxy editable node');
       expect(
         tester
             .getSemantics(find.bySemanticsLabel('MCP server URL').first)

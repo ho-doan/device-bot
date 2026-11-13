@@ -34,8 +34,11 @@ use tokio::{
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 mod connection;
+mod ffmpeg;
 mod live;
 mod managed;
+#[cfg(test)]
+mod qc_smoke_tests;
 mod screencast;
 mod startup;
 
@@ -111,15 +114,16 @@ impl ChromeRobot {
                 std::env::var_os("DEVICE_BOT_CHROME_PATH").map(PathBuf::from),
             ))));
         }
-        robot.ffmpeg_path = std::env::var("DEVICE_BOT_FFMPEG_PATH").unwrap_or_else(|_| {
-            [
+        robot.ffmpeg_path = ffmpeg::resolve(
+            std::env::var("DEVICE_BOT_FFMPEG_PATH").ok(),
+            std::env::current_exe().ok().as_deref(),
+            &[
+                "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg",
+                "/usr/local/opt/ffmpeg-full/bin/ffmpeg",
                 "/opt/homebrew/opt/ffmpeg/bin/ffmpeg",
                 "/usr/local/opt/ffmpeg/bin/ffmpeg",
-            ]
-            .iter()
-            .find(|path| std::path::Path::new(path).is_file())
-            .map_or_else(|| "ffmpeg".into(), |path| (*path).into())
-        });
+            ],
+        );
         robot
     }
 

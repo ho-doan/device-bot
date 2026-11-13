@@ -18,6 +18,8 @@ $BinaryName = "device-bot.exe"
 # The official portable bundle includes the matching server, ADB and runtime DLLs.
 $ScrcpyVersion = "5.0.1"
 $ScrcpySha256 = "b12a2c4ee8be317422451fc7dcf8ee20a71b5ea7ef9ad73ddd825a25316227a5"
+$FfmpegVersion = "9.0.2"
+$FfmpegSha256 = "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"
 $RetryAttempts = 4
 $WaitPid = $env:DEVICE_BOT_WAIT_PID
 $InstallerScriptPath = $MyInvocation.MyCommand.Path
@@ -117,6 +119,37 @@ function Get-ExpectedChecksum([string] $Manifest, [string] $Archive) {
     return ([regex]::Match($line, "^[0-9a-fA-F]{64}")).Value.ToLowerInvariant()
 }
 
+function Stop-InstalledProcesses([string] $Directory) {
+    # Match executable paths, not process names or port owners: another
+    # installation (or an unrelated service on 3337) must keep running.
+    $root = [System.IO.Path]::GetFullPath($Directory)
+    $tools = @("device-bot.exe", "robot-flow.exe", "robot-report.exe", "scrcpy.exe", "adb.exe") |
+        ForEach-Object { [System.IO.Path]::GetFullPath((Join-Path $root $_)) }
+    $qcRoot = [System.IO.Path]::GetFullPath((Join-Path $root "qc")) + [System.IO.Path]::DirectorySeparatorChar
+    $tools += [System.IO.Path]::GetFullPath((Join-Path $root "ffmpeg/bin/ffmpeg.exe"))
+    $processes = @(Get-Process | Where-Object {
+        $executable = $_.Path
+        $_.Id -ne $PID -and $executable -and (
+            $tools -contains $executable -or
+            $executable.StartsWith($qcRoot, [System.StringComparison]::OrdinalIgnoreCase)
+        )
+    })
+    foreach ($process in $processes) {
+        Write-Host "Stopping installed Device Bot process $($process.Id): $($process.Path)"
+        # Pass the process object so a recycled PID cannot target another app.
+        try {
+            Stop-Process -InputObject $process -Force -ErrorAction Stop
+        } catch {
+            if (-not $process.HasExited) { throw }
+        }
+    }
+    foreach ($process in $processes) {
+        if (-not $process.WaitForExit(10000)) {
+            throw "Installed Device Bot process $($process.Id) did not stop; installation aborted."
+        }
+    }
+}
+
 $Version = Get-ReleaseVersion
 if ($Version -notmatch '^[A-Za-z0-9._-]+$') { throw "Invalid release version: $Version" }
 $Target = Get-WindowsTarget
@@ -147,13 +180,6 @@ try {
         $tool = Join-Path $TempDir $name
         if (-not (Test-Path -Path $tool -PathType Leaf)) { throw "The release archive does not contain $name." }
         if ((& $tool --version).Trim() -ne $Version -or $LASTEXITCODE -ne 0) { throw "Release binary version mismatch: $name." }
-        $installed = Join-Path $InstallDir $name
-        if (Test-Path -Path $installed -PathType Leaf) {
-            try {
-                $handle = [System.IO.File]::Open($installed, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-                $handle.Dispose()
-            } catch { throw "Stop the running $name before reinstalling the native tools." }
-        }
     }
 
     $scrcpyBundle = "scrcpy-win64-v$ScrcpyVersion"
@@ -167,13 +193,6 @@ try {
         if (-not (Test-Path -Path (Join-Path $scrcpyRoot $name) -PathType Leaf)) {
             throw "The scrcpy archive does not contain $name."
         }
-        $installed = Join-Path $InstallDir $name
-        if (Test-Path -Path $installed -PathType Leaf) {
-            try {
-                $handle = [System.IO.File]::Open($installed, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-                $handle.Dispose()
-            } catch { throw "Stop the running Android Live, scrcpy and ADB processes before replacing $name." }
-        }
     }
     $scrcpyOutput = & (Join-Path $scrcpyRoot "scrcpy.exe") --version
     $scrcpyFirstLine = [string]($scrcpyOutput | Select-Object -First 1)
@@ -183,9 +202,43 @@ try {
     & (Join-Path $scrcpyRoot "adb.exe") version | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "ADB verification failed." }
 
+    $ffmpegBundle = "ffmpeg-$FfmpegVersion-essentials_build"
+    $ffmpegArchive = Join-Path $TempDir "$ffmpegBundle.zip"
+    Invoke-DownloadWithRetry "https://github.com/GyanD/codexffmpeg/releases/download/$FfmpegVersion/$ffmpegBundle.zip" $ffmpegArchive "Downloading Chrome Live dependency (FFmpeg $FfmpegVersion)"
+    $ffmpegActual = (Get-FileHash -Algorithm SHA256 -Path $ffmpegArchive).Hash.ToLowerInvariant()
+    if ($ffmpegActual -ne $FfmpegSha256) { throw "FFmpeg checksum verification failed." }
+    Expand-Archive -Path $ffmpegArchive -DestinationPath $TempDir -Force
+    $ffmpegRoot = Join-Path $TempDir $ffmpegBundle
+    $ffmpeg = Join-Path $ffmpegRoot "bin/ffmpeg.exe"
+    if (-not (Test-Path -Path $ffmpeg -PathType Leaf)) { throw "The FFmpeg archive does not contain bin/ffmpeg.exe." }
+    $ffmpegOutput = & $ffmpeg -version
+    $ffmpegFirstLine = [string]($ffmpegOutput | Select-Object -First 1)
+    if ($LASTEXITCODE -ne 0 -or $ffmpegFirstLine -notmatch "^ffmpeg version $([regex]::Escape($FfmpegVersion))(\s|-)" ) {
+        throw "FFmpeg version verification failed; expected $FfmpegVersion."
+    }
+    $ffmpegEncoders = & $ffmpeg -hide_banner -encoders
+    if ($LASTEXITCODE -ne 0 -or -not ($ffmpegEncoders -match '\blibx264\b')) {
+        throw "FFmpeg with libx264 is required for Chrome Live."
+    }
+
+    # Finish download and validation before interrupting the working version.
+    Stop-InstalledProcesses $InstallDir
+    foreach ($name in ($Binaries + @("scrcpy.exe", "adb.exe"))) {
+        $installed = Join-Path $InstallDir $name
+        if (Test-Path -Path $installed -PathType Leaf) {
+            try {
+                $handle = [System.IO.File]::Open($installed, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+                $handle.Dispose()
+            } catch { throw "Could not unlock $installed after stopping Device Bot; installation aborted." }
+        }
+    }
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     # Keep DLLs and the server beside scrcpy.exe; this directory is on PATH.
     Copy-Item -Path (Join-Path $scrcpyRoot "*") -Destination $InstallDir -Recurse -Force
+    # Keep the portable build's license and documentation with its executable.
+    $ffmpegDestination = Join-Path $InstallDir "ffmpeg"
+    if (Test-Path $ffmpegDestination) { Remove-Item -Recurse -Force $ffmpegDestination }
+    Copy-Item -Path $ffmpegRoot -Destination $ffmpegDestination -Recurse -Force
     $assetParent = Join-Path $InstallDir "device-bot-assets"
     New-Item -ItemType Directory -Path $assetParent -Force | Out-Null
     $assetDestination = Join-Path $assetParent $Version
@@ -230,6 +283,7 @@ try {
     if (Test-Path $qcInstalled) { Write-Host "Installed QC to $qcInstalled" }
     Write-Host "Installed $($Binaries -join ", ") $Version to $InstallDir"
     Write-Host "Installed Android Live dependencies: scrcpy $ScrcpyVersion, scrcpy-server and ADB"
+    Write-Host "Installed Chrome Live dependency: FFmpeg $FfmpegVersion with libx264"
 } finally {
     if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
     if ($InstallerScriptPath -and (Test-Path $InstallerScriptPath)) {

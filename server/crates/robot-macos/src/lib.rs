@@ -89,6 +89,7 @@ unsafe extern "C" {
     fn AXIsProcessTrusted() -> bool;
     fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
     fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
+    fn AXUIElementCreateSystemWide() -> AXUIElementRef;
     fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> i32;
     fn AXUIElementCopyAttributeValue(
         element: AXUIElementRef,
@@ -124,6 +125,8 @@ unsafe extern "C" {
     fn CFArrayGetCount(array: CFArrayRef) -> c_long;
     fn CFArrayGetValueAtIndex(array: CFArrayRef, index: c_long) -> CFTypeRef;
     fn CFGetTypeID(value: CFTypeRef) -> usize;
+    fn CFBooleanGetTypeID() -> usize;
+    fn CFBooleanGetValue(value: CFTypeRef) -> bool;
     fn CFNumberGetValue(number: CFTypeRef, number_type: i32, value: *mut c_void) -> bool;
     fn CFStringGetTypeID() -> usize;
     fn CFStringCreateWithBytes(
@@ -141,21 +144,6 @@ unsafe extern "C" {
         buffer_size: c_long,
         encoding: u32,
     ) -> bool;
-}
-
-#[cfg(target_os = "macos")]
-#[link(name = "objc")]
-unsafe extern "C" {
-    fn objc_getClass(name: *const c_char) -> *mut c_void;
-    fn sel_registerName(name: *const c_char) -> *const c_void;
-    #[link_name = "objc_msgSend"]
-    fn objc_msg_send(receiver: *mut c_void, selector: *const c_void) -> usize;
-}
-
-#[cfg(target_os = "macos")]
-#[link(name = "AppKit", kind = "framework")]
-unsafe extern "C" {
-    fn NSApplicationLoad() -> bool;
 }
 
 /// Requests the macOS Screen Recording permission when it has not yet been
@@ -218,6 +206,8 @@ impl Drop for CfOwned {
 struct NativeAxAttributes {
     manual_accessibility: CFStringRef,
     focused_window: CFStringRef,
+    focused: CFStringRef,
+    enabled: CFStringRef,
     windows: CFStringRef,
     children: CFStringRef,
     role: CFStringRef,
@@ -234,6 +224,8 @@ impl NativeAxAttributes {
         Ok(Self {
             manual_accessibility: native_cf_string("AXManualAccessibility")?,
             focused_window: native_cf_string("AXFocusedWindow")?,
+            focused: native_cf_string("AXFocused")?,
+            enabled: native_cf_string("AXEnabled")?,
             windows: native_cf_string("AXWindows")?,
             children: native_cf_string("AXChildren")?,
             role: native_cf_string("AXRole")?,
@@ -252,6 +244,8 @@ impl Drop for NativeAxAttributes {
         for value in [
             self.manual_accessibility,
             self.focused_window,
+            self.focused,
+            self.enabled,
             self.windows,
             self.children,
             self.role,
@@ -373,32 +367,16 @@ fn native_frontmost_application(preferred_pid: Option<i32>) -> Result<CfOwned, R
             "the selected macOS target process is unavailable; select the app again".into(),
         ));
     }
-    // NSWorkspace identifies the actual foreground application PID even when
-    // several Chrome processes have the same owner name.
-    unsafe { NSApplicationLoad() };
-    let workspace_class = unsafe { objc_getClass(c"NSWorkspace".as_ptr()) };
-    let shared_workspace = unsafe {
-        objc_msg_send(
-            workspace_class,
-            sel_registerName(c"sharedWorkspace".as_ptr()),
-        ) as *mut c_void
-    };
-    let frontmost_application = unsafe {
-        objc_msg_send(
-            shared_workspace,
-            sel_registerName(c"frontmostApplication".as_ptr()),
-        ) as *mut c_void
-    };
-    let pid = unsafe {
-        objc_msg_send(
-            frontmost_application,
-            sel_registerName(c"processIdentifier".as_ptr()),
-        ) as i32
-    };
-    if pid > 0 {
-        let application = CfOwned(unsafe { AXUIElementCreateApplication(pid) });
-        if !application.0.is_null() {
-            return Ok(application);
+    // Query the Accessibility server each time. NSWorkspace notifications can
+    // remain stale on a headless Tokio worker without a Cocoa run loop.
+    let system = CfOwned(unsafe { AXUIElementCreateSystemWide() });
+    let focused_app = CfOwned(native_cf_string("AXFocusedApplication")?);
+    if !system.0.is_null() {
+        if let Some(application) = native_copy_attribute(system.0, focused_app.0) {
+            let mut pid = 0;
+            if unsafe { AXUIElementGetPid(application.0, &mut pid) } == 0 && pid > 0 {
+                return Ok(application);
+            }
         }
     }
 
@@ -491,6 +469,18 @@ fn native_matches_filter(
 }
 
 #[cfg(target_os = "macos")]
+fn native_bool_attribute(element: AXUIElementRef, attribute: CFStringRef) -> Option<bool> {
+    let value = native_copy_attribute(element, attribute)?;
+    (unsafe { CFGetTypeID(value.0) } == unsafe { CFBooleanGetTypeID() })
+        .then(|| unsafe { CFBooleanGetValue(value.0) })
+}
+
+#[cfg(target_os = "macos")]
+fn native_is_editor(role: &str) -> bool {
+    matches!(role, "AXTextField" | "AXTextArea" | "AXComboBox")
+}
+
+#[cfg(target_os = "macos")]
 fn native_collect_elements(
     element: AXUIElementRef,
     attributes: &NativeAxAttributes,
@@ -513,8 +503,8 @@ fn native_collect_elements(
         native_string_attribute(element, attributes.title).and_then(|value| non_empty(&value));
     let description = native_string_attribute(element, attributes.description)
         .and_then(|value| non_empty(&value));
-    let value =
-        native_string_attribute(element, attributes.value).and_then(|value| non_empty(&value));
+    let value = native_string_attribute(element, attributes.value);
+    let enabled = native_bool_attribute(element, attributes.enabled).unwrap_or(true);
     let text = title.clone().or_else(|| value.clone());
 
     if native_matches_filter(filter, &role, text.as_deref(), description.as_deref()) {
@@ -534,12 +524,18 @@ fn native_collect_elements(
                         right: (position.x + size.width).round() as i32,
                         bottom: (position.y + size.height).round() as i32,
                     },
-                    clickable: matches!(
-                        role.as_str(),
-                        "AXButton" | "AXLink" | "AXMenuItem" | "AXPopUpButton"
-                    ),
-                    enabled: true,
-                    focused: None,
+                    clickable: enabled
+                        && (native_is_editor(&role)
+                            || matches!(
+                                role.as_str(),
+                                "AXButton"
+                                    | "AXLink"
+                                    | "AXMenuItem"
+                                    | "AXPopUpButton"
+                                    | "AXRadioButton"
+                            )),
+                    enabled,
+                    focused: native_bool_attribute(element, attributes.focused),
                     checked: None,
                     selected: None,
                     value,
@@ -633,18 +629,23 @@ fn native_press_at(
         }
     }
     let role = native_string_attribute(element, attributes.role).unwrap_or_default();
-    contains == Some(true)
-        && native_bounds_center_matches(element, attributes, point)
-        && matches!(
-            role.as_str(),
-            "AXButton"
-                | "AXLink"
-                | "AXMenuItem"
-                | "AXPopUpButton"
-                | "AXRadioButton"
-                | "AXTextField"
-        )
-        && unsafe { AXUIElementPerformAction(element, press) } == 0
+    if contains != Some(true)
+        || !native_bounds_center_matches(element, attributes, point)
+        || native_bool_attribute(element, attributes.enabled) == Some(false)
+    {
+        return false;
+    }
+    if native_is_editor(&role) {
+        // Focus the native editor; AXValue writes can bypass application delegates.
+        // Text is sent separately through real keyboard events.
+        return unsafe {
+            AXUIElementSetAttributeValue(element, attributes.focused, kCFBooleanTrue)
+        } == 0;
+    }
+    matches!(
+        role.as_str(),
+        "AXButton" | "AXLink" | "AXMenuItem" | "AXPopUpButton" | "AXRadioButton"
+    ) && unsafe { AXUIElementPerformAction(element, press) } == 0
 }
 
 #[cfg(target_os = "macos")]
@@ -1238,7 +1239,21 @@ impl Robot for MacosRobot {
             "on run argv\n tell application \"System Events\" to set frontmost of (first process whose unix id is (item 1 of argv as integer)) to true\nend run",
             &[process_id.to_string()],
         )
-        .await
+        .await?;
+        #[cfg(target_os = "macos")]
+        {
+            for _ in 0..80 {
+                if self.require_input_target().await.is_ok() {
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            return Err(RobotError::CommandFailed(
+                "macOS did not activate the selected process; retry Activate".into(),
+            ));
+        }
+        #[cfg(not(target_os = "macos"))]
+        Ok(())
     }
 
     async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {

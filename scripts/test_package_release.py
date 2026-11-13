@@ -29,7 +29,7 @@ class NativeRelease(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.repo = self.root / 'repo'
         self.bins = self.root / 'binaries'
         self.bins.mkdir()
@@ -152,12 +152,13 @@ esac
             output.add(bundle, arcname=bundle.name)
         return archive
 
-    def install(self, archive, scrcpy=None, bad_scrcpy_checksum=False, arch='arm64'):
+    def install(self, archive, scrcpy=None, bad_scrcpy_checksum=False, arch='arm64', ffmpeg_x264=True):
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         (self.out / 'checksums.txt').write_text(f'{digest}  {archive.name}\n')
         shims = self.root / 'shims'
         shims.mkdir(exist_ok=True)
         (shims / 'uname').write_text(f'#!/bin/sh\ncase "$1" in -s) echo Darwin;; -m) echo {arch};; esac\n')
+        (shims / 'ffmpeg').write_text('#!/bin/sh\necho "' + ('V..... libx264' if ffmpeg_x264 else 'V..... mpeg4') + '"\n')
         (shims / 'curl').write_text('''#!/bin/sh
 output=''
 while [ "$#" -gt 0 ]; do
@@ -179,6 +180,7 @@ cp "$TEST_DOWNLOAD_ROOT/${url##*/}" "$output"
         self.install_dir = self.root / 'installed'
         env = dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'],
                    DEVICE_BOT_VERSION=self.version, DEVICE_BOT_INSTALL_DIR=str(self.install_dir),
+                   DEVICE_BOT_FFMPEG_PATH=str(shims / 'ffmpeg'),
                    TEST_DOWNLOAD_ROOT=str(self.out))
         return subprocess.run(['sh', str(installer_path)], env=env, capture_output=True, text=True)
 
@@ -208,6 +210,14 @@ cp "$TEST_DOWNLOAD_ROOT/${url##*/}" "$output"
         self.assertTrue(version.startswith('scrcpy 5.0.1 '))
         subprocess.run(['adb', 'version'], cwd=self.root, env=env, check=True, capture_output=True)
         self.assertIn('Installed Android Live dependencies', result.stdout)
+        self.assertTrue((self.install_dir / 'ffmpeg/bin/ffmpeg').is_file())
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
+    def test_mac_installer_rejects_ffmpeg_without_libx264(self):
+        result = self.install(self.package(), ffmpeg_x264=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FFmpeg with libx264', result.stderr)
+        self.assertFalse(self.install_dir.exists())
 
     @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
     def test_mac_installer_rejects_bad_scrcpy_checksum_before_install(self):
@@ -234,7 +244,8 @@ cp "$TEST_DOWNLOAD_ROOT/${url##*/}" "$output"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.install_dir / 'scrcpy-server').is_file())
 
-    def install_windows(self, missing=(), bad_checksum=False, version='5.0.1', empty_architecture=False):
+    def install_windows(self, missing=(), bad_checksum=False, version='5.0.1', empty_architecture=False,
+                        running_processes=False, bad_ffmpeg_checksum=False, ffmpeg_x264=True):
         if os.name == 'nt':
             # Build one tiny native fixture for all CLI names on Windows CI.
             source = self.root / 'Fixture.cs'
@@ -242,8 +253,10 @@ cp "$TEST_DOWNLOAD_ROOT/${url##*/}" "$output"
 using System.IO;
 class Fixture {
     static int Main(string[] args) {
+        if (args.Length > 0 && args[0] == "--hold") { System.Threading.Thread.Sleep(120000); return 0; }
         string name = Path.GetFileName(Environment.GetCommandLineArgs()[0]);
-        if (name == "scrcpy.exe") Console.WriteLine("scrcpy " + Environment.GetEnvironmentVariable("TEST_SCRCPY_VERSION"));
+        if (name == "ffmpeg.exe") Console.WriteLine(args.Length > 1 ? Environment.GetEnvironmentVariable("TEST_FFMPEG_ENCODERS") : "ffmpeg version " + Environment.GetEnvironmentVariable("TEST_FFMPEG_VERSION") + "-fixture");
+        else if (name == "scrcpy.exe") Console.WriteLine("scrcpy " + Environment.GetEnvironmentVariable("TEST_SCRCPY_VERSION"));
         else if (name == "adb.exe") Console.WriteLine("Android Debug Bridge version 1.0.41");
         else if (args.Length > 0 && args[0] == "--version") Console.WriteLine("0.1.4");
         else if (args.Length == 0 || args[0] != "--check-install") return 1;
@@ -272,6 +285,17 @@ class Fixture {
                 if name not in missing:
                     output.writestr('scrcpy-win64-v5.0.1/' + name, content)
         digest = '0' * 64 if bad_checksum else hashlib.sha256(scrcpy.read_bytes()).hexdigest()
+        installer = (SCRIPTS / 'install.ps1').read_text()
+        ffmpeg_version = re.search(r'\$FfmpegVersion = "([^"]+)"', installer)[1]
+        ffmpeg_bundle = f'ffmpeg-{ffmpeg_version}-essentials_build'
+        ffmpeg_archive = self.out / f'{ffmpeg_bundle}.zip'
+        ffmpeg_exe = fixture.read_bytes() if os.name == 'nt' else (
+            '#!/bin/sh\nif [ "$1" = "-version" ]; then echo "ffmpeg version $TEST_FFMPEG_VERSION-fixture"; '
+            'else echo "$TEST_FFMPEG_ENCODERS"; fi\n').encode()
+        with zipfile.ZipFile(ffmpeg_archive, 'w') as output:
+            output.writestr(f'{ffmpeg_bundle}/bin/ffmpeg.exe', ffmpeg_exe)
+            output.writestr(f'{ffmpeg_bundle}/LICENSE', 'FFmpeg fixture license')
+        ffmpeg_digest = '0' * 64 if bad_ffmpeg_checksum else hashlib.sha256(ffmpeg_archive.read_bytes()).hexdigest()
 
         class QuietHandler(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *_):
@@ -284,10 +308,11 @@ class Fixture {
         base = f'http://127.0.0.1:{server.server_port}'
         # Exercise the real installer with local HTTP archives, pinning only the
         # fixture checksum. Restore persistent PATH even when installation fails.
-        installer = (SCRIPTS / 'install.ps1').read_text()
         installer = re.sub(r'\$ScrcpySha256 = "[0-9a-f]{64}"', f'$ScrcpySha256 = "{digest}"', installer)
+        installer = re.sub(r'\$FfmpegSha256 = "[0-9a-f]{64}"', f'$FfmpegSha256 = "{ffmpeg_digest}"', installer)
         installer = installer.replace('https://github.com/$Repository/releases/download/v$Version', base)
         installer = installer.replace('https://github.com/Genymobile/scrcpy/releases/download/v$ScrcpyVersion', base)
+        installer = installer.replace('https://github.com/GyanD/codexffmpeg/releases/download/$FfmpegVersion', base)
         installer_path = self.root / 'install.ps1'
         installer_path.write_text(installer)
         bootstrap = ''
@@ -305,10 +330,84 @@ Get-ChildItem $DestinationPath -Recurse -Filter *.exe | ForEach-Object { & /bin/
 try {{ & '{quoted}' }} finally {{ [Environment]::SetEnvironmentVariable("Path", $savedPath, "User") }}
 '''
         self.install_dir = self.root / 'installed windows'
+        if running_processes:
+            if os.name != 'nt':
+                # Compile a disposable native process: copying Apple's signed
+                # /bin/sleep can be rejected by macOS code-signing enforcement.
+                source = self.root / 'hold.c'
+                source.write_text('#include <unistd.h>\nint main(void) { sleep(120); return 0; }\n')
+                fixture = self.root / 'hold'
+                subprocess.run(['cc', str(source), '-o', str(fixture)], check=True, capture_output=True)
+            # Real executable paths, including a QC-bundled backend and a
+            # similarly named sibling install that must remain untouched.
+            self.old_processes = []
+            for relative in ['device-bot.exe', 'robot-report.exe', 'scrcpy.exe',
+                             'adb.exe', 'qc/device-bot.exe', 'qc/companion.exe', 'ffmpeg/bin/ffmpeg.exe']:
+                path = self.install_dir / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(fixture, path)
+                process = subprocess.Popen([str(path), '--hold' if os.name == 'nt' else '120'])
+                self.old_processes.append(process)
+                self.addCleanup(self.stop_fixture, process)
+                threading.Thread(target=process.wait, daemon=True).start()
+            outside = self.root / 'installed windows-other' / 'device-bot.exe'
+            outside.parent.mkdir()
+            shutil.copy(fixture, outside)
+            self.other_process = subprocess.Popen([str(outside), '--hold' if os.name == 'nt' else '120'])
+            self.addCleanup(self.stop_fixture, self.other_process)
         env = {key: value for key, value in os.environ.items() if not key.startswith('DEVICE_BOT_')}
         env.update(DEVICE_BOT_VERSION=self.version, DEVICE_BOT_INSTALL_DIR=str(self.install_dir),
-                   PROCESSOR_ARCHITECTURE='' if empty_architecture else 'AMD64', PROCESSOR_ARCHITEW6432='', TEST_SCRCPY_VERSION=version)
+                   PROCESSOR_ARCHITECTURE='' if empty_architecture else 'AMD64', PROCESSOR_ARCHITEW6432='', TEST_SCRCPY_VERSION=version,
+                   TEST_FFMPEG_VERSION=ffmpeg_version, TEST_FFMPEG_ENCODERS='V..... libx264' if ffmpeg_x264 else 'V..... mpeg4')
         return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-Command', bootstrap], env=env, capture_output=True, text=True)
+
+    @staticmethod
+    def stop_fixture(process):
+        if process.poll() is None:
+            process.terminate()
+        process.wait(timeout=10)
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_upgrade_stops_only_processes_from_the_replaced_installation(self):
+        result = self.install_windows(running_processes=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for process in self.old_processes:
+            process.wait(timeout=10)
+            self.assertIsNotNone(process.returncode)
+        self.assertIsNone(self.other_process.poll())
+        self.assertIn('Stopping installed Device Bot process', result.stdout)
+        self.assertTrue((self.install_dir / 'device-bot.exe').is_file())
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_failed_download_validation_keeps_old_processes_running(self):
+        result = self.install_windows(running_processes=True, bad_checksum=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('scrcpy checksum verification failed', result.stderr)
+        for process in self.old_processes:
+            self.assertIsNone(process.poll())
+        self.assertIsNone(self.other_process.poll())
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_installer_includes_portable_ffmpeg_and_license(self):
+        result = self.install_windows()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.install_dir / 'ffmpeg/bin/ffmpeg.exe').is_file())
+        self.assertTrue((self.install_dir / 'ffmpeg/LICENSE').is_file())
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_installer_rejects_bad_ffmpeg_before_stopping_old_server(self):
+        result = self.install_windows(bad_ffmpeg_checksum=True, running_processes=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FFmpeg checksum verification failed', result.stderr)
+        for process in self.old_processes:
+            self.assertIsNone(process.poll())
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_installer_requires_ffmpeg_with_libx264(self):
+        result = self.install_windows(ffmpeg_x264=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FFmpeg with libx264 is required', result.stderr)
+        self.assertFalse(self.install_dir.exists())
 
     @unittest.skipUnless(PWSH, 'PowerShell installer')
     def test_windows_installer_detects_cpu_without_architecture_environment(self):

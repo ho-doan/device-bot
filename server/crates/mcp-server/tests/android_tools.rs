@@ -127,6 +127,26 @@ impl Robot for RecordingRobot {
         Ok(())
     }
 
+    async fn stream_context(&self, _: &str) -> Result<Value, RobotError> {
+        Ok(json!({"appId":"com.example.foreground"}))
+    }
+
+    async fn terminate_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
+        self.actions
+            .lock()
+            .unwrap()
+            .push(format!("terminate:{device_id}:{app_id}"));
+        Ok(())
+    }
+
+    async fn terminate_all_apps(&self, device_id: &str) -> Result<Vec<String>, RobotError> {
+        self.actions
+            .lock()
+            .unwrap()
+            .push(format!("terminate-all:{device_id}"));
+        Ok(vec!["com.example.foreground".into()])
+    }
+
     async fn open_url(
         &self,
         device_id: &str,
@@ -300,6 +320,48 @@ async fn ready(server: &mut Server) {
 }
 
 #[tokio::test]
+async fn app_termination_routes_foreground_explicit_and_all_requests() {
+    let robot = Arc::new(RecordingRobot::default());
+    let mut server = Server::new(robot.clone());
+    ready(&mut server).await;
+    for (id, name, arguments) in [
+        (
+            2,
+            "mobile_terminate_app",
+            json!({"deviceId":"emulator-5554"}),
+        ),
+        (
+            3,
+            "mobile_terminate_app",
+            json!({"deviceId":"emulator-5554", "appId":"com.example.explicit"}),
+        ),
+        (
+            4,
+            "mobile_terminate_all_apps",
+            json!({"deviceId":"emulator-5554"}),
+        ),
+    ] {
+        let result = server
+            .handle(request(
+                id,
+                "tools/call",
+                json!({"name":name, "arguments":arguments}),
+            ))
+            .await
+            .unwrap();
+        assert_ne!(result["result"]["isError"], true, "{result}");
+    }
+    assert_eq!(
+        *robot.actions.lock().unwrap(),
+        [
+            "terminate:emulator-5554:com.example.foreground",
+            "terminate:emulator-5554:com.example.explicit",
+            "terminate-all:emulator-5554",
+        ]
+    );
+}
+
+#[tokio::test]
 async fn android_vertical_slice_exposes_and_routes_all_tools() {
     let robot = Arc::new(RecordingRobot::default());
     let mut server = Server::new(robot.clone());
@@ -326,6 +388,8 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
             "mobile_list_elements_on_screen",
             "mobile_execute_ui_actions",
             "mobile_get_ui_runner_status",
+            "mobile_terminate_app",
+            "mobile_terminate_all_apps",
             "mobile_launch_app",
             "mobile_install_app",
             "mobile_uninstall_app",

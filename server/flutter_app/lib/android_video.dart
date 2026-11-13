@@ -28,9 +28,17 @@ class AndroidVideoSession extends ChangeNotifier {
     String deviceId,
   ) async {
     final session = AndroidVideoSession._(client);
+    final firstFrame = Completer<void>();
     try {
       await session.renderer.initialize();
-      session.renderer.onResize = session.notifyListeners;
+      void frameChanged() {
+        if (session._closed) return;
+        if (session.hasVideo && !firstFrame.isCompleted) firstFrame.complete();
+        session.notifyListeners();
+      }
+
+      session.renderer.onResize = frameChanged;
+      session.renderer.onFirstFrameRendered = frameChanged;
       final peer = await createPeerConnection({'iceServers': <dynamic>[]});
       session._peer = peer;
       peer.onTrack = (event) {
@@ -46,6 +54,7 @@ class AndroidVideoSession extends ChangeNotifier {
             state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
           session.status =
               'Video connection stopped. Close and reopen Live to reconnect.';
+          if (!firstFrame.isCompleted) firstFrame.complete();
           session.notifyListeners();
         }
       };
@@ -80,6 +89,13 @@ class AndroidVideoSession extends ChangeNotifier {
       await peer.setRemoteDescription(
         RTCSessionDescription(answer['sdp'] as String, 'answer'),
       );
+      await firstFrame.future.timeout(
+        const Duration(seconds: 20),
+        onTimeout: () => throw TimeoutException(
+          'No video frame received. Check screen sharing and the connection, then retry Live.',
+        ),
+      );
+      if (session.status != null) throw StateError(session.status!);
       return session;
     } on Object {
       await session.close();
@@ -91,6 +107,7 @@ class AndroidVideoSession extends ChangeNotifier {
     if (_closed) return;
     _closed = true;
     renderer.onResize = null;
+    renderer.onFirstFrameRendered = null;
     try {
       await _peer?.close();
       await _peer?.dispose();

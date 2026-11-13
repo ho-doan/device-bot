@@ -71,6 +71,8 @@ impl ToolRegistry {
             recording::START_NAME => recording::start(&self.robot, &params.arguments).await,
             recording::STOP_NAME => recording::stop(&self.robot, &params.arguments).await,
             app::LAUNCH_NAME => app::launch(&self.robot, &params.arguments).await,
+            app::TERMINATE_NAME => app::terminate(&self.robot, &params.arguments).await,
+            app::TERMINATE_ALL_NAME => app::terminate_all(&self.robot, &params.arguments).await,
             app::INSTALL_NAME => app::install(&self.robot, &params.arguments).await,
             app::UNINSTALL_NAME => app::uninstall(&self.robot, &params.arguments).await,
             apps::LIST_INSTALLED_APPS_NAME => apps::list_apps(&self.robot, &params.arguments).await,

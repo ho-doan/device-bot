@@ -1,0 +1,22 @@
+PODS:
+  - device_bot_flutter (1.1.0):
+    - FlutterMacOS
+  - FlutterMacOS (1.0.0)
+
+DEPENDENCIES:
+  - device_bot_flutter (from `Flutter/ephemeral/.symlinks/plugins/device_bot_flutter/macos`)
+  - FlutterMacOS (from `Flutter/ephemeral`)
+
+EXTERNAL SOURCES:
+  device_bot_flutter:
+    :path: Flutter/ephemeral/.symlinks/plugins/device_bot_flutter/macos
+  FlutterMacOS:
+    :path: Flutter/ephemeral
+
+SPEC CHECKSUMS:
+  device_bot_flutter: 8d709a13da4b09cb8e5461acf913ebe930d79987
+  FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
+
+PODFILE CHECKSUM: 1e95c36afbfd1cb6423ceca4de7a8e1b256fb6ac
+
+COCOAPODS: 1.17.0

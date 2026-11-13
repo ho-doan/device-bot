@@ -107,6 +107,14 @@ class McpClient {
     await callTool('mobile_launch_app', {'deviceId': deviceId, 'appId': appId});
   }
 
+  Future<String> terminateApps(String deviceId, {bool all = false}) async {
+    final result = await callTool(
+      all ? 'mobile_terminate_all_apps' : 'mobile_terminate_app',
+      {'deviceId': deviceId},
+    );
+    return result.text ?? 'Apps stopped.';
+  }
+
   Future<List<RunningApp>> listRunningApps(String deviceId) async {
     final result = await callTool('mobile_list_running_apps', {
       'deviceId': deviceId,
@@ -415,17 +423,35 @@ class McpClient {
   /// merge nodes across trees: their order, identity and coordinates can differ.
   Future<({List<AdminElement> elements, String? warning})> inspectElements(
     String deviceId, {
+    String source = 'auto',
     int? processId,
     String? windowId,
   }) async {
     final elements = await listElements(
       deviceId,
+      source: source,
       processId: processId,
       windowId: windowId,
     );
+    if (source != 'auto') {
+      return (
+        elements: elements,
+        warning: source == 'flutter' && elements.isEmpty
+            ? 'Flutter tree is unavailable. The target app must start DeviceBotFlutter.'
+            : null,
+      );
+    }
+    final flutterHostOnly =
+        elements.any(
+          (element) =>
+              '${element.className} ${element.text} ${element.contentDescription}'
+                  .toLowerCase()
+                  .contains('flutterview'),
+        ) &&
+        elements.every((element) => !element.clickable);
     if (elements.isNotEmpty &&
         elements.first.source != 'flutter' &&
-        elements.any((element) => !element.hasLabel)) {
+        (flutterHostOnly || elements.any((element) => !element.hasLabel))) {
       try {
         final flutter = await listElements(
           deviceId,

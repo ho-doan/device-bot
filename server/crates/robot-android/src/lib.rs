@@ -374,6 +374,63 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
         Ok(())
     }
 
+    async fn terminate_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
+        ensure_device_id(device_id)?;
+        ensure_app_id(app_id)?;
+        self.run_adb(&[
+            "-s".into(),
+            device_id.into(),
+            "shell".into(),
+            "am".into(),
+            "force-stop".into(),
+            "--user".into(),
+            "current".into(),
+            app_id.into(),
+        ])
+        .await?;
+        Ok(())
+    }
+
+    async fn terminate_all_apps(&self, device_id: &str) -> Result<Vec<String>, RobotError> {
+        ensure_device_id(device_id)?;
+        let output = self
+            .run_adb(&[
+                "-s".into(),
+                device_id.into(),
+                "shell".into(),
+                "pm".into(),
+                "list".into(),
+                "packages".into(),
+                "-3".into(),
+                "--user".into(),
+                "current".into(),
+            ])
+            .await?;
+        let mut packages = Vec::new();
+        for line in String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+        {
+            let package = line.trim().strip_prefix("package:").ok_or_else(|| {
+                RobotError::CommandFailed("Unexpected Android package list; no apps stopped".into())
+            })?;
+            ensure_app_id(package)?;
+            packages.push(package.to_owned());
+        }
+        packages.sort();
+        packages.dedup();
+        for (count, package) in packages.iter().enumerate() {
+            self.terminate_app(device_id, package)
+                .await
+                .map_err(|error| {
+                    RobotError::CommandFailed(format!(
+                        "Stopped {count} apps; could not stop {package}: {error}"
+                    ))
+                })?;
+        }
+        Ok(packages)
+    }
+
     async fn open_url(
         &self,
         device_id: &str,
@@ -1277,6 +1334,94 @@ mod tests {
             robot.runner.calls.lock().unwrap()[0].1,
             vec!["devices", "-l"]
         );
+    }
+
+    #[tokio::test]
+    async fn terminates_apps_for_current_user_and_rejects_invalid_packages() {
+        let robot = AndroidRobot::with_runner(
+            "adb-test",
+            FakeRunner::new([
+                successful(""),
+                successful(
+                    "package:com.example.two\npackage:com.example.one\npackage:com.example.one\n",
+                ),
+                successful(""),
+                successful(""),
+            ]),
+        );
+        robot
+            .terminate_app("emulator-5554", "com.example.focused")
+            .await
+            .unwrap();
+        let apps = robot.terminate_all_apps("emulator-5554").await.unwrap();
+        assert_eq!(apps, ["com.example.one", "com.example.two"]);
+        let calls = robot.runner.calls.lock().unwrap().clone();
+        assert_eq!(
+            calls[0].1,
+            [
+                "-s",
+                "emulator-5554",
+                "shell",
+                "am",
+                "force-stop",
+                "--user",
+                "current",
+                "com.example.focused"
+            ]
+        );
+        assert_eq!(
+            calls[1].1,
+            [
+                "-s",
+                "emulator-5554",
+                "shell",
+                "pm",
+                "list",
+                "packages",
+                "-3",
+                "--user",
+                "current"
+            ]
+        );
+        assert_eq!(calls[2].1.last().unwrap(), "com.example.one");
+        drop(calls);
+        assert!(
+            robot
+                .terminate_app("emulator-5554", "com.app;reboot")
+                .await
+                .is_err()
+        );
+        assert_eq!(robot.runner.calls.lock().unwrap().len(), 4);
+        let malformed = AndroidRobot::with_runner(
+            "adb-test",
+            FakeRunner::new([successful("package:com.good.app\npackage:bad;reboot\n")]),
+        );
+        assert!(malformed.terminate_all_apps("emulator-5554").await.is_err());
+        assert_eq!(malformed.runner.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reports_partial_app_termination_failure() {
+        let robot = AndroidRobot::with_runner(
+            "adb-test",
+            FakeRunner::new([
+                successful("package:com.example.one\npackage:com.example.two\n"),
+                successful(""),
+                CommandOutput {
+                    success: false,
+                    exit_code: Some(1),
+                    stdout: vec![],
+                    stderr: b"denied".to_vec(),
+                },
+            ]),
+        );
+        let error = robot
+            .terminate_all_apps("emulator-5554")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Stopped 1 apps"), "{error}");
+        assert!(error.contains("com.example.two"), "{error}");
     }
 
     #[tokio::test]

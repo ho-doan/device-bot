@@ -1,12 +1,14 @@
 name: mobile_mcp_companion
 description: Local desktop MCP companion for Device Bot.
 publish_to: none
-version: 0.1.13+13
+version: 0.1.14+14
 
 environment:
   sdk: ^3.11.1
 
 dependencies:
+  device_bot_flutter:
+    path: ../../packages/device_bot_flutter
   file_selector: ^1.1.0
   flutter:
     sdk: flutter

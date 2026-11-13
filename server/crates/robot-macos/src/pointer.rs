@@ -2,7 +2,7 @@
 use robot_core::{Point, RobotError};
 use std::time::Duration;
 
-type Post = fn(u32, Point) -> Result<(), RobotError>;
+const MOVED: u32 = 5;
 const DOWN: u32 = 1;
 const UP: u32 = 2;
 const DRAGGED: u32 = 6;
@@ -40,6 +40,7 @@ async fn drag_with<F: FnMut(u32, Point) -> Result<(), RobotError>>(
         at: start,
         held: false,
     };
+    (pointer.post)(MOVED, start)?;
     (pointer.post)(DOWN, start)?;
     pointer.held = true;
     let steps = (duration_ms / 16).max(1);
@@ -58,13 +59,50 @@ async fn drag_with<F: FnMut(u32, Point) -> Result<(), RobotError>>(
     Ok(())
 }
 
-pub(super) async fn drag(start: Point, end: Point, duration_ms: u64) -> Result<(), RobotError> {
-    drag_with(start, end, duration_ms, post as Post).await
+#[cfg(target_os = "macos")]
+struct PointerSource(super::CfOwned);
+// CGEventSource has no UI-thread affinity. The drag owns it exclusively and
+// posts one event at a time; it is never shared between concurrent tasks.
+#[cfg(target_os = "macos")]
+unsafe impl Send for PointerSource {}
+#[cfg(target_os = "macos")]
+impl PointerSource {
+    fn post(&mut self, kind: u32, at: Point) -> Result<(), RobotError> {
+        post(kind, at, self.0.0)
+    }
 }
 
 #[cfg(target_os = "macos")]
-fn post(kind: u32, at: Point) -> Result<(), RobotError> {
-    use super::{AXIsProcessTrusted, CFTypeRef, CGPoint, CfOwned};
+pub(super) async fn drag(start: Point, end: Point, duration_ms: u64) -> Result<(), RobotError> {
+    use super::{AXIsProcessTrusted, CFTypeRef, CfOwned};
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventSourceCreate(state: i32) -> CFTypeRef;
+        fn CGEventSourceSetLocalEventsSuppressionInterval(source: CFTypeRef, seconds: f64);
+    }
+    if !unsafe { AXIsProcessTrusted() } {
+        return Err(RobotError::CommandFailed(
+            "Grant Accessibility permission to Device Bot before dragging".into(),
+        ));
+    }
+    // Keep synthetic button state separate from physical/remote desktop input.
+    let source = CfOwned(unsafe { CGEventSourceCreate(-1) }); // kCGEventSourceStatePrivate
+    if source.0.is_null() {
+        return Err(RobotError::CommandFailed(
+            "Could not create macOS pointer source".into(),
+        ));
+    }
+    unsafe { CGEventSourceSetLocalEventsSuppressionInterval(source.0, 0.0) };
+    let mut source = PointerSource(source);
+    drag_with(start, end, duration_ms, move |kind, at| {
+        source.post(kind, at)
+    })
+    .await
+}
+
+#[cfg(target_os = "macos")]
+fn post(kind: u32, at: Point, source: super::CFTypeRef) -> Result<(), RobotError> {
+    use super::{CFTypeRef, CGPoint, CfOwned};
     #[link(name = "CoreGraphics", kind = "framework")]
     unsafe extern "C" {
         fn CGEventCreateMouseEvent(
@@ -74,16 +112,11 @@ fn post(kind: u32, at: Point) -> Result<(), RobotError> {
             button: u32,
         ) -> CFTypeRef;
         fn CGEventSetFlags(event: CFTypeRef, flags: u64);
+        fn CGEventSetIntegerValueField(event: CFTypeRef, field: u32, value: i64);
         fn CGEventPost(tap: u32, event: CFTypeRef);
     }
-    if !unsafe { AXIsProcessTrusted() } {
-        return Err(RobotError::CommandFailed(
-            "Grant Accessibility permission to Device Bot before dragging".into(),
-        ));
-    }
-    let event = CfOwned(unsafe {
-        CGEventCreateMouseEvent(std::ptr::null(), kind, CGPoint { x: at.x, y: at.y }, 0)
-    });
+    let event =
+        CfOwned(unsafe { CGEventCreateMouseEvent(source, kind, CGPoint { x: at.x, y: at.y }, 0) });
     if event.0.is_null() {
         return Err(RobotError::CommandFailed(
             "Could not create macOS pointer event".into(),
@@ -91,13 +124,14 @@ fn post(kind: u32, at: Point) -> Result<(), RobotError> {
     }
     unsafe {
         CGEventSetFlags(event.0, 0);
-        CGEventPost(0, event.0);
+        CGEventSetIntegerValueField(event.0, 1, 1); // kCGMouseEventClickState
+        CGEventPost(1, event.0); // kCGSessionEventTap
     }
     Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
-fn post(_kind: u32, _at: Point) -> Result<(), RobotError> {
+pub(super) async fn drag(_start: Point, _end: Point, _duration_ms: u64) -> Result<(), RobotError> {
     Err(RobotError::Unsupported(
         "macOS pointer events require macOS".into(),
     ))
@@ -120,7 +154,8 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(events.first(), Some(&(DOWN, 10., 20.)));
+        assert_eq!(events.first(), Some(&(MOVED, 10., 20.)));
+        assert_eq!(events.get(1), Some(&(DOWN, 10., 20.)));
         assert_eq!(events.last(), Some(&(UP, 40., 80.)));
         assert!(events.iter().any(|event| event.0 == DRAGGED));
     }
@@ -143,7 +178,7 @@ mod tests {
             .await
             .is_err()
         );
-        assert_eq!(events, [(DOWN, 1., 2.), (UP, 1., 2.)]);
+        assert_eq!(events, [(MOVED, 1., 2.), (DOWN, 1., 2.), (UP, 1., 2.)]);
     }
     #[tokio::test]
     async fn invalid_input_never_presses_mouse() {

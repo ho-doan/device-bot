@@ -179,7 +179,42 @@ if ! "${SCRCPY_ROOT}/scrcpy" --version > "${TEMP_DIR}/scrcpy-version.txt" ||
 fi
 "${SCRCPY_ROOT}/adb" version > /dev/null
 
+find_ffmpeg() {
+  if [ -n "${DEVICE_BOT_FFMPEG_PATH:-}" ]; then
+    command -v "$DEVICE_BOT_FFMPEG_PATH"
+    return
+  fi
+  for encoder in /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg /usr/local/opt/ffmpeg-full/bin/ffmpeg \
+    /opt/homebrew/opt/ffmpeg/bin/ffmpeg /usr/local/opt/ffmpeg/bin/ffmpeg; do
+    if [ -x "$encoder" ]; then printf '%s\n' "$encoder"; return; fi
+  done
+  command -v ffmpeg
+}
+
+FFMPEG="$(find_ffmpeg || true)"
+if [ -z "$FFMPEG" ]; then
+  BREW="${HOMEBREW_EXECUTABLE:-$(command -v brew || true)}"
+  if [ -z "$BREW" ]; then
+    for brew_path in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+      if [ -x "$brew_path" ]; then BREW="$brew_path"; break; fi
+    done
+  fi
+  if [ -z "$BREW" ]; then
+    echo "Chrome Live requires FFmpeg. Install Homebrew, run 'brew install ffmpeg-full', then rerun this installer." >&2
+    exit 1
+  fi
+  "$BREW" install ffmpeg-full
+  FFMPEG="$(find_ffmpeg || true)"
+fi
+if [ -z "$FFMPEG" ] || ! "$FFMPEG" -version > /dev/null 2>&1 ||
+  ! "$FFMPEG" -hide_banner -encoders 2>/dev/null | awk '$2 == "libx264" { found=1 } END { exit !found }'; then
+  echo "Chrome Live requires working FFmpeg with libx264. Run 'brew install ffmpeg-full' or set DEVICE_BOT_FFMPEG_PATH, then rerun this installer." >&2
+  exit 1
+fi
+
 mkdir -p "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR/ffmpeg/bin"
+ln -sf "$FFMPEG" "$INSTALL_DIR/ffmpeg/bin/ffmpeg"
 # Keep client, matching server and portable resources together. The Android
 # driver discovers scrcpy-server in the same PATH directory as scrcpy.
 cp -R "${SCRCPY_ROOT}/." "$INSTALL_DIR/"

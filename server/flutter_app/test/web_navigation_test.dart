@@ -55,9 +55,16 @@ void main() {
         'http://localhost:3000',
       );
       await tester.pump();
-      expect(find.bySemanticsLabel('Website URL'), findsWidgets);
       expect(
-        tester.getSemantics(find.bySemanticsLabel('Website URL').first).value,
+        find.bySemanticsLabel(RegExp(r'^Website URL(?:\n|$)')),
+        findsWidgets,
+      );
+      expect(
+        tester
+            .getSemantics(
+              find.bySemanticsLabel(RegExp(r'^Website URL(?:\n|$)')).first,
+            )
+            .value,
         'http://localhost:3000',
       );
       await tester.enterText(find.byKey(const Key('web-url-input')), '');

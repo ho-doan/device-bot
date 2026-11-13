@@ -63,16 +63,9 @@ class _WebUrlDialogState extends State<WebUrlDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              ListenableBuilder(
-                listenable: _url,
-                builder: (context, child) => Semantics(
-                  textField: true,
-                  identifier: 'website-url',
-                  label: 'Website URL',
-                  value: _url.text,
-                  hint: 'http://localhost:3000',
-                  child: child,
-                ),
+              Semantics(
+                container: true,
+                identifier: 'website-url',
                 child: TextField(
                   key: const Key('web-url-input'),
                   controller: _url,

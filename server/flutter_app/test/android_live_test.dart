@@ -165,6 +165,105 @@ void main() {
     }
   });
 
+  testWidgets('failed video stops the spinner and retries only on request', (
+    tester,
+  ) async {
+    var attempts = 0;
+    final pendingRetry = Completer<Never>();
+    await tester.pumpWidget(
+      _app(
+        home: AndroidLiveDialog(
+          deviceName: 'Chrome',
+          platform: 'chrome',
+          connect: () => const Stream<AndroidLiveUpdate>.empty(),
+          onInput: (_) async {},
+          openVideo: () async {
+            attempts++;
+            if (attempts == 1) throw StateError('Sharing denied');
+            return pendingRetry.future;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.textContaining('Sharing denied'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('Retrying live video…'), findsNothing);
+    await tester.pump(const Duration(minutes: 1));
+    expect(attempts, 1);
+
+    await tester.tap(find.byKey(const Key('live-retry-video')));
+    await tester.pump();
+    expect(attempts, 2);
+    expect(find.textContaining('Sharing denied'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byKey(const Key('live-retry-video')), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    pendingRetry.completeError(StateError('Dialog closed'));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'Android app termination disables duplicate actions and reports results',
+    (tester) async {
+      final all = <bool>[];
+      final operation = Completer<String>();
+      await tester.pumpWidget(
+        _app(
+          home: AndroidLiveDialog(
+            deviceName: 'Android',
+            connect: () => const Stream<AndroidLiveUpdate>.empty(),
+            onInput: (_) async {},
+            onTerminateApps: (stopAll) {
+              all.add(stopAll);
+              return operation.future;
+            },
+          ),
+        ),
+      );
+      await tester.tap(find.byKey(const Key('live-kill-app')));
+      await tester.pump();
+      expect(all, [false]);
+      expect(find.text('Stopping apps…'), findsOneWidget);
+      expect(
+        tester
+            .widget<OutlinedButton>(find.byKey(const Key('live-kill-all-apps')))
+            .onPressed,
+        isNull,
+      );
+      operation.complete('Stopped com.example.app');
+      await tester.pump();
+      expect(find.text('Stopped com.example.app'), findsOneWidget);
+      expect(
+        tester
+            .widget<OutlinedButton>(find.byKey(const Key('live-kill-all-apps')))
+            .onPressed,
+        isNotNull,
+      );
+      await tester.tap(find.byKey(const Key('live-kill-all-apps')));
+      await tester.pump();
+      expect(all, [false, true]);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets('Chrome does not expose Android app termination', (tester) async {
+    await tester.pumpWidget(
+      _app(
+        home: AndroidLiveDialog(
+          deviceName: 'Chrome',
+          platform: 'chrome',
+          connect: () => const Stream<AndroidLiveUpdate>.empty(),
+          onInput: (_) async {},
+          onTerminateApps: (_) async => 'unused',
+        ),
+      ),
+    );
+    expect(find.byKey(const Key('live-kill-app')), findsNothing);
+    expect(find.byKey(const Key('live-kill-all-apps')), findsNothing);
+  });
+
   testWidgets('live control is offered for Android and Chrome devices', (
     tester,
   ) async {

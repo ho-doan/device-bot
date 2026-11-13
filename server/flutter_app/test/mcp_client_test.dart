@@ -6,6 +6,36 @@ import 'package:mobile_mcp_companion/mcp_client.dart';
 import 'package:mobile_mcp_companion/models.dart';
 
 void main() {
+  test(
+    'inspector tries Flutter for labeled FLUTTERVIEW and honors explicit source',
+    () async {
+      final client = _TreeClient();
+      addTearDown(client.dispose);
+      final auto = await client.inspectElements(
+        'windows-host',
+        processId: 42,
+        windowId: '7',
+      );
+      expect(auto.elements.single.source, 'flutter');
+      expect(client.requests.map((request) => request.$1), ['auto', 'flutter']);
+      expect(
+        client.requests.every(
+          (request) => request.$2 == 42 && request.$3 == '7',
+        ),
+        isTrue,
+      );
+      client.requests.clear();
+      final native = await client.inspectElements(
+        'windows-host',
+        source: 'native',
+      );
+      expect(native.elements.single.text, 'FLUTTERVIEW');
+      expect(client.requests.map((request) => request.$1), ['native']);
+      client.requests.clear();
+      await client.inspectElements('windows-host', source: 'flutter');
+      expect(client.requests.map((request) => request.$1), ['flutter']);
+    },
+  );
   lockRecoveryTests();
   test(
     'uses one MCP session for discovery, screenshot, and elements',
@@ -398,6 +428,33 @@ void main() {
     expect(arguments?['yaml'], contains('name: qc'));
     expect(report['status'], 'PASS');
   });
+}
+
+class _TreeClient extends McpClient {
+  _TreeClient() : super(baseUrl: 'http://localhost', bearerToken: '');
+  final requests = <(String, int?, String?)>[];
+
+  @override
+  Future<List<AdminElement>> listElements(
+    String deviceId, {
+    String? filter,
+    int? maxResults,
+    String source = 'auto',
+    int? processId,
+    String? windowId,
+  }) async {
+    requests.add((source, processId, windowId));
+    return [
+      AdminElement.fromJson({
+        'className': source == 'flutter' ? 'TextField' : 'unknown',
+        'source': source == 'flutter' ? 'flutter' : 'native',
+        'text': source == 'flutter' ? 'MCP server URL' : 'FLUTTERVIEW',
+        'bounds': {'left': 1, 'top': 2, 'right': 30, 'bottom': 40},
+        'clickable': source == 'flutter',
+        'enabled': true,
+      }),
+    ];
+  }
 }
 
 void lockRecoveryTests() {

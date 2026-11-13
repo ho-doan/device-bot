@@ -443,6 +443,16 @@ pub trait Robot: Send + Sync {
     }
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError>;
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError>;
+    async fn terminate_app(&self, _device_id: &str, _app_id: &str) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported(
+            "app termination is not supported by this driver".into(),
+        ))
+    }
+    async fn terminate_all_apps(&self, _device_id: &str) -> Result<Vec<String>, RobotError> {
+        Err(RobotError::Unsupported(
+            "app termination is not supported by this driver".into(),
+        ))
+    }
     async fn open_url(
         &self,
         device_id: &str,
@@ -828,6 +838,12 @@ impl Robot for RobotRegistry {
     }
     async fn launch_app(&self, id: &str, app: &str) -> Result<(), RobotError> {
         self.driver_for(id).await?.launch_app(id, app).await
+    }
+    async fn terminate_app(&self, id: &str, app: &str) -> Result<(), RobotError> {
+        self.driver_for(id).await?.terminate_app(id, app).await
+    }
+    async fn terminate_all_apps(&self, id: &str) -> Result<Vec<String>, RobotError> {
+        self.driver_for(id).await?.terminate_all_apps(id).await
     }
     async fn open_url(&self, id: &str, url: &str, app: Option<&str>) -> Result<(), RobotError> {
         self.driver_for(id).await?.open_url(id, url, app).await

@@ -1,0 +1,49 @@
+name: Warm release Rust cache
+
+# GitHub isolates tag caches: a new release can restore caches from master,
+# but cannot restore a previous tag's cache. Refresh dependencies here so
+# subsequent tags reuse the same target/toolchain-specific release artifacts.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'server/**/Cargo.toml'
+      - 'server/Cargo.lock'
+      - '**/.cargo/config.toml'
+      - '**/rust-toolchain*'
+      - '.github/workflows/rust-cache.yml'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-cache-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    name: Cache ${{ matrix.target }}
+    if: github.ref == 'refs/heads/master'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server -> target
+          shared-key: release-${{ matrix.target }}
+      - run: cargo build --manifest-path server/Cargo.toml --release --locked -p device-bot -p robot-flow -p robot-report --target ${{ matrix.target }}

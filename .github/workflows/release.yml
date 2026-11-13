@@ -8,8 +8,31 @@ permissions:
   contents: write
 
 jobs:
+  qc-web:
+    name: Build shared QC web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.8'
+          cache: true
+          pub-cache: true
+      - name: Build QC web app once for every release archive
+        working-directory: server/flutter_app
+        run: flutter build web --release --base-href /qc/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qc-web
+          path: server/flutter_app/build/web
+          if-no-files-found: error
+          retention-days: 1
+
   build:
     name: Build ${{ matrix.target }}
+    needs: qc-web
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -29,6 +52,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server -> target
+          shared-key: release-${{ matrix.target }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -46,6 +73,7 @@ jobs:
         with:
           flutter-version: '3.47.8'
           cache: true
+          pub-cache: true
       - name: Build QC macOS app
         if: runner.os == 'macOS'
         working-directory: server/flutter_app
@@ -58,9 +86,11 @@ jobs:
         run: |
           flutter config --enable-windows-desktop
           flutter build windows --release
-      - name: Build QC web app
-        working-directory: server/flutter_app
-        run: flutter build web --release --base-href /qc/
+      - name: Reuse shared QC web build
+        uses: actions/download-artifact@v4
+        with:
+          name: qc-web
+          path: server/flutter_app/build/web
       - name: Package macOS binary
         if: runner.os != 'Windows'
         shell: bash
@@ -74,6 +104,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: device-bot-${{ matrix.target }}
+          if-no-files-found: error
+          compression-level: 0
           path: |
             dist/device-bot-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
             dist/device-bot-${{ github.ref_name }}-${{ matrix.target }}.zip
@@ -85,6 +117,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: device-bot-*
           path: dist
           merge-multiple: true
       - name: Generate release checksums

@@ -335,8 +335,12 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         return;
       }
       _video = video;
-      if (_recording.context.isEmpty) {
-        _recording.context = video.recordingContext;
+      // A retained recording may have first connected on about:blank. Refresh
+      // it after navigation, while preserving the entry URL of existing actions.
+      if (_recording.context.isEmpty ||
+          _recording.count == 0 ||
+          !_recording.canExport) {
+        _recording.context = {..._recording.context, ...video.recordingContext};
       }
       _reconnectAttempts = 0;
       video.addListener(_videoChanged);

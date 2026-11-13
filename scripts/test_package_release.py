@@ -47,7 +47,7 @@ class NativeRelease(unittest.TestCase):
                 binary.write_text(f'''#!/bin/sh
 case "$1" in
 --version) echo {version} ;;
---check-install) test -f "$(dirname "$0")/device-bot-assets/{version}/manifest.json" ;;
+--check-install) test -f "$(dirname "$0")/device-bot-assets/{version}/manifest.json" && test "$TEST_FAIL_INSTALLED_CHECK" != 1 ;;
 *) exit 1 ;;
 esac
 ''')
@@ -245,7 +245,8 @@ cp "$TEST_DOWNLOAD_ROOT/${url##*/}" "$output"
         self.assertTrue((self.install_dir / 'scrcpy-server').is_file())
 
     def install_windows(self, missing=(), bad_checksum=False, version='5.0.1', empty_architecture=False,
-                        running_processes=False, bad_ffmpeg_checksum=False, ffmpeg_x264=True):
+                        running_processes=False, bad_ffmpeg_checksum=False, ffmpeg_x264=True,
+                        upgrade_caller=False, fail_installed_check=False):
         if os.name == 'nt':
             # Build one tiny native fixture for all CLI names on Windows CI.
             source = self.root / 'Fixture.cs'
@@ -259,6 +260,7 @@ class Fixture {
         else if (name == "scrcpy.exe") Console.WriteLine("scrcpy " + Environment.GetEnvironmentVariable("TEST_SCRCPY_VERSION"));
         else if (name == "adb.exe") Console.WriteLine("Android Debug Bridge version 1.0.41");
         else if (args.Length > 0 && args[0] == "--version") Console.WriteLine("0.1.4");
+        else if (args.Length > 0 && args[0] == "--check-install" && Environment.GetEnvironmentVariable("TEST_FAIL_INSTALLED_CHECK") == "1") return 4;
         else if (args.Length == 0 || args[0] != "--check-install") return 1;
         return 0;
     }
@@ -359,6 +361,12 @@ try {{ & '{quoted}' }} finally {{ [Environment]::SetEnvironmentVariable("Path", 
         env.update(DEVICE_BOT_VERSION=self.version, DEVICE_BOT_INSTALL_DIR=str(self.install_dir),
                    PROCESSOR_ARCHITECTURE='' if empty_architecture else 'AMD64', PROCESSOR_ARCHITEW6432='', TEST_SCRCPY_VERSION=version,
                    TEST_FFMPEG_VERSION=ffmpeg_version, TEST_FFMPEG_ENCODERS='V..... libx264' if ffmpeg_x264 else 'V..... mpeg4')
+        if upgrade_caller:
+            caller = self.other_process if upgrade_caller == 'unrelated' else self.old_processes[0]
+            env['DEVICE_BOT_UPGRADE_PID'] = str(caller.pid)
+            env['DEVICE_BOT_UPGRADE_LOG'] = str(self.root / 'upgrade.log')
+        if fail_installed_check:
+            env['TEST_FAIL_INSTALLED_CHECK'] = '1'
         return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-Command', bootstrap], env=env, capture_output=True, text=True)
 
     @staticmethod
@@ -377,6 +385,39 @@ try {{ & '{quoted}' }} finally {{ [Environment]::SetEnvironmentVariable("Path", 
         self.assertIsNone(self.other_process.poll())
         self.assertIn('Stopping installed Device Bot process', result.stdout)
         self.assertTrue((self.install_dir / 'device-bot.exe').is_file())
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_foreground_upgrade_preserves_waiting_caller_and_reports_result(self):
+        result = self.install_windows(running_processes=True, upgrade_caller=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIsNone(self.old_processes[0].poll(), 'installer killed the CLI waiting for its result')
+        for process in self.old_processes[1:]:
+            process.wait(timeout=10)
+        self.assertIsNone(self.other_process.poll())
+        self.assertTrue((self.install_dir / 'device-bot.exe').is_file())
+        self.assertTrue((self.install_dir / 'device-bot.exe.previous').is_file())
+        self.assertIn('Installed device-bot.exe', result.stdout)
+        self.assertIn('Installed device-bot.exe', (self.root / 'upgrade.log').read_text(encoding='utf-8-sig'))
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_foreground_upgrade_restores_executable_when_install_verification_fails(self):
+        result = self.install_windows(running_processes=True, upgrade_caller=True, fail_installed_check=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Installed Device Bot verification failed', result.stderr)
+        self.assertIn('Restored the previous Device Bot executable', result.stdout)
+        self.assertIn('Installed Device Bot verification failed', (self.root / 'upgrade.log').read_text(encoding='utf-8-sig'))
+        self.assertIsNone(self.old_processes[0].poll())
+        self.assertTrue((self.install_dir / 'device-bot.exe').is_file())
+        self.assertFalse((self.install_dir / 'device-bot.exe.previous').exists())
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_foreground_upgrade_rejects_an_unrelated_caller(self):
+        result = self.install_windows(running_processes=True, upgrade_caller='unrelated')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('caller does not belong to this Device Bot installation', result.stderr)
+        for process in self.old_processes:
+            self.assertIsNone(process.poll())
+        self.assertIsNone(self.other_process.poll())
 
     @unittest.skipUnless(PWSH, 'PowerShell installer')
     def test_windows_failed_download_validation_keeps_old_processes_running(self):

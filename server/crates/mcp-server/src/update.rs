@@ -302,10 +302,16 @@ fn run_installer_script(script: &str, version: &str, install_dir: &Path) -> io::
         "device-bot-upgrade-{}-{stamp}.ps1",
         std::process::id()
     ));
+    let log_path = script_path.with_extension("log");
     fs::write(&script_path, script)
         .map_err(|error| io::Error::other(format!("stage PowerShell installer: {error}")))?;
 
-    let child = Command::new("powershell.exe")
+    eprintln!(
+        "Installing device-bot {version}. Progress and errors follow; log: {}",
+        log_path.display()
+    );
+    let mut command = Command::new("powershell.exe");
+    command
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -316,14 +322,49 @@ fn run_installer_script(script: &str, version: &str, install_dir: &Path) -> io::
         .arg(&script_path)
         .env("DEVICE_BOT_VERSION", version)
         .env("DEVICE_BOT_INSTALL_DIR", install_dir)
-        .env("DEVICE_BOT_WAIT_PID", std::process::id().to_string())
+        .env_remove("DEVICE_BOT_WAIT_PID")
+        .env("DEVICE_BOT_UPGRADE_PID", std::process::id().to_string())
+        .env("DEVICE_BOT_UPGRADE_LOG", &log_path)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| io::Error::other(format!("start deferred Windows installer: {error}")))?;
-    drop(child);
-    eprintln!("Windows installer scheduled; the server will exit before replacing its executable.");
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    let result = wait_for_windows_installer(command, &log_path);
+    let _ = fs::remove_file(&script_path);
+    result?;
+
+    let installed = Command::new(install_dir.join("device-bot.exe"))
+        .arg("--version")
+        .output()
+        .map_err(|error| {
+            io::Error::other(format!(
+                "verify upgraded Device Bot: {error}; log: {}",
+                log_path.display()
+            ))
+        })?;
+    if !installed.status.success() || String::from_utf8_lossy(&installed.stdout).trim() != version {
+        return Err(io::Error::other(format!(
+            "Windows installer finished but installed version verification failed; log: {}",
+            log_path.display()
+        )));
+    }
+    eprintln!("Upgraded device-bot to {version}.");
+    Ok(())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn wait_for_windows_installer(mut command: Command, log_path: &Path) -> io::Result<()> {
+    let status = command.status().map_err(|error| {
+        io::Error::other(format!(
+            "start Windows installer: {error}; log: {}",
+            log_path.display()
+        ))
+    })?;
+    if !status.success() {
+        return Err(io::Error::other(format!(
+            "Windows upgrade failed ({status}); log: {}",
+            log_path.display()
+        )));
+    }
     Ok(())
 }
 
@@ -385,6 +426,30 @@ fn checksum_manifest_has_archive(manifest: &str, archive: &str) -> bool {
 mod tests {
     use super::{archive_name, checksum_manifest_has_archive, compare_versions, normalize_version};
     use std::cmp::Ordering;
+
+    #[cfg(unix)]
+    #[test]
+    fn windows_installer_failure_is_returned_to_the_waiting_cli() {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "sleep 0.05; exit 23"]);
+        let error = super::wait_for_windows_installer(command, std::path::Path::new("upgrade.log"))
+            .unwrap_err();
+        assert!(error.to_string().contains("23"));
+        assert!(error.to_string().contains("upgrade.log"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn windows_installer_success_waits_for_completion() {
+        let path =
+            std::env::temp_dir().join(format!("device-bot-upgrade-test-{}", uuid::Uuid::new_v4()));
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "sleep 0.05; printf complete > \"$1\"", "installer"]);
+        command.arg(&path);
+        super::wait_for_windows_installer(command, std::path::Path::new("upgrade.log")).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "complete");
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn normalizes_release_versions() {

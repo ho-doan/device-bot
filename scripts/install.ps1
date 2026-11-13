@@ -23,6 +23,12 @@ $FfmpegSha256 = "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047b
 $RetryAttempts = 4
 $WaitPid = $env:DEVICE_BOT_WAIT_PID
 $InstallerScriptPath = $MyInvocation.MyCommand.Path
+$UpgradeBackup = $null
+$UpgradeTranscript = $false
+if ($env:DEVICE_BOT_UPGRADE_LOG) {
+    Start-Transcript -Path $env:DEVICE_BOT_UPGRADE_LOG -Force | Out-Null
+    $UpgradeTranscript = $true
+}
 
 if ($WaitPid) {
     Write-Host "Waiting for the running Device Bot process ($WaitPid) to exit before replacing its executable..."
@@ -119,17 +125,38 @@ function Get-ExpectedChecksum([string] $Manifest, [string] $Archive) {
     return ([regex]::Match($line, "^[0-9a-fA-F]{64}")).Value.ToLowerInvariant()
 }
 
-function Stop-InstalledProcesses([string] $Directory) {
+function Get-NormalizedPath([string] $Path) {
+    $full = [System.IO.Path]::GetFullPath($Path)
+    if ($full.StartsWith('\\?\UNC\', [System.StringComparison]::OrdinalIgnoreCase)) { return '\\' + $full.Substring(8) }
+    if ($full.StartsWith('\\?\', [System.StringComparison]::OrdinalIgnoreCase)) { return $full.Substring(4) }
+    return $full
+}
+
+function Get-UpgradeCaller([string] $Directory) {
+    if (-not $env:DEVICE_BOT_UPGRADE_PID) { return $null }
+    $callerId = 0
+    if (-not [int]::TryParse($env:DEVICE_BOT_UPGRADE_PID, [ref]$callerId) -or $callerId -le 0 -or $callerId -eq $PID) {
+        throw "Invalid Windows upgrade caller PID."
+    }
+    $caller = Get-Process -Id $callerId -ErrorAction Stop
+    $expected = Get-NormalizedPath (Join-Path $Directory 'device-bot.exe')
+    if (-not $caller.Path -or (Get-NormalizedPath $caller.Path) -ne $expected) {
+        throw "Windows upgrade caller does not belong to this Device Bot installation."
+    }
+    return $caller
+}
+
+function Stop-InstalledProcesses([string] $Directory, [int] $KeepProcessId = 0) {
     # Match executable paths, not process names or port owners: another
     # installation (or an unrelated service on 3337) must keep running.
-    $root = [System.IO.Path]::GetFullPath($Directory)
+    $root = Get-NormalizedPath $Directory
     $tools = @("device-bot.exe", "robot-flow.exe", "robot-report.exe", "scrcpy.exe", "adb.exe") |
         ForEach-Object { [System.IO.Path]::GetFullPath((Join-Path $root $_)) }
     $qcRoot = [System.IO.Path]::GetFullPath((Join-Path $root "qc")) + [System.IO.Path]::DirectorySeparatorChar
     $tools += [System.IO.Path]::GetFullPath((Join-Path $root "ffmpeg/bin/ffmpeg.exe"))
     $processes = @(Get-Process | Where-Object {
-        $executable = $_.Path
-        $_.Id -ne $PID -and $executable -and (
+        $executable = if ($_.Path) { Get-NormalizedPath $_.Path } else { $null }
+        $_.Id -ne $PID -and $_.Id -ne $KeepProcessId -and $executable -and (
             $tools -contains $executable -or
             $executable.StartsWith($qcRoot, [System.StringComparison]::OrdinalIgnoreCase)
         )
@@ -150,6 +177,7 @@ function Stop-InstalledProcesses([string] $Directory) {
     }
 }
 
+$InstallDir = Get-NormalizedPath $InstallDir
 $Version = Get-ReleaseVersion
 if ($Version -notmatch '^[A-Za-z0-9._-]+$') { throw "Invalid release version: $Version" }
 $Target = Get-WindowsTarget
@@ -222,7 +250,17 @@ try {
     }
 
     # Finish download and validation before interrupting the working version.
-    Stop-InstalledProcesses $InstallDir
+    $upgradeCaller = Get-UpgradeCaller $InstallDir
+    $keepProcessId = if ($null -ne $upgradeCaller) { $upgradeCaller.Id } else { 0 }
+    Stop-InstalledProcesses $InstallDir $keepProcessId
+    if ($null -ne $upgradeCaller) {
+        # Windows permits renaming a running image, but cannot overwrite it.
+        # Keep the calling CLI alive so it can wait and report the real result.
+        $previous = Join-Path $InstallDir 'device-bot.exe.previous'
+        if (Test-Path $previous) { Remove-Item -Force $previous }
+        Move-Item -LiteralPath (Join-Path $InstallDir $BinaryName) -Destination $previous
+        $UpgradeBackup = $previous
+    }
     foreach ($name in ($Binaries + @("scrcpy.exe", "adb.exe"))) {
         $installed = Join-Path $InstallDir $name
         if (Test-Path -Path $installed -PathType Leaf) {
@@ -284,7 +322,21 @@ try {
     Write-Host "Installed $($Binaries -join ", ") $Version to $InstallDir"
     Write-Host "Installed Android Live dependencies: scrcpy $ScrcpyVersion, scrcpy-server and ADB"
     Write-Host "Installed Chrome Live dependency: FFmpeg $FfmpegVersion with libx264"
+} catch {
+    Write-Host "Windows installation failed: $($_.Exception.Message)"
+    if ($UpgradeBackup -and (Test-Path -LiteralPath $UpgradeBackup)) {
+        try {
+            $installedBinary = Join-Path $InstallDir $BinaryName
+            if (Test-Path -LiteralPath $installedBinary) { Remove-Item -LiteralPath $installedBinary -Force }
+            Move-Item -LiteralPath $UpgradeBackup -Destination $installedBinary
+            Write-Host 'Restored the previous Device Bot executable.'
+        } catch {
+            Write-Warning "Could not restore the previous executable; backup remains at $UpgradeBackup."
+        }
+    }
+    throw
 } finally {
+    if ($UpgradeTranscript) { Stop-Transcript | Out-Null }
     if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
     if ($InstallerScriptPath -and (Test-Path $InstallerScriptPath)) {
         Remove-Item -Force $InstallerScriptPath -ErrorAction SilentlyContinue

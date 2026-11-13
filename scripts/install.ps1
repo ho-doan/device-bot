@@ -92,6 +92,11 @@ function Get-ReleaseVersion {
 function Get-WindowsTarget {
     $architecture = $env:PROCESSOR_ARCHITEW6432
     if (-not $architecture) { $architecture = $env:PROCESSOR_ARCHITECTURE }
+    if ([string]::IsNullOrWhiteSpace([string]$architecture)) {
+        # Environment variables can be absent in subprocesses/CI. The runtime
+        # still knows the native OS architecture, including x64 emulation.
+        $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    }
     switch (([string]$architecture).ToUpperInvariant()) {
         "AMD64" { return "x86_64-pc-windows-msvc" }
         "X64" { return "x86_64-pc-windows-msvc" }

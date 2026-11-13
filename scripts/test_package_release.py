@@ -234,7 +234,7 @@ cp "$TEST_DOWNLOAD_ROOT/${url##*/}" "$output"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.install_dir / 'scrcpy-server').is_file())
 
-    def install_windows(self, missing=(), bad_checksum=False, version='5.0.1'):
+    def install_windows(self, missing=(), bad_checksum=False, version='5.0.1', empty_architecture=False):
         if os.name == 'nt':
             # Build one tiny native fixture for all CLI names on Windows CI.
             source = self.root / 'Fixture.cs'
@@ -307,8 +307,14 @@ try {{ & '{quoted}' }} finally {{ [Environment]::SetEnvironmentVariable("Path", 
         self.install_dir = self.root / 'installed windows'
         env = {key: value for key, value in os.environ.items() if not key.startswith('DEVICE_BOT_')}
         env.update(DEVICE_BOT_VERSION=self.version, DEVICE_BOT_INSTALL_DIR=str(self.install_dir),
-                   PROCESSOR_ARCHITECTURE='AMD64', PROCESSOR_ARCHITEW6432='', TEST_SCRCPY_VERSION=version)
+                   PROCESSOR_ARCHITECTURE='' if empty_architecture else 'AMD64', PROCESSOR_ARCHITEW6432='', TEST_SCRCPY_VERSION=version)
         return subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-Command', bootstrap], env=env, capture_output=True, text=True)
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_installer_detects_cpu_without_architecture_environment(self):
+        result = self.install_windows(empty_architecture=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.install_dir / 'device-bot.exe').is_file())
 
     @unittest.skipUnless(PWSH, 'PowerShell installer')
     def test_windows_installer_includes_android_live_dependencies(self):

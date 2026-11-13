@@ -35,6 +35,132 @@ class _TestVideo extends Fake implements AndroidVideoSession {
 }
 
 void main() {
+  for (final platform in ['chrome', 'windows', 'android', 'macos', 'ios']) {
+    testWidgets('$platform reconnects automatically and cancels on close', (
+      tester,
+    ) async {
+      final first = _TestVideo({'originX': 0, 'originY': 0});
+      final second = _TestVideo({'originX': 0, 'originY': 0});
+      var opens = 0;
+      var inspections = 0;
+      final updates = StreamController<AndroidLiveUpdate>.broadcast();
+      addTearDown(updates.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AndroidLiveDialog(
+            deviceName: 'Test',
+            platform: platform,
+            connect: () {
+              inspections++;
+              return updates.stream;
+            },
+            openVideo: () async => opens++ == 0 ? first : second,
+            onInput: (_) async {},
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(opens, 1);
+      expect(inspections, 1);
+      first.disconnect();
+      await tester.pump();
+      expect(find.textContaining('Reconnecting in 1 s'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      });
+      await tester.pump();
+      expect(opens, 2);
+      expect(inspections, 2);
+      second.disconnect();
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 10));
+      expect(opens, 2);
+    });
+  }
+  testWidgets(
+    'reconnect stops after three failures and manual retry resets it',
+    (tester) async {
+      var opens = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AndroidLiveDialog(
+            deviceName: 'Test',
+            platform: 'chrome',
+            connect: () => const Stream.empty(),
+            openVideo: () async {
+              opens++;
+              throw StateError('transport failed');
+            },
+            onInput: (_) async {},
+          ),
+        ),
+      );
+      await tester.pump();
+      for (final seconds in [1, 2, 4]) {
+        await tester.pump(Duration(seconds: seconds));
+        await tester.pump();
+      }
+      expect(opens, 4);
+      await tester.pump(const Duration(seconds: 30));
+      expect(opens, 4);
+      await tester.tap(find.byKey(const Key('live-retry-video')));
+      await tester.pump();
+      expect(opens, 5);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+  testWidgets('permission denial does not cause repeated capture prompts', (
+    tester,
+  ) async {
+    var opens = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AndroidLiveDialog(
+          deviceName: 'Test',
+          platform: 'chrome',
+          connect: () => const Stream.empty(),
+          openVideo: () async {
+            opens++;
+            throw StateError('NotAllowedError: permission denied');
+          },
+          onInput: (_) async {},
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 30));
+    expect(opens, 1);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('iOS sends input in logical points and hides unsupported clear', (
+    tester,
+  ) async {
+    final video = _TestVideo({'logicalWidth': 200, 'logicalHeight': 200});
+    final inputs = <Map<String, dynamic>>[];
+    final updates = StreamController<AndroidLiveUpdate>.broadcast();
+    addTearDown(updates.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AndroidLiveDialog(
+          deviceName: 'iPhone',
+          platform: 'ios',
+          connect: () => updates.stream,
+          openVideo: () async => video,
+          onInput: (input) async => inputs.add(input),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byKey(const Key('android-live-clear-text')), findsNothing);
+    expect(find.byKey(const Key('live-export-yaml')), findsNothing);
+    await tester.tap(find.text('Down 50 px'));
+    await tester.pump();
+    expect(inputs.single['x'], 100);
+    expect(inputs.single['y'], 100);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('queued Windows input cannot cross a video reconnect', (
     tester,
   ) async {

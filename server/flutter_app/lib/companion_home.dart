@@ -341,16 +341,17 @@ class _CompanionHomeState extends State<CompanionHome> {
     final client = _client();
     var targetId = device.id;
     var targetName = device.name;
-    if (device.platform == 'windows') {
+    if (['windows', 'macos'].contains(device.platform)) {
       final window = await showDialog<AppWindow>(
         context: context,
         builder: (_) => WindowsLiveTargetDialog(
+          title: device.platform == 'macos' ? 'macOS Live' : 'Windows Live',
           runningApps: client.listRunningApps(device.id),
           windowsFor: (pid) => client.listWindows(device.id, processId: pid),
         ),
       );
       if (!mounted || window == null) return;
-      targetId = windowsLiveDeviceId(window);
+      targetId = '${device.platform}:${window.processId}:${window.windowId}';
       targetName = '${device.name} · ${window.label}';
     }
     if (!mounted) return;
@@ -366,12 +367,14 @@ class _CompanionHomeState extends State<CompanionHome> {
             directory: LiveRecording.defaultDirectory(),
           ),
         ),
-        connect: () => ['chrome', 'windows'].contains(device.platform)
+        connect: () =>
+            ['chrome', 'windows', 'macos', 'ios'].contains(device.platform)
             ? client.watchWebLive(targetId)
             : client.watchAndroidLive(device.id),
         platform: device.platform,
         openVideo: () => AndroidVideoSession.connect(client, targetId),
-        onInput: (input) => ['chrome', 'windows'].contains(device.platform)
+        onInput: (input) =>
+            ['chrome', 'windows', 'macos', 'ios'].contains(device.platform)
             ? client.sendWebInput(targetId, input)
             : client.sendAndroidInput(device.id, input),
         onRunFlow: client.runFlow,

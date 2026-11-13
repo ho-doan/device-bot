@@ -8,6 +8,7 @@ import 'package:mobile_mcp_companion/mcp_client.dart';
 class _Client extends McpClient {
   _Client() : super(baseUrl: 'http://localhost', bearerToken: '');
   final stopped = <String>[];
+  Map<String, dynamic> context = {};
 
   @override
   Future<Map<String, dynamic>> startAndroidStream(
@@ -18,6 +19,7 @@ class _Client extends McpClient {
     'sdp': 'answer',
     'width': 800,
     'height': 600,
+    'context': context,
   };
 
   @override
@@ -142,6 +144,21 @@ void main() {
       expect(client.stopped, ['live-1']);
     },
   );
+
+  test('native iOS video uses logical screen points for control', () async {
+    client.context = {'logicalWidth': 393, 'logicalHeight': 852};
+    final connected = AndroidVideoSession.connect(client, 'iphone-udid');
+    await negotiated.future;
+    await event(texture, {
+      'event': 'didTextureChangeVideoSize',
+      'width': 786,
+      'height': 1704,
+    });
+    final session = await connected;
+    expect(session.deviceSize.width, 393);
+    expect(session.deviceSize.height, 852);
+    await session.close();
+  });
 
   test('peer failure before the first frame fails immediately', () async {
     final connected = AndroidVideoSession.connect(client, 'chrome:tab');

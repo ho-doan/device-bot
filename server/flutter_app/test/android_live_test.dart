@@ -165,44 +165,45 @@ void main() {
     }
   });
 
-  testWidgets('failed video stops the spinner and retries only on request', (
-    tester,
-  ) async {
-    var attempts = 0;
-    final pendingRetry = Completer<Never>();
-    await tester.pumpWidget(
-      _app(
-        home: AndroidLiveDialog(
-          deviceName: 'Chrome',
-          platform: 'chrome',
-          connect: () => const Stream<AndroidLiveUpdate>.empty(),
-          onInput: (_) async {},
-          openVideo: () async {
-            attempts++;
-            if (attempts == 1) throw StateError('Sharing denied');
-            return pendingRetry.future;
-          },
+  testWidgets(
+    'permission denial stops the spinner and retries only on request',
+    (tester) async {
+      var attempts = 0;
+      final pendingRetry = Completer<Never>();
+      await tester.pumpWidget(
+        _app(
+          home: AndroidLiveDialog(
+            deviceName: 'Chrome',
+            platform: 'chrome',
+            connect: () => const Stream<AndroidLiveUpdate>.empty(),
+            onInput: (_) async {},
+            openVideo: () async {
+              attempts++;
+              if (attempts == 1) throw StateError('Sharing denied');
+              return pendingRetry.future;
+            },
+          ),
         ),
-      ),
-    );
-    await tester.pump();
-    expect(find.textContaining('Sharing denied'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.text('Retrying live video…'), findsNothing);
-    await tester.pump(const Duration(minutes: 1));
-    expect(attempts, 1);
+      );
+      await tester.pump();
+      expect(find.textContaining('Sharing denied'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('Retrying live video…'), findsNothing);
+      await tester.pump(const Duration(minutes: 1));
+      expect(attempts, 1);
 
-    await tester.tap(find.byKey(const Key('live-retry-video')));
-    await tester.pump();
-    expect(attempts, 2);
-    expect(find.textContaining('Sharing denied'), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(find.byKey(const Key('live-retry-video')), findsNothing);
-    await tester.pumpWidget(const SizedBox.shrink());
-    pendingRetry.completeError(StateError('Dialog closed'));
-    await tester.pump();
-    expect(tester.takeException(), isNull);
-  });
+      await tester.tap(find.byKey(const Key('live-retry-video')));
+      await tester.pump();
+      expect(attempts, 2);
+      expect(find.textContaining('Sharing denied'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byKey(const Key('live-retry-video')), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      pendingRetry.completeError(StateError('Dialog closed'));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'Android app termination disables duplicate actions and reports results',

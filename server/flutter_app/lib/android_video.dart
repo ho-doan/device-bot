@@ -83,8 +83,10 @@ class AndroidVideoSession extends ChangeNotifier {
         );
       }
       session._deviceSize = Size(
-        (answer['width'] as num).toDouble(),
-        (answer['height'] as num).toDouble(),
+        ((session.recordingContext['logicalWidth'] ?? answer['width']) as num)
+            .toDouble(),
+        ((session.recordingContext['logicalHeight'] ?? answer['height']) as num)
+            .toDouble(),
       );
       await peer.setRemoteDescription(
         RTCSessionDescription(answer['sdp'] as String, 'answer'),

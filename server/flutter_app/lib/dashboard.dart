@@ -187,6 +187,8 @@ class _DevicesPanel extends StatelessWidget {
                                 'android',
                                 'chrome',
                                 'windows',
+                                'macos',
+                                'ios',
                               ].contains(device.platform))
                             IconButton(
                               tooltip: liveActionLabel(device),

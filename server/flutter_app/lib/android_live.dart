@@ -116,6 +116,12 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   int? _selectedIndex;
   AdminElement? _deviceFocus;
   bool _stopped = false;
+  bool _openingVideo = false;
+  Timer? _reconnectTimer;
+  int _reconnectAttempts = 0;
+  bool get _isWindowLive => ['windows', 'macos'].contains(widget.platform);
+  bool get _isNativeLive =>
+      ['windows', 'macos', 'ios'].contains(widget.platform);
   InspectorFlowAction _yamlAction = InspectorFlowAction.assertVisible;
   Offset? _panOrigin;
   Offset? _panLatest;
@@ -127,8 +133,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         widget.recording ??
         LiveRecording(deviceId: 'selected', platform: widget.platform);
     if (widget.openVideo != null) unawaited(_openVideo());
-    if (!['chrome', 'windows'].contains(widget.platform) ||
-        widget.openVideo == null) {
+    if (widget.openVideo == null) {
       _connectInspection();
     }
   }
@@ -147,6 +152,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
 
   @override
   void dispose() {
+    _reconnectTimer?.cancel();
     unawaited(_subscription?.cancel());
     _text.dispose();
     _elementScroll.dispose();
@@ -223,7 +229,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
       case AndroidLiveFrame():
         break;
       case AndroidLiveElements(elements: var elements, :final source):
-        if (widget.platform == 'windows') {
+        if (_isWindowLive) {
           final context = _video?.recordingContext;
           if (context == null) return;
           try {
@@ -300,20 +306,23 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   }
 
   Future<void> _openVideo() async {
+    if (_openingVideo || !mounted) return;
+    _openingVideo = true;
+    _reconnectTimer?.cancel();
     final previous = _video;
     previous?.removeListener(_videoChanged);
     setState(() {
       _video = null;
       _videoError = null;
       _status = null;
-      if (widget.platform == 'windows') {
+      if (widget.openVideo != null) {
         _elements = const [];
         _selectedIndex = null;
         _deviceFocus = null;
       }
     });
     try {
-      if (widget.platform == 'windows') {
+      if (widget.openVideo != null) {
         await _subscription?.cancel();
         _subscription = null;
         _stopped = false;
@@ -329,8 +338,9 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
       if (_recording.context.isEmpty) {
         _recording.context = video.recordingContext;
       }
+      _reconnectAttempts = 0;
       video.addListener(_videoChanged);
-      if (['chrome', 'windows'].contains(widget.platform)) _connectInspection();
+      _connectInspection();
       setState(() {});
     } on Object catch (error) {
       if (mounted) {
@@ -338,7 +348,10 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
           _videoError = error.toString();
           _status = _videoError;
         });
+        _scheduleReconnect();
       }
+    } finally {
+      _openingVideo = false;
     }
   }
 
@@ -348,7 +361,43 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         _videoError = _video?.status;
         _status = _videoError;
       });
+      if (_videoError != null) _scheduleReconnect();
     }
+  }
+
+  void _retryVideo() {
+    _reconnectAttempts = 0;
+    unawaited(_openVideo());
+  }
+
+  void _scheduleReconnect() {
+    if (!mounted ||
+        widget.openVideo == null ||
+        _reconnectTimer?.isActive == true ||
+        _reconnectAttempts >= 3) {
+      return;
+    }
+    final error = (_videoError ?? '').toLowerCase();
+    if ([
+      'notallowederror',
+      'permission denied',
+      'permission dismissed',
+      'sharing denied',
+      'moved or resized',
+      'restore the selected',
+      'select an app',
+    ].any(error.contains)) {
+      return;
+    }
+    final seconds = 1 << _reconnectAttempts;
+    _reconnectAttempts++;
+    setState(
+      () => _status =
+          'Connection lost. Reconnecting in $seconds s ($_reconnectAttempts/3)…',
+    );
+    _reconnectTimer = Timer(Duration(seconds: seconds), () {
+      if (mounted) unawaited(_openVideo());
+    });
   }
 
   void _terminateApps(bool all) {
@@ -379,17 +428,23 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     // Resolve the selector at click time. Reserve the sequence inside the queue.
     _inputs = _inputs
         .then((_) async {
-          if (widget.platform == 'windows') {
+          if (widget.openVideo != null) {
             final video = _video;
             if (!mounted ||
                 video == null ||
                 !identical(video, queuedVideo) ||
                 video.status != null ||
                 _stopped) {
-              throw StateError('Open Windows Live before sending input.');
+              throw StateError(
+                'Wait for Live to reconnect before sending input.',
+              );
             }
+          }
+          if (_isNativeLive) {
             await widget.onInput(
-              windowInputForDesktop(input, video.recordingContext),
+              _isWindowLive
+                  ? windowInputForDesktop(input, _video!.recordingContext)
+                  : input,
             );
           } else {
             final step = _recording.prepare(
@@ -530,7 +585,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         appBar: AppBar(
           title: Text('${widget.deviceName} live'),
           actions: [
-            if (widget.platform != 'windows')
+            if (!_isNativeLive)
               TextButton.icon(
                 key: const Key('live-export-yaml'),
                 onPressed: _recording.count > 0 ? _reviewRecording : null,
@@ -628,7 +683,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                         ? Center(
                             child: FilledButton.icon(
                               key: const Key('live-retry-video'),
-                              onPressed: _openVideo,
+                              onPressed: _retryVideo,
                               icon: const Icon(Icons.refresh),
                               label: const Text('Retry live video'),
                             ),
@@ -1003,25 +1058,28 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                     onPressed: _submitText,
                                     child: const Text('Send text'),
                                   ),
-                                  OutlinedButton(
-                                    key: const Key('android-live-clear-text'),
-                                    onPressed:
-                                        _elements.any(
-                                          (element) =>
-                                              element.focused == true &&
-                                              element.enabled &&
-                                              element.isEditable,
-                                        )
-                                        ? () => _send({'action': 'clear'})
-                                        : null,
-                                    child: Text(
-                                      widget.platform == 'chrome'
-                                          ? 'Clear web field'
-                                          : widget.platform == 'windows'
-                                          ? 'Clear Windows field'
-                                          : 'Clear Android field',
+                                  if (widget.platform != 'ios')
+                                    OutlinedButton(
+                                      key: const Key('android-live-clear-text'),
+                                      onPressed:
+                                          _elements.any(
+                                            (element) =>
+                                                element.focused == true &&
+                                                element.enabled &&
+                                                element.isEditable,
+                                          )
+                                          ? () => _send({'action': 'clear'})
+                                          : null,
+                                      child: Text(
+                                        widget.platform == 'chrome'
+                                            ? 'Clear web field'
+                                            : widget.platform == 'windows'
+                                            ? 'Clear Windows field'
+                                            : widget.platform == 'macos'
+                                            ? 'Clear macOS field'
+                                            : 'Clear Android field',
+                                      ),
                                     ),
-                                  ),
                                 ],
                               ),
                             ],

@@ -10,10 +10,12 @@ class WindowsLiveTargetDialog extends StatefulWidget {
     super.key,
     required this.runningApps,
     required this.windowsFor,
+    this.title = 'Windows Live',
   });
 
   final Future<List<RunningApp>> runningApps;
   final Future<List<AppWindow>> Function(int processId) windowsFor;
+  final String title;
 
   @override
   State<WindowsLiveTargetDialog> createState() =>
@@ -53,7 +55,7 @@ class _WindowsLiveTargetDialogState extends State<WindowsLiveTargetDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Windows Live'),
+    title: Text(widget.title),
     content: SizedBox(
       width: 480,
       child: SingleChildScrollView(

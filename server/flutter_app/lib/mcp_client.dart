@@ -252,10 +252,12 @@ class McpClient {
           'deviceId': deviceId,
           'x': input['x'],
           'y': input['y'],
+          if (input['webContext'] != null) 'webContext': input['webContext'],
         });
       case 'scroll':
         await callTool('mobile_scroll', {
           'deviceId': deviceId,
+          if (input['webContext'] != null) 'webContext': input['webContext'],
           for (final key in ['x', 'y', 'deltaX', 'deltaY']) key: input[key],
         });
       case 'swipe':
@@ -270,11 +272,13 @@ class McpClient {
       case 'type':
         await callTool('mobile_type_keys', {
           'deviceId': deviceId,
+          if (input['webContext'] != null) 'webContext': input['webContext'],
           'text': input['text'],
         });
       case 'clear':
         await callTool('mobile_type_keys', {
           'deviceId': deviceId,
+          if (input['webContext'] != null) 'webContext': input['webContext'],
           'text': '',
           'clear': true,
         });
@@ -388,6 +392,7 @@ class McpClient {
     String source = 'auto',
     int? processId,
     String? windowId,
+    bool includeFrames = false,
   }) async {
     final arguments = <String, dynamic>{
       'deviceId': deviceId,
@@ -399,6 +404,7 @@ class McpClient {
       arguments['filter'] = filter;
     }
     if (maxResults != null) arguments['maxResults'] = maxResults;
+    if (includeFrames) arguments['includeFrames'] = true;
     final result = await callTool('mobile_list_elements_on_screen', arguments);
     final values = (result.structuredContent?['elements'] as List?) ?? const [];
     return [
@@ -410,9 +416,11 @@ class McpClient {
           'position': values
               .take(i + 1)
               .where(
-                (value) => ((value as Map)['className'] as String).contains(
-                  (values[i] as Map)['className'] as String,
-                ),
+                (value) =>
+                    ((value as Map)['className'] as String).contains(
+                      (values[i] as Map)['className'] as String,
+                    ) &&
+                    _webIdentity(value) == _webIdentity(values[i] as Map),
               )
               .length,
         }),
@@ -432,6 +440,7 @@ class McpClient {
       source: source,
       processId: processId,
       windowId: windowId,
+      includeFrames: source != 'flutter',
     );
     if (source != 'auto') {
       return (
@@ -820,6 +829,24 @@ class AndroidLiveStatus extends AndroidLiveUpdate {
   const AndroidLiveStatus(this.message);
 
   final String message;
+}
+
+String _webIdentity(Object? value) {
+  if (value is! Map) return '';
+  final context = value['webContext'];
+  if (context is! Map) return '';
+  final page = context['page'];
+  final frames = context['framePath'];
+  return [
+    context['appId'] ?? '',
+    page is Map ? page['url'] ?? '' : '',
+    page is Map ? page['title'] ?? '' : '',
+    if (frames is List)
+      for (final frame in frames)
+        frame is Map
+            ? '${frame['css']}|${frame['name']}|${frame['url']}|${frame['position']}'
+            : '',
+  ].join('\n');
 }
 
 /// One SSE event from `GET /admin/devices/{id}/live`.

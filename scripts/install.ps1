@@ -303,6 +303,12 @@ try {
         if (Test-Path $qcWebDestination) { Remove-Item -Recurse -Force $qcWebDestination }
         Copy-Item -Path $qcWebSource -Destination $qcWebDestination -Recurse -Force
     }
+    $webViewHelper = Join-Path $TempDir "webview-helper"
+    if (Test-Path $webViewHelper) {
+        $helperDestination = Join-Path $InstallDir "webview-helper"
+        New-Item -ItemType Directory -Path $helperDestination -Force | Out-Null
+        Copy-Item -Path (Join-Path $webViewHelper '*') -Destination $helperDestination -Recurse -Force
+    }
     & (Join-Path $InstallDir $BinaryName) --check-install
     if ($LASTEXITCODE -ne 0) { throw "Installed Device Bot verification failed." }
 

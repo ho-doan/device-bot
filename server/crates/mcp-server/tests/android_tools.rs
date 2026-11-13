@@ -245,6 +245,7 @@ impl Robot for RecordingRobot {
                 selected: None,
                 value: None,
                 element_type: None,
+                web_context: None,
             },
             UiElement {
                 class_name: "android.widget.Button".into(),
@@ -264,6 +265,7 @@ impl Robot for RecordingRobot {
                 selected: None,
                 value: None,
                 element_type: None,
+                web_context: None,
             },
             UiElement {
                 class_name: "android.widget.EditText".into(),
@@ -283,6 +285,7 @@ impl Robot for RecordingRobot {
                 selected: None,
                 value: Some("secret".into()),
                 element_type: Some(ElementType::TextField),
+                web_context: None,
             },
         ])
     }

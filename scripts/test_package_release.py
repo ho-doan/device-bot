@@ -26,6 +26,22 @@ spec.loader.exec_module(release)
 
 
 class NativeRelease(unittest.TestCase):
+    def test_extracted_real_webview_helper_reports_missing_dependencies(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node is not installed')
+        source = SCRIPTS.parent / 'server/crates/robot-ios-real/webview-helper'
+        helper = self.repo / 'server/crates/robot-ios-real/webview-helper'
+        for path in helper.iterdir():
+            shutil.copy2(source / path.name, path)
+        archive = self.package()
+        extracted = self.root / 'extracted'
+        with tarfile.open(archive) as bundle:
+            bundle.extractall(extracted, filter='data')
+        script = extracted / 'webview-helper/webview.mjs'
+        response = subprocess.run([node, str(script)], input=json.dumps({'bundleId':'fixture.app','transport':'sim','action':'list'})+'\n', text=True, capture_output=True, timeout=10, check=True)
+        self.assertEqual(json.loads(response.stdout)['code'], 'helper_dependency_missing')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -59,6 +75,10 @@ esac
         deploy = self.repo / 'server/crates/robot-report/deploy'
         deploy.mkdir(exist_ok=True)
         (deploy / 'README.md').write_text('Production deployment guide\n')
+        helper = self.repo / 'server/crates/robot-ios-real/webview-helper'
+        helper.mkdir(parents=True, exist_ok=True)
+        for name in ('webview.mjs', 'dom-references.js', 'dom-tap.js', 'dom-scroll.js', 'dom-edit.js', 'package.json', 'package-lock.json', 'README.md'):
+            (helper / name).write_text('helper fixture\n')
 
     def package(self, target='aarch64-apple-darwin', qc=None, qc_web=None):
         suffix = '.exe' if 'windows' in target else ''
@@ -83,6 +103,8 @@ esac
             self.assertIn('qc-web/index.html', names)
             self.assertIn('qc-web/flutter_bootstrap.js', names)
             self.assertIn('qc-web/main.dart.js', names)
+            for name in ('webview.mjs', 'dom-references.js', 'dom-tap.js', 'dom-scroll.js', 'dom-edit.js', 'package.json', 'package-lock.json', 'README.md'):
+                self.assertIn('webview-helper/' + name, names)
         (web / 'flutter_bootstrap.js').unlink()
         with self.assertRaisesRegex(ValueError, 'Missing QC web build'):
             self.package(qc_web=web)
@@ -194,6 +216,8 @@ cp "$TEST_DOWNLOAD_ROOT/${url##*/}" "$output"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.install_dir / 'qc-web/index.html').is_file())
         self.assertTrue((self.install_dir / 'qc-web/main.dart.js').is_file())
+        self.assertTrue((self.install_dir / 'webview-helper/webview.mjs').is_file())
+        self.assertTrue((self.install_dir / 'webview-helper/package-lock.json').is_file())
 
     @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
     def test_mac_installer_installs_three_verified_tools(self):

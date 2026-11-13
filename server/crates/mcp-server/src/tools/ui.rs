@@ -1,7 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use device_mcp_protocol::{ToolDefinition, ToolResult};
-use robot_core::{ElementQuery, ElementType, Robot, apply_element_query, prepare_elements};
+use robot_core::{
+    ElementQuery, ElementType, Robot, WebContext, apply_element_query, prepare_elements,
+};
 use serde_json::{Value, json};
 
 use super::arguments::{optional_u64, required_string};
@@ -27,7 +29,13 @@ pub(super) fn definition() -> ToolDefinition {
                 "maxResults": { "type": "integer", "minimum": 1, "maximum": 100 },
                 "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 60000 },
                 "processId": { "type": "integer", "minimum": 1, "description": "Running process to query. Desktop only. Does not activate the app." },
-                "windowId": { "type": "string", "minLength": 1, "description": "Window from mobile_list_windows. Desktop only." }
+                "windowId": { "type": "string", "minLength": 1, "description": "Window from mobile_list_windows. Desktop only." },
+                "includeFrames": { "type": "boolean", "description": "Include descendant iframe and WebView documents. Omit it to keep unscoped queries on the root document." },
+                "webContext": { "type": "object", "description": "Stable app, page, and frame path. Runtime CDP ids are not accepted.", "additionalProperties": false, "properties": {
+                    "appId": { "type": "string" },
+                    "page": { "type": "object", "additionalProperties": false, "properties": { "url": { "type": "string" }, "title": { "type": "string" } } },
+                    "framePath": { "type": "array", "items": { "type": "object", "additionalProperties": false, "properties": { "css": { "type": "string" }, "name": { "type": "string" }, "url": { "type": "string" }, "position": { "type": "integer", "minimum": 1 } } } }
+                }}
             },
             "required": ["deviceId"],
             "additionalProperties": false
@@ -98,6 +106,30 @@ pub(super) async fn list_elements(robot: &Arc<dyn Robot>, arguments: &Value) -> 
     {
         return ToolResult::execution_error("source must be auto, native, or flutter");
     }
+    let web_context = match arguments.get("webContext") {
+        None | Some(Value::Null) => None,
+        Some(value) => match serde_json::from_value::<WebContext>(value.clone()) {
+            Ok(context) => match context.validate() {
+                Ok(()) => Some(context),
+                Err(error) => return ToolResult::execution_error(error.to_string()),
+            },
+            Err(error) => {
+                return ToolResult::execution_error(format!("invalid webContext: {error}"));
+            }
+        },
+    };
+    if web_context
+        .as_ref()
+        .is_some_and(|context| !context.is_empty())
+        && source == "flutter"
+    {
+        return ToolResult::execution_error("webContext cannot be combined with source flutter");
+    }
+    let include_frames = match arguments.get("includeFrames") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => return ToolResult::execution_error("includeFrames must be a boolean"),
+    };
     let query = ElementQuery {
         filter,
         element_type,
@@ -106,6 +138,8 @@ pub(super) async fn list_elements(robot: &Arc<dyn Robot>, arguments: &Value) -> 
         } else {
             max_results
         },
+        web_context,
+        include_frames,
     };
     let list = async {
         if source != "flutter" {

@@ -349,9 +349,14 @@ mod tests {
         let body = body.to_owned();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0; 1024];
-            let count = stream.read(&mut request).unwrap();
-            assert!(String::from_utf8_lossy(&request[..count]).starts_with("GET /health/live "));
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut chunk = [0; 1024];
+                let count = stream.read(&mut chunk).unwrap();
+                assert!(count > 0 && request.len() < 8192);
+                request.extend_from_slice(&chunk[..count]);
+            }
+            assert!(String::from_utf8_lossy(&request).starts_with("GET /health/live "));
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()

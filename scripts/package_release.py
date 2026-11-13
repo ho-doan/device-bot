@@ -69,6 +69,13 @@ def package(binary, target, version, output, qc=None, qc_web=None):
                 files.append(relative.as_posix())
         if not files:
             raise ValueError('No tracked XCTest assets were found')
+        # Optional DOM inspection has a pinned, separately installed Node runtime
+        # dependency. Ship its setup contract and scripts in every native archive.
+        helper = ROOT / 'server/crates/robot-ios-real/webview-helper'
+        destination = stage / 'webview-helper'
+        destination.mkdir()
+        for name in ('webview.mjs', 'dom-references.js', 'dom-tap.js', 'dom-scroll.js', 'dom-edit.js', 'package.json', 'package-lock.json', 'README.md'):
+            shutil.copy2(helper / name, destination / name)
         stage_qc(stage, target, qc)
         if qc_web is not None:
             if not (qc_web / 'index.html').is_file() or not (qc_web / 'flutter_bootstrap.js').is_file():

@@ -442,6 +442,7 @@ class _TreeClient extends McpClient {
     String source = 'auto',
     int? processId,
     String? windowId,
+    bool includeFrames = false,
   }) async {
     requests.add((source, processId, windowId));
     return [

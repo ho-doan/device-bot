@@ -73,6 +73,84 @@ pub struct Selector {
     pub require_focus: bool,
     #[serde(default)]
     pub max_results: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_context: Option<FlowWebContext>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FlowWebFrame {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub css: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FlowWebPage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+/// Stable frame identity. YAML uses snake_case; runtime ids are rejected.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FlowWebContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<FlowWebPage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frame_path: Vec<FlowWebFrame>,
+}
+
+impl FlowWebContext {
+    pub fn is_empty(&self) -> bool {
+        self.app_id.as_deref().unwrap_or("").is_empty()
+            && self.page.as_ref().is_none_or(|page| {
+                page.url.as_deref().unwrap_or("").is_empty()
+                    && page.title.as_deref().unwrap_or("").is_empty()
+            })
+            && self.frame_path.is_empty()
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        for (index, frame) in self.frame_path.iter().enumerate() {
+            let css = frame.css.as_deref().unwrap_or("").trim();
+            let name = frame.name.as_deref().unwrap_or("").trim();
+            let url = frame.url.as_deref().unwrap_or("").trim();
+            if css.is_empty() && name.is_empty() && url.is_empty() {
+                return Err(format!(
+                    "web frame {} needs a css selector, name, or url",
+                    index + 1
+                ));
+            }
+            if frame.position.is_some_and(|position| position == 0) {
+                return Err("web frame position is one-based".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn to_tool_value(&self) -> Value {
+        json!({
+            "appId": self.app_id,
+            "page": self.page.as_ref().map(|page| json!({"url": page.url, "title": page.title})),
+            "framePath": self.frame_path.iter().map(|frame| json!({
+                "css": frame.css,
+                "name": frame.name,
+                "url": frame.url,
+                "position": frame.position,
+            })).collect::<Vec<_>>(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -351,6 +429,12 @@ fn validate_selector(name: &str, s: &Selector, p: &Profile, stack: &mut Vec<Stri
     if s.max_results.is_some_and(|n| !(1..=100).contains(&n)) {
         return Err("max_results must be 1..100".into());
     }
+    if let Some(context) = &s.web_context {
+        context.validate()?;
+        if s.source.as_deref() == Some("flutter") && !context.is_empty() {
+            return Err("web_context cannot be combined with source flutter".into());
+        }
+    }
     if s.stable_samples.is_some_and(|n| !(1..=4).contains(&n)) {
         return Err("stable_samples must be 1..4".into());
     }
@@ -429,7 +513,12 @@ pub fn selector(args: &Value, profile: &Profile) -> Result<Selector> {
             map.remove(key);
         }
     }
-    serde_json::from_value(raw).map_err(|e| format!("invalid selector: {e}"))
+    let parsed: Selector =
+        serde_json::from_value(raw).map_err(|e| format!("invalid selector: {e}"))?;
+    if let Some(context) = &parsed.web_context {
+        context.validate()?;
+    }
+    Ok(parsed)
 }
 
 fn expand(
@@ -486,6 +575,11 @@ fn expand(
         }
         let mut args = resolve(&template, vars)?;
         validate_action_keys(action, &args)?;
+        if let Some(value) = args.get("web_context") {
+            let context: FlowWebContext = serde_json::from_value(value.clone())
+                .map_err(|error| format!("invalid web_context: {error}"))?;
+            context.validate()?;
+        }
         if action == "run" {
             let name = args["recipe"]
                 .as_str()
@@ -640,7 +734,7 @@ fn expand(
 }
 
 fn validate_action_keys(action: &str, args: &Value) -> Result<()> {
-    let selector = "target filter label labels element_type resource_id prefer_resource_id class_contains row_with exclude_row_with allow_missing_row_anchor largest native_tap stable_samples replace_recipe verify_recipe require_focus max_results timeout_ms position source";
+    let selector = "target filter label labels element_type resource_id prefer_resource_id class_contains row_with exclude_row_with allow_missing_row_anchor largest native_tap stable_samples replace_recipe verify_recipe require_focus max_results timeout_ms position source web_context";
     let extra = match action {
         "run" => "recipe with",
         "if_element" => "target then else",
@@ -649,7 +743,7 @@ fn validate_action_keys(action: &str, args: &Value) -> Result<()> {
         "wait" => "ms",
         "screenshot" => "path",
         "tap" => "x y",
-        "type_text" => "text sensitive",
+        "type_text" => "text sensitive web_context",
         "swipe" => "start end duration_ms",
         "call_tool" => "name arguments sensitive",
         "note_limitation" => "message",
@@ -728,5 +822,37 @@ mod input_metadata_tests {
         assert!(steps[1].action["type_text"].get("sensitive").is_none());
         assert!(steps[2].action["call_tool"].get("sensitive").is_none());
         assert_eq!(steps[3].action["call_tool"]["sensitive"], true);
+    }
+
+    #[test]
+    fn web_context_keeps_stable_frame_selectors() {
+        let rejected = compile(
+            &FlowDocument::from_yaml(
+                "version: 2\nname: frame\nsteps:\n- tap_element:\n    web_context:\n      frame_path:\n        - sessionId: abc\n",
+            )
+            .unwrap(),
+            &Profile::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(rejected.contains("sessionId"), "{rejected}");
+        let empty = compile(
+            &FlowDocument::from_yaml(
+                "version: 2\nname: frame\nsteps:\n- tap_element:\n    web_context:\n      frame_path:\n        - position: 1\n",
+            )
+            .unwrap(),
+            &Profile::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(empty.contains("css selector"), "{empty}");
+        compile(
+            &FlowDocument::from_yaml(
+                "version: 2\nname: frame\nsteps:\n- tap_element:\n    web_context:\n      frame_path:\n        - css: \"iframe#checkout\"\n          name: payment\n    resource_id: submit\n- type_text:\n    text: paid\n    web_context:\n      frame_path:\n        - name: payment\n",
+            )
+            .unwrap(),
+            &Profile::default(),
+        )
+        .unwrap();
     }
 }

@@ -85,6 +85,7 @@ void main() {
       var opens = 0;
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: AndroidLiveDialog(
             deviceName: 'Test',
             platform: 'chrome',

@@ -12,6 +12,7 @@
             await new Promise(resolve => setTimeout(resolve, 25));
         }
     }
+    const refs = typeof deviceBotReferences === 'function' ? deviceBotReferences(document) : null;
     return Array.from(document.querySelectorAll('body *')).slice(0, 500).map((element) => {
             const bounds = element.getBoundingClientRect();
             const tag = element.tagName.toLowerCase();
@@ -28,6 +29,7 @@
             else if (tag === 'img' || role === 'img') elementType = 'image';
             const selectable = type === 'checkbox' || type === 'radio' || role === 'checkbox' || role === 'radio' || role === 'switch';
             return {
+              elementRef: refs?.ref(element),
               className: tag, resourceId: element.id || '',
               text: (element.innerText || element.textContent || '').trim(),
               contentDescription: element.getAttribute('aria-label') || element.getAttribute('title') || '',

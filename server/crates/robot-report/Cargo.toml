@@ -1,6 +1,6 @@
 [package]
 name = "robot-report"
-version = "0.1.16"
+version = "0.1.17"
 description = "Persistent multi-project QA reports and evidence history for Device Bot"
 edition.workspace = true
 license.workspace = true

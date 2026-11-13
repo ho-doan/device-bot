@@ -181,7 +181,7 @@ impl MacosRobot {
             let Ok(value) = native_cf_string(text).map(CfOwned) else {
                 return false;
             };
-            return (unsafe { AXUIElementSetAttributeValue(field.0, key.0, value.0) }) == 0;
+            (unsafe { AXUIElementSetAttributeValue(field.0, key.0, value.0) }) == 0
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -426,6 +426,87 @@ pub async fn prepare_window_capture() -> Result<PathBuf, RobotError> {
     Ok(binary)
 }
 
+/// Start a native, window-scoped capture. Crop coordinates are logical points
+/// relative to the captured window; the simulator adapter resolves its content.
+pub async fn start_window_capture(
+    pid: i32,
+    window: u32,
+    width: u32,
+    height: u32,
+    source_rect: Option<[f64; 4]>,
+) -> Result<robot_core::VideoStream, RobotError> {
+    if pid <= 0 || window == 0 || width < 2 || height < 2 {
+        return Err(RobotError::InvalidInput(
+            "Invalid native capture target or dimensions".into(),
+        ));
+    }
+    let helper = prepare_window_capture().await?;
+    let mut command = Command::new(helper);
+    command.args([
+        pid.to_string(),
+        window.to_string(),
+        width.to_string(),
+        height.to_string(),
+    ]);
+    if let Some(rect) = source_rect {
+        if rect.iter().any(|v| !v.is_finite())
+            || rect[0] < 0.
+            || rect[1] < 0.
+            || rect[2] < 2.
+            || rect[3] < 2.
+        {
+            return Err(RobotError::InvalidInput(
+                "Invalid native capture source rectangle".into(),
+            ));
+        }
+        command.args(rect.map(|v| v.to_string()));
+    }
+    robot_core::video::start_h264_process(command, width, height).await
+}
+#[cfg(target_os = "macos")]
+pub(super) fn scroll(at: Point, dx: f64, dy: f64) -> Result<(), RobotError> {
+    if !dx.is_finite() || !dy.is_finite() || dx.abs() > 10000. || dy.abs() > 10000. {
+        return Err(RobotError::InvalidInput("Invalid scroll delta".into()));
+    }
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventCreateScrollWheelEvent2(
+            source: CFTypeRef,
+            units: u32,
+            wheels: u32,
+            vertical: i32,
+            horizontal: i32,
+            third: i32,
+        ) -> CFTypeRef;
+        fn CGEventSetLocation(event: CFTypeRef, point: CGPoint);
+        fn CGEventPost(tap: u32, event: CFTypeRef);
+    }
+    let event = CfOwned(unsafe {
+        CGEventCreateScrollWheelEvent2(
+            std::ptr::null(),
+            0,
+            2,
+            -dy.round() as i32,
+            -dx.round() as i32,
+            0,
+        )
+    });
+    if event.0.is_null() {
+        return Err(RobotError::CommandFailed(
+            "Could not create native scroll event".into(),
+        ));
+    }
+    unsafe {
+        CGEventSetLocation(event.0, CGPoint { x: at.x, y: at.y });
+        CGEventPost(0, event.0)
+    };
+    Ok(())
+}
+#[cfg(not(target_os = "macos"))]
+pub(super) fn scroll(_: Point, _: f64, _: f64) -> Result<(), RobotError> {
+    Err(RobotError::Unsupported("macOS Live requires macOS".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -547,85 +628,4 @@ mod tests {
                 .any(|e| e.class_name.contains("TextField") && e.value.as_deref() == Some(""))
         );
     }
-}
-
-/// Start a native, window-scoped capture. Crop coordinates are logical points
-/// relative to the captured window; the simulator adapter resolves its content.
-pub async fn start_window_capture(
-    pid: i32,
-    window: u32,
-    width: u32,
-    height: u32,
-    source_rect: Option<[f64; 4]>,
-) -> Result<robot_core::VideoStream, RobotError> {
-    if pid <= 0 || window == 0 || width < 2 || height < 2 {
-        return Err(RobotError::InvalidInput(
-            "Invalid native capture target or dimensions".into(),
-        ));
-    }
-    let helper = prepare_window_capture().await?;
-    let mut command = Command::new(helper);
-    command.args([
-        pid.to_string(),
-        window.to_string(),
-        width.to_string(),
-        height.to_string(),
-    ]);
-    if let Some(rect) = source_rect {
-        if rect.iter().any(|v| !v.is_finite())
-            || rect[0] < 0.
-            || rect[1] < 0.
-            || rect[2] < 2.
-            || rect[3] < 2.
-        {
-            return Err(RobotError::InvalidInput(
-                "Invalid native capture source rectangle".into(),
-            ));
-        }
-        command.args(rect.map(|v| v.to_string()));
-    }
-    robot_core::video::start_h264_process(command, width, height).await
-}
-#[cfg(target_os = "macos")]
-pub(super) fn scroll(at: Point, dx: f64, dy: f64) -> Result<(), RobotError> {
-    if !dx.is_finite() || !dy.is_finite() || dx.abs() > 10000. || dy.abs() > 10000. {
-        return Err(RobotError::InvalidInput("Invalid scroll delta".into()));
-    }
-    #[link(name = "CoreGraphics", kind = "framework")]
-    unsafe extern "C" {
-        fn CGEventCreateScrollWheelEvent2(
-            source: CFTypeRef,
-            units: u32,
-            wheels: u32,
-            vertical: i32,
-            horizontal: i32,
-            third: i32,
-        ) -> CFTypeRef;
-        fn CGEventSetLocation(event: CFTypeRef, point: CGPoint);
-        fn CGEventPost(tap: u32, event: CFTypeRef);
-    }
-    let event = CfOwned(unsafe {
-        CGEventCreateScrollWheelEvent2(
-            std::ptr::null(),
-            0,
-            2,
-            -dy.round() as i32,
-            -dx.round() as i32,
-            0,
-        )
-    });
-    if event.0.is_null() {
-        return Err(RobotError::CommandFailed(
-            "Could not create native scroll event".into(),
-        ));
-    }
-    unsafe {
-        CGEventSetLocation(event.0, CGPoint { x: at.x, y: at.y });
-        CGEventPost(0, event.0)
-    };
-    Ok(())
-}
-#[cfg(not(target_os = "macos"))]
-pub(super) fn scroll(_: Point, _: f64, _: f64) -> Result<(), RobotError> {
-    Err(RobotError::Unsupported("macOS Live requires macOS".into()))
 }

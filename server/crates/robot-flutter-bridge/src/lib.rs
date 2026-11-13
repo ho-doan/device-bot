@@ -124,6 +124,7 @@ pub fn parse_elements(value: &Value) -> Option<Vec<UiElement>> {
                     })
                     .ok()
                 }),
+                web_context: None,
             })
         })
         .collect()

@@ -54,6 +54,7 @@ pub struct FlowRunner {
     recording_device: Option<String>,
     directory: PathBuf,
     values: BTreeMap<String, String>,
+    focused_web_contexts: BTreeMap<String, Value>,
     secrets: Vec<String>,
     recording: bool,
     query_count: usize,
@@ -77,6 +78,7 @@ impl FlowRunner {
             recording_device: None,
             directory,
             values: BTreeMap::new(),
+            focused_web_contexts: BTreeMap::new(),
             secrets: Vec::new(),
             recording: false,
             query_count: 0,
@@ -295,7 +297,7 @@ impl FlowRunner {
                 "swipe" => calls.push((SWIPE, swipe_arguments(args, "<selected>")?)),
                 "type_text" => calls.push((
                     TYPE,
-                    json!({"deviceId":"<selected>","text":required(args,"text")?}),
+                    type_arguments("<selected>", required(args, "text")?, args)?,
                 )),
                 "call_tool" => {
                     let name = required(args, "name")?;
@@ -328,7 +330,7 @@ impl FlowRunner {
                     if action == "fill_field" {
                         calls.push((
                             TYPE,
-                            json!({"deviceId":"<selected>","text":required(args,"text")?}),
+                            type_arguments("<selected>", required(args, "text")?, args)?,
                         ));
                     }
                     if action == "assert_value" {
@@ -527,11 +529,8 @@ impl FlowRunner {
                 self.values.clear();
             }
             "type_text" => {
-                self.call(
-                    TYPE,
-                    json!({"deviceId":self.device_id()?,"text":required(args,"text")?}),
-                )
-                .await?;
+                self.call(TYPE, self.type_payload(required(args, "text")?, args)?)
+                    .await?;
             }
             "tap" => {
                 self.call(TAP,json!({"deviceId":self.device_id()?,"x":number(args,"x")?,"y":number(args,"y")?})).await?;
@@ -610,6 +609,12 @@ impl FlowRunner {
             }
             "gesture" => {
                 let element = self.find(args, false).await?;
+                if element
+                    .get("webContext")
+                    .is_some_and(|context| !context.is_null())
+                {
+                    return Err("DOM gestures require a verified native coordinate mapping; use scroll instead".into());
+                }
                 self.call(SWIPE, gesture_arguments(args, &element, self.device_id()?)?)
                     .await?;
             }
@@ -638,11 +643,8 @@ impl FlowRunner {
                         serde_json::from_value(replacement.clone()).map_err(|e| e.to_string())?;
                     self.execute_steps(&children).await?;
                 } else {
-                    self.call(
-                        TYPE,
-                        json!({"deviceId":self.device_id()?,"text":required(args,"text")?}),
-                    )
-                    .await?;
+                    self.call(TYPE, self.type_payload(required(args, "text")?, args)?)
+                        .await?;
                 }
                 if let Some(verification) = args.get("verification") {
                     self.execute_steps(
@@ -927,17 +929,54 @@ impl FlowRunner {
             let e = self.find(args, true).await?;
             self.tap_element(&s, &e).await?;
             if !s.require_focus {
+                self.remember_web_focus(&e)?;
                 return Ok(e);
             }
             let focused = self.find(args, false).await?;
             if focused.get("focused").and_then(Value::as_bool) == Some(true) {
+                self.remember_web_focus(&focused)?;
                 return Ok(focused);
             }
         }
         Err("editor focus was not observed".into())
     }
 
+    fn remember_web_focus(&mut self, element: &Value) -> Result<()> {
+        let device = self.device_id()?.to_owned();
+        if let Some(context) = element.get("webContext").filter(|value| !value.is_null()) {
+            self.focused_web_contexts.insert(device, context.clone());
+        } else {
+            self.focused_web_contexts.remove(&device);
+        }
+        Ok(())
+    }
+
+    fn type_payload(&self, text: &str, args: &Value) -> Result<Value> {
+        let device = self.device_id()?;
+        let mut payload = type_arguments(device, text, args)?;
+        if let Some(expected) = args.get("web_context") {
+            let selector = Selector {
+                web_context: Some(
+                    serde_json::from_value(expected.clone()).map_err(|error| error.to_string())?,
+                ),
+                ..Default::default()
+            };
+            if let Some(context) = self.focused_web_contexts.get(device).filter(|context| {
+                element_context_matches(&selector, &json!({"webContext":context}))
+            }) {
+                payload["webContext"] = context.clone();
+            }
+        }
+        Ok(payload)
+    }
+
     async fn tap_element(&mut self, s: &Selector, e: &Value) -> Result<()> {
+        if s.native_tap
+            && e.get("webContext")
+                .is_some_and(|context| !context.is_null())
+        {
+            return Err("native_tap cannot use DOM viewport coordinates".into());
+        }
         if s.native_tap {
             let filter = s
                 .filter
@@ -947,11 +986,8 @@ impl FlowRunner {
             self.call(BATCH,json!({"deviceId":self.device_id()?,"actions":[{"type":"tap_element","filter":filter}]})).await?;
         } else {
             let b = rectangle(e)?;
-            self.call(
-                TAP,
-                json!({"deviceId":self.device_id()?,"x":(b.0+b.2)/2.,"y":(b.1+b.3)/2.}),
-            )
-            .await?;
+            self.call(TAP, tap_arguments(self.device_id()?, e, b))
+                .await?;
         }
         Ok(())
     }
@@ -963,6 +999,10 @@ impl FlowRunner {
         let found = self.query(s).await?;
         if found.len() != 1 {
             return Err("scroll viewport must match exactly one element".into());
+        }
+        if let Some(context) = found[0].get("webContext").filter(|value| !value.is_null()) {
+            self.call("mobile_scroll", json!({"deviceId":self.device_id()?,"x":0,"y":0,"deltaX":0,"deltaY":if direction == "down" { 300 } else { -300 },"webContext":context})).await?;
+            return Ok(());
         }
         let (from, to) = if direction == "down" {
             (0.72, 0.4)
@@ -1124,9 +1164,52 @@ impl FlowRunner {
     }
 }
 
+fn element_context_matches(selector: &Selector, element: &Value) -> bool {
+    let context = &element["webContext"];
+    let frame_path = context["framePath"].as_array().map(Vec::len).unwrap_or(0);
+    let scoped = frame_path > 0 || context["appId"].as_str().is_some_and(|id| !id.is_empty());
+    let Some(expected) = selector
+        .web_context
+        .as_ref()
+        .filter(|context| !context.is_empty())
+    else {
+        return !scoped;
+    };
+    if expected.app_id.is_some() && expected.app_id.as_deref() != context["appId"].as_str() {
+        return false;
+    }
+    if let Some(page) = &expected.page {
+        if page.url.is_some() && page.url.as_deref() != context["page"]["url"].as_str() {
+            return false;
+        }
+        if page.title.is_some() && page.title.as_deref() != context["page"]["title"].as_str() {
+            return false;
+        }
+    }
+    let actual_frames = context["framePath"].as_array().map(Vec::len).unwrap_or(0);
+    actual_frames == expected.frame_path.len()
+        && expected
+            .frame_path
+            .iter()
+            .enumerate()
+            .all(|(index, frame)| {
+                let actual = &context["framePath"][index];
+                frame.css.as_ref().is_none_or(|css| actual["css"] == *css)
+                    && frame
+                        .name
+                        .as_ref()
+                        .is_none_or(|name| actual["name"] == *name)
+                    && frame.url.as_ref().is_none_or(|url| actual["url"] == *url)
+                    && frame
+                        .position
+                        .is_none_or(|position| actual["position"] == position)
+            })
+}
+
 pub fn filter_elements(s: &Selector, raw: &[Value]) -> Vec<Value> {
     let mut found = raw
         .iter()
+        .filter(|e| element_context_matches(s, e))
         .filter(|e| {
             let labels = ["text", "contentDescription"]
                 .iter()
@@ -1180,7 +1263,22 @@ fn query_arguments(s: &Selector, device: &str) -> Value {
     if let Some(t) = &s.element_type {
         args["elementType"] = json!(t);
     }
+    if let Some(context) = s.web_context.as_ref().filter(|context| !context.is_empty()) {
+        args["webContext"] = context.to_tool_value();
+    }
     args
+}
+fn type_arguments(device: &str, text: &str, args: &Value) -> Result<Value> {
+    let mut payload = json!({"deviceId": device, "text": text});
+    if let Some(value) = args.get("web_context") {
+        let context: schema::FlowWebContext = serde_json::from_value(value.clone())
+            .map_err(|error| format!("invalid web_context: {error}"))?;
+        context.validate()?;
+        if !context.is_empty() {
+            payload["webContext"] = context.to_tool_value();
+        }
+    }
+    Ok(payload)
 }
 fn required<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
     v.get(key)
@@ -1199,6 +1297,14 @@ fn number(v: &Value, key: &str) -> Result<f64> {
         .filter(|n| n.is_finite())
         .ok_or_else(|| format!("invalid coordinate {key}"))
 }
+fn tap_arguments(device: &str, element: &Value, b: (f64, f64, f64, f64)) -> Value {
+    let mut args = json!({"deviceId":device,"x":(b.0+b.2)/2.,"y":(b.1+b.3)/2.});
+    if let Some(context) = element.get("webContext").filter(|value| !value.is_null()) {
+        args["webContext"] = context.clone();
+    }
+    args
+}
+
 fn rectangle(v: &Value) -> Result<(f64, f64, f64, f64)> {
     let b = &v["bounds"];
     let r = (
@@ -1318,4 +1424,64 @@ fn route_tool_arguments(arguments: &mut Value, device_id: &str) -> Result<()> {
     }
     object.insert("deviceId".into(), json!(device_id));
     Ok(())
+}
+
+#[cfg(test)]
+mod web_context_tests {
+    use super::*;
+    use crate::schema::{FlowWebContext, FlowWebFrame, Selector};
+
+    #[test]
+    fn replay_input_retains_the_document_selected_by_focus() {
+        let mut runner = FlowRunner::new(None, PathBuf::from("unused"));
+        runner.device = Some(json!({"id":"chrome:fixture"}));
+        let context =
+            json!({"framePath":[{"css":"iframe#checkout"}],"elementRef":"original-document:1"});
+        let element = json!({"webContext":context});
+        runner.remember_web_focus(&element).unwrap();
+        let payload = runner
+            .type_payload(
+                "paid",
+                &json!({"web_context":{"frame_path":[{"css":"iframe#checkout"}]}}),
+            )
+            .unwrap();
+        assert_eq!(payload["webContext"]["elementRef"], "original-document:1");
+        assert_eq!(
+            tap_arguments("chrome:fixture", &element, (1., 2., 3., 4.))["webContext"],
+            context
+        );
+        let another = runner
+            .type_payload(
+                "other",
+                &json!({"web_context":{"frame_path":[{"css":"iframe#other"}]}}),
+            )
+            .unwrap();
+        assert!(another["webContext"].get("elementRef").is_none());
+    }
+
+    #[test]
+    fn unscoped_selectors_stay_on_the_root_document() {
+        let framed = json!({
+            "className": "button",
+            "text": "Pay",
+            "webContext": {"framePath": [{"css": "iframe#checkout"}]}
+        });
+        let root = json!({"className": "button", "text": "Home"});
+        let unscoped = filter_elements(&Selector::default(), &[framed.clone(), root.clone()]);
+        assert_eq!(unscoped, vec![root.clone()]);
+        let scoped = Selector {
+            web_context: Some(FlowWebContext {
+                frame_path: vec![FlowWebFrame {
+                    css: Some("iframe#checkout".into()),
+                    ..FlowWebFrame::default()
+                }],
+                ..FlowWebContext::default()
+            }),
+            ..Selector::default()
+        };
+        assert_eq!(
+            filter_elements(&scoped, &[framed.clone(), root]),
+            vec![framed]
+        );
+    }
 }

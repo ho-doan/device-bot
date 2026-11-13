@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use device_mcp_protocol::{ToolDefinition, ToolResult};
-use robot_core::{ImeAction, Robot};
+use robot_core::{ImeAction, Robot, WebContext};
 use serde_json::{Value, json};
 
 use super::arguments::required_string;
@@ -18,7 +18,8 @@ pub(super) fn definition() -> ToolDefinition {
             "type": "object",
             "properties": {
                 "deviceId": { "type": "string", "minLength": 1 },
-                "text": { "type": "string" }, "clear": { "type": "boolean" }
+                "text": { "type": "string" }, "clear": { "type": "boolean" },
+                "webContext": { "type": "object", "additionalProperties": true }
             },
             "required": ["deviceId", "text"],
             "additionalProperties": false
@@ -51,8 +52,23 @@ pub(super) async fn type_keys(robot: &Arc<dyn Robot>, arguments: &Value) -> Tool
         Ok(value) => value,
         Err(error) => return error,
     };
+    let web_context = match arguments.get("webContext") {
+        None | Some(Value::Null) => None,
+        Some(value) => match serde_json::from_value::<WebContext>(value.clone()) {
+            Ok(context) => match context.validate() {
+                Ok(()) => Some(context),
+                Err(error) => return ToolResult::execution_error(error.to_string()),
+            },
+            Err(error) => {
+                return ToolResult::execution_error(format!("invalid webContext: {error}"));
+            }
+        },
+    };
     if arguments.get("clear").and_then(Value::as_bool) == Some(true) {
-        return match robot.clear_text(&device_id).await {
+        return match robot
+            .clear_text_in_context(&device_id, web_context.as_ref())
+            .await
+        {
             Ok(()) => ToolResult::text("Focused field cleared"),
             Err(e) => ToolResult::execution_error(e.to_string()),
         };
@@ -61,7 +77,10 @@ pub(super) async fn type_keys(robot: &Arc<dyn Robot>, arguments: &Value) -> Tool
         Ok(value) => value,
         Err(error) => return error,
     };
-    match robot.type_text(&device_id, &text).await {
+    match robot
+        .type_text_in_context(&device_id, &text, web_context.as_ref())
+        .await
+    {
         Ok(()) => ToolResult::text("Text input completed"),
         Err(error) => ToolResult::execution_error(error.to_string()),
     }

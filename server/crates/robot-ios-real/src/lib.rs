@@ -6,6 +6,7 @@
 
 mod live;
 mod quicktime_recording;
+pub mod webview;
 pub mod xctest_agent;
 pub mod xctest_robot;
 
@@ -550,6 +551,7 @@ fn wda_element(attributes: &HashMap<String, String>) -> Option<UiElement> {
             .filter(|value| !value.is_empty())
             .cloned(),
         element_type: None,
+        web_context: None,
     })
 }
 

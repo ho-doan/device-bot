@@ -81,6 +81,10 @@ class LiveRecording {
                 element.enabled,
           )
           .firstOrNull;
+      final context = focused?.webContext;
+      if (context != null && !context.isEmpty) {
+        args['webContext'] = context.toJson();
+      }
       if (focused != null) {
         prefix =
             '${buildInspectorFlowYaml(element: focused, elements: elements, action: InspectorFlowAction.tap, sequence: sequence)}\n';

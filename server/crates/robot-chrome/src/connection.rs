@@ -5,6 +5,8 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 pub(super) struct BrowserConnection {
     pub(super) socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
     pub poisoned: bool,
+    events: Vec<Value>,
+    frame_attachments: HashMap<String, Value>,
 }
 
 impl BrowserConnection {
@@ -16,6 +18,8 @@ impl BrowserConnection {
         Ok(Self {
             socket,
             poisoned: false,
+            events: Vec::new(),
+            frame_attachments: HashMap::new(),
         })
     }
 
@@ -63,6 +67,10 @@ impl BrowserConnection {
                         .map_err(|e| RobotError::CommandFailed(e.to_string()))?,
                 )
                 .map_err(|e| RobotError::CommandFailed(format!("invalid Chrome JSON: {e}")))?;
+                if response.get("id").is_none() {
+                    self.record_event(response);
+                    continue;
+                }
                 if response["id"].as_u64() != Some(id) {
                     continue;
                 }
@@ -97,6 +105,82 @@ impl BrowserConnection {
                 "Chrome command {method} timed out after 5 seconds"
             ))),
         }
+    }
+
+    pub async fn collect_events(&mut self, budget: Duration) -> Result<Vec<Value>, RobotError> {
+        let deadline = tokio::time::Instant::now() + budget;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match tokio::time::timeout(remaining, self.socket.next()).await {
+                Ok(Some(Ok(frame))) => {
+                    if !frame.is_text() {
+                        continue;
+                    }
+                    let event: Value = serde_json::from_str(
+                        frame
+                            .to_text()
+                            .map_err(|error| RobotError::CommandFailed(error.to_string()))?,
+                    )
+                    .map_err(|error| {
+                        RobotError::CommandFailed(format!("invalid Chrome JSON: {error}"))
+                    })?;
+                    if event.get("id").is_none() && event.get("method").is_some() {
+                        self.record_event(event);
+                    }
+                }
+                Ok(Some(Err(error))) => {
+                    self.poisoned = true;
+                    return Err(RobotError::CommandFailed(format!(
+                        "Chrome transport failed while reading frame events: {error}"
+                    )));
+                }
+                Ok(None) => {
+                    self.poisoned = true;
+                    return Err(RobotError::CommandFailed(
+                        "Chrome closed the connection while reading frame events".into(),
+                    ));
+                }
+                Err(_) => break,
+            }
+        }
+        let mut events = std::mem::take(&mut self.events);
+        events.retain(|event| event["method"] != "Target.attachedToTarget");
+        events.extend(self.frame_attachments.values().cloned());
+        Ok(events)
+    }
+
+    fn record_event(&mut self, event: Value) {
+        if event["method"] == "Target.attachedToTarget" {
+            if let Some(id) = event["params"]["sessionId"].as_str() {
+                self.frame_attachments.insert(id.into(), event.clone());
+            }
+        } else if event["method"] == "Target.detachedFromTarget" {
+            if let Some(id) = event["params"]["sessionId"].as_str() {
+                let mut removed = std::collections::HashSet::from([id.to_owned()]);
+                loop {
+                    let before = removed.len();
+                    for (child, attached) in &self.frame_attachments {
+                        if attached["sessionId"]
+                            .as_str()
+                            .is_some_and(|parent| removed.contains(parent))
+                        {
+                            removed.insert(child.clone());
+                        }
+                    }
+                    if before == removed.len() {
+                        break;
+                    }
+                }
+                self.frame_attachments.retain(|id, _| !removed.contains(id));
+            }
+        }
+        if self.events.len() >= 1024 {
+            self.events.remove(0);
+        }
+        self.events.push(event);
     }
 }
 
@@ -218,6 +302,163 @@ impl BrowserSession {
             session
         };
         self.request(method, params, Some(session)).await
+    }
+
+    pub async fn session_request(
+        &mut self,
+        session: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, RobotError> {
+        self.request(method, params, Some(session.to_owned())).await
+    }
+
+    pub async fn collect_events(&mut self, budget: Duration) -> Result<Vec<Value>, RobotError> {
+        self.connection.lock().await.collect_events(budget).await
+    }
+
+    /// Attaches descendant iframe targets and keeps only frames that belong to this page.
+    pub async fn discover_frames(
+        &mut self,
+        target: &ChromeTarget,
+    ) -> Result<
+        (
+            crate::frames::FrameNode,
+            Vec<crate::frames::AuthorizedFrame>,
+        ),
+        RobotError,
+    > {
+        self.page_request(target, "Page.enable", json!({})).await?;
+        self.page_request(target, "Runtime.enable", json!({}))
+            .await?;
+        self.page_request(
+            target,
+            "Target.setAutoAttach",
+            json!({"autoAttach":true,"waitForDebuggerOnStart":false,"flatten":true}),
+        )
+        .await?;
+        let events = self.collect_events(Duration::from_millis(200)).await?;
+        let tree_value = self
+            .page_request(target, "Page.getFrameTree", json!({}))
+            .await?;
+        let mut tree = crate::frames::parse_frame_tree(&tree_value)?;
+        let mut owned = crate::frames::frame_ids(&tree);
+        let page_session =
+            self.sessions.get(&target.id).cloned().ok_or_else(|| {
+                RobotError::CommandFailed("Chrome page session is missing".into())
+            })?;
+        let mut pending = Vec::new();
+        for event in events {
+            if event["method"] != "Target.attachedToTarget" {
+                continue;
+            }
+            let target_type = event["params"]["targetInfo"]["type"]
+                .as_str()
+                .unwrap_or("")
+                .to_owned();
+            let session_id = event["params"]["sessionId"]
+                .as_str()
+                .unwrap_or("")
+                .to_owned();
+            if session_id.is_empty() || target_type != "iframe" {
+                continue;
+            }
+            pending.push((session_id, event["sessionId"].as_str().map(str::to_owned)));
+        }
+        let mut accepted = Vec::new();
+        let mut parents = std::collections::HashSet::from([page_session]);
+        loop {
+            let mut progress = false;
+            let mut rest = Vec::new();
+            for (session_id, parent_session_id) in pending.drain(..) {
+                let parent_ok = parent_session_id
+                    .as_deref()
+                    .is_some_and(|parent| parents.contains(parent));
+                if !parent_ok {
+                    rest.push((session_id, parent_session_id));
+                    continue;
+                }
+                let child_tree = self
+                    .session_request(&session_id, "Page.getFrameTree", json!({}))
+                    .await
+                    .ok();
+                let root_frame_id = child_tree
+                    .as_ref()
+                    .and_then(|value| value["frameTree"]["frame"]["id"].as_str())
+                    .unwrap_or("")
+                    .to_owned();
+                let parsed_child = child_tree
+                    .as_ref()
+                    .and_then(|value| crate::frames::parse_frame_tree(value).ok());
+                // CDP omits OOPIF roots from the parent's Page.getFrameTree.
+                // Require both an authorized parent session and an explicit
+                // parentFrameId in the owned tree before admitting that root.
+                if owned.contains(&root_frame_id)
+                    || parsed_child
+                        .as_ref()
+                        .and_then(|child| child.parent_id.as_ref())
+                        .is_some_and(|parent| owned.contains(parent))
+                {
+                    if let Some(child_tree) = child_tree
+                        .as_ref()
+                        .and_then(|value| crate::frames::parse_frame_tree(value).ok())
+                    {
+                        crate::frames::merge_frame_tree(&mut tree, &child_tree);
+                        owned = crate::frames::frame_ids(&tree);
+                    }
+                    self.session_request(
+                        &session_id,
+                        "Target.setAutoAttach",
+                        json!({"autoAttach":true,"waitForDebuggerOnStart":false,"flatten":true}),
+                    )
+                    .await?;
+                    parents.insert(session_id.clone());
+                    accepted.push(crate::frames::AuthorizedFrame {
+                        session_id,
+                        frame_id: root_frame_id,
+                    });
+                    progress = true;
+                } else {
+                    let _ = self
+                        .request(
+                            "Target.detachFromTarget",
+                            json!({"sessionId": session_id}),
+                            None,
+                        )
+                        .await;
+                }
+            }
+            pending = rest;
+            if progress {
+                let known: std::collections::HashSet<String> = accepted
+                    .iter()
+                    .map(|frame| frame.session_id.clone())
+                    .chain(pending.iter().map(|(id, _)| id.clone()))
+                    .collect();
+                for event in self.collect_events(Duration::from_millis(50)).await? {
+                    if event["method"] == "Target.attachedToTarget"
+                        && event["params"]["targetInfo"]["type"] == "iframe"
+                    {
+                        if let Some(id) = event["params"]["sessionId"]
+                            .as_str()
+                            .filter(|id| !known.contains(*id))
+                        {
+                            pending
+                                .push((id.into(), event["sessionId"].as_str().map(str::to_owned)));
+                        }
+                    }
+                }
+                if accepted.len() > 256 {
+                    return Err(RobotError::InvalidInput(
+                        "Chrome frame limit exceeded".into(),
+                    ));
+                }
+            }
+            if !progress {
+                break;
+            }
+        }
+        Ok((tree, accepted))
     }
 
     pub async fn close(&mut self) -> Result<(), RobotError> {

@@ -236,6 +236,10 @@ if [ -d "${TEMP_DIR}/qc-web" ]; then
   rm -rf "${INSTALL_DIR}/qc-web"
   cp -R "${TEMP_DIR}/qc-web" "${INSTALL_DIR}/qc-web"
 fi
+if [ -d "${TEMP_DIR}/webview-helper" ]; then
+  mkdir -p "${INSTALL_DIR}/webview-helper"
+  cp -R "${TEMP_DIR}/webview-helper/." "${INSTALL_DIR}/webview-helper/"
+fi
 env -u DEVICE_BOT_ASSET_DIR "${INSTALL_DIR}/${BINARY_NAME}" --check-install
 "${INSTALL_DIR}/scrcpy" --version
 "${INSTALL_DIR}/adb" version

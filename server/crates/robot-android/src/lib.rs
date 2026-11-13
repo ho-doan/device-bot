@@ -821,6 +821,7 @@ fn parse_node(
         selected: optional_bool(&attributes, "selected"),
         value: None,
         element_type: None,
+        web_context: None,
     };
     prepare_elements(std::slice::from_mut(&mut element));
     if element.element_type == Some(ElementType::TextField) {
@@ -1192,6 +1193,8 @@ mod tests {
                 filter: None,
                 element_type: Some(ElementType::TextField),
                 max_results: Some(1),
+                web_context: None,
+                include_frames: false,
             },
         );
         assert_eq!(found.len(), 1);
@@ -1212,7 +1215,9 @@ mod tests {
                 filter: Some("user@example.com".into()),
                 element_type: Some(ElementType::TextField),
                 max_results: Some(2),
-            },
+                        web_context: None,
+            include_frames: false,
+},
         );
         assert_eq!(email.len(), 1);
         assert_eq!(email[0].text.as_deref(), Some("user@example.com"));

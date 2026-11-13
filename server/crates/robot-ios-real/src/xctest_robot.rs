@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use robot_core::{
     Bounds, DeviceState, ElementQuery, ImeAction, Platform, Point, Robot, RobotDevice, RobotError,
-    UiAction, UiElement, UiRunnerStatus, apply_element_query,
+    UiAction, UiElement, UiRunnerStatus, WebContext, apply_element_query,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -655,10 +655,75 @@ impl IosXCTestRobot {
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| "iPhone".into())
     }
+
+    async fn webview_elements(
+        &self,
+        device_id: &str,
+        context: &WebContext,
+        query: &ElementQuery,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        context.validate()?;
+        let bundle_id = context.app_id.as_deref().filter(|id| !id.is_empty()).ok_or_else(|| {
+            RobotError::InvalidInput(
+                "web context needs appId for the iOS WebView; native accessibility is not used as a fallback"
+                    .into(),
+            )
+        })?;
+        let elements = crate::webview::read_dom(device_id, bundle_id, "usbmux", context).await?;
+        let scoped = ElementQuery {
+            include_frames: true,
+            ..query.clone()
+        };
+        Ok(apply_element_query(elements, &scoped))
+    }
+
+    async fn webview_edit(
+        &self,
+        device_id: &str,
+        context: &WebContext,
+        action: &str,
+        text: &str,
+    ) -> Result<(), RobotError> {
+        context.validate()?;
+        let bundle_id = context
+            .app_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| {
+                RobotError::InvalidInput("web context needs appId for the iOS WebView".into())
+            })?;
+        crate::webview::edit_dom(device_id, bundle_id, "usbmux", context, action, text).await
+    }
 }
 
 #[async_trait]
 impl Robot for IosXCTestRobot {
+    async fn scroll_in_context(
+        &self,
+        id: &str,
+        point: Point,
+        dx: f64,
+        dy: f64,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        let Some(context) = context.filter(|value| !value.is_empty()) else {
+            return self.scroll(id, point, dx, dy).await;
+        };
+        self.webview_edit(id, context, "scroll", &json!({"dx":dx,"dy":dy}).to_string())
+            .await
+    }
+
+    async fn tap_in_context(
+        &self,
+        id: &str,
+        point: Point,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        let Some(context) = context.filter(|value| !value.is_empty()) else {
+            return self.tap(id, point).await;
+        };
+        self.webview_edit(id, context, "tap", "").await
+    }
     fn fork_session(&self) -> Option<Arc<dyn Robot>> {
         Some(Arc::new(Self {
             xcrun_path: self.xcrun_path.clone(),
@@ -902,6 +967,29 @@ impl Robot for IosXCTestRobot {
             .map(|_| ())
     }
 
+    async fn type_text_in_context(
+        &self,
+        device_id: &str,
+        text: &str,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        let Some(context) = context.filter(|context| !context.is_empty()) else {
+            return self.type_text(device_id, text).await;
+        };
+        self.webview_edit(device_id, context, "type", text).await
+    }
+
+    async fn clear_text_in_context(
+        &self,
+        device_id: &str,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        let Some(context) = context.filter(|context| !context.is_empty()) else {
+            return self.clear_text(device_id).await;
+        };
+        self.webview_edit(device_id, context, "clear", "").await
+    }
+
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {
         validate_device_id(device_id)?;
         if text.is_empty() || text.contains('\0') {
@@ -1023,6 +1111,13 @@ impl Robot for IosXCTestRobot {
         device_id: &str,
         query: ElementQuery,
     ) -> Result<Vec<UiElement>, RobotError> {
+        if let Some(context) = query
+            .web_context
+            .clone()
+            .filter(|context| !context.is_empty())
+        {
+            return self.webview_elements(device_id, &context, &query).await;
+        }
         let Some(element_type) = query.element_type else {
             return self
                 .list_elements_filtered(device_id, query.filter.as_deref(), query.max_results)
@@ -1221,6 +1316,7 @@ impl XCTestElement {
             selected: self.selected,
             value,
             element_type: None,
+            web_context: None,
         }
     }
 }
@@ -1548,6 +1644,7 @@ mod tests {
             selected: None,
             value: None,
             element_type: None,
+            web_context: None,
         }
     }
 

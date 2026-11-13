@@ -19,7 +19,8 @@ use async_trait::async_trait;
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use robot_core::{
-    Bounds, DeviceState, ElementType, Platform, Point, Robot, RobotDevice, RobotError, UiElement,
+    Bounds, DeviceState, ElementQuery, ElementType, Platform, Point, Robot, RobotDevice,
+    RobotError, UiElement, WebContext, apply_element_query,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -35,6 +36,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 mod connection;
 mod ffmpeg;
+mod frames;
+#[cfg(test)]
+mod iframe_smoke_tests;
 mod live;
 mod managed;
 #[cfg(test)]
@@ -382,8 +386,284 @@ impl ChromeRobot {
                     .get("elementType")
                     .and_then(Value::as_str)
                     .and_then(|element_type| ElementType::parse(element_type).ok()),
+                web_context: None,
             })
             .collect())
+    }
+
+    async fn session_eval(
+        &self,
+        target: &ChromeTarget,
+        session: Option<&str>,
+        frame_id: &str,
+        expression: &str,
+    ) -> Result<Value, RobotError> {
+        let mut browser = self.browser_session.lock().await;
+        let session_owner = browser.as_mut().ok_or_else(|| {
+            RobotError::CommandFailed(
+                "Chrome case context is not started; call mobile_boot_device with chrome:browser"
+                    .into(),
+            )
+        })?;
+        let created = match session {
+            Some(session) => {
+                session_owner
+                    .session_request(
+                        session,
+                        "Page.createIsolatedWorld",
+                        json!({"frameId": frame_id, "worldName": "device-bot"}),
+                    )
+                    .await?
+            }
+            None => {
+                session_owner
+                    .page_request(
+                        target,
+                        "Page.createIsolatedWorld",
+                        json!({"frameId": frame_id, "worldName": "device-bot"}),
+                    )
+                    .await?
+            }
+        };
+        let context_id = created["executionContextId"].as_u64().ok_or_else(|| {
+            RobotError::CommandFailed("Chrome did not return a frame execution context".into())
+        })?;
+        let params = json!({
+            "expression": expression,
+            "contextId": context_id,
+            "returnByValue": true,
+            "awaitPromise": true,
+        });
+        match session {
+            Some(session) => {
+                session_owner
+                    .session_request(session, "Runtime.evaluate", params)
+                    .await
+            }
+            None => {
+                session_owner
+                    .page_request(target, "Runtime.evaluate", params)
+                    .await
+            }
+        }
+    }
+
+    fn elements_from_value(
+        value: &Value,
+        context: Option<WebContext>,
+        origin: Option<(i32, i32)>,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        let values = value.as_array().ok_or_else(|| {
+            RobotError::CommandFailed("Chrome did not return DOM element data".into())
+        })?;
+        Ok(values
+            .iter()
+            .map(|value| {
+                let mut element = UiElement {
+                    class_name: value_string(value, "className")
+                        .unwrap_or_else(|| "element".into()),
+                    resource_id: value_string(value, "resourceId"),
+                    text: value_string(value, "text"),
+                    content_description: value_string(value, "contentDescription"),
+                    bounds: Bounds {
+                        left: value_i32(value, "left"),
+                        top: value_i32(value, "top"),
+                        right: value_i32(value, "right"),
+                        bottom: value_i32(value, "bottom"),
+                    },
+                    clickable: value
+                        .get("clickable")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    enabled: value
+                        .get("enabled")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true),
+                    focused: value.get("focused").and_then(Value::as_bool),
+                    checked: value.get("checked").and_then(Value::as_bool),
+                    selected: value.get("selected").and_then(Value::as_bool),
+                    value: value
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    element_type: value
+                        .get("elementType")
+                        .and_then(Value::as_str)
+                        .and_then(|element_type| ElementType::parse(element_type).ok()),
+                    web_context: context.clone().map(|mut context| {
+                        context.element_ref = value_string(value, "elementRef");
+                        context
+                    }),
+                };
+                if let Some((x, y)) = origin {
+                    element.bounds.left += x;
+                    element.bounds.right += x;
+                    element.bounds.top += y;
+                    element.bounds.bottom += y;
+                }
+                element
+            })
+            .collect())
+    }
+
+    async fn query_child_frames(
+        &self,
+        target: &ChromeTarget,
+        include_root: bool,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        let (tree, authorized) = {
+            let mut browser = self.browser_session.lock().await;
+            let session = browser.as_mut().ok_or_else(|| {
+                RobotError::CommandFailed(
+                    "Chrome case context is not started; call mobile_boot_device with chrome:browser"
+                        .into(),
+                )
+            })?;
+            session.discover_frames(target).await?
+        };
+        let owners_value = self
+            .session_eval(target, None, &tree.id, include_str!("frame-owners.js"))
+            .await?;
+        self.ensure_eval_ok(&owners_value)?;
+        let raw_owners = owners_value
+            .pointer("/result/value")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut owners = frames::bind_owners(&tree.children, &raw_owners);
+        for child in frames::descendant_frames(&tree) {
+            let child_session = frames::session_for_frame(&tree, &child.id, &authorized);
+            if let Ok(nested) = self
+                .session_eval(
+                    target,
+                    child_session,
+                    &child.id,
+                    include_str!("frame-owners.js"),
+                )
+                .await
+            {
+                if let Some(values) = nested.pointer("/result/value").and_then(Value::as_array) {
+                    if let Some(node) = frames::find_frame(&tree, &child.id) {
+                        owners.extend(frames::bind_owners(&node.children, values));
+                    }
+                }
+            }
+        }
+        let expression = format!(
+            "(async () => {{ const deviceBotReferences = {}; const elements = await ({}); return {{elements, truncated: elements.length >= 500}}; }})()",
+            include_str!("../../robot-ios-real/webview-helper/dom-references.js"),
+            include_str!("dom-elements.js")
+        );
+        let mut collected = Vec::new();
+        let mut documents = frames::descendant_frames(&tree);
+        if include_root {
+            documents.insert(0, &tree);
+        }
+        for frame in documents {
+            let session = frames::session_for_frame(&tree, &frame.id, &authorized);
+            let evaluated = self
+                .session_eval(target, session, &frame.id, &expression)
+                .await?;
+            self.ensure_eval_ok(&evaluated)?;
+            let payload = evaluated
+                .pointer("/result/value")
+                .cloned()
+                .unwrap_or(Value::Null);
+            let context = frames::context_for_frame(&tree, &frame.id, &owners)?;
+            let chain = frames::frame_chain(&tree, &frame.id);
+            let origin = frames::map_bounds(
+                Bounds {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 1,
+                },
+                &owners,
+                &chain,
+            )?;
+            let elements = payload["elements"].as_array().cloned().unwrap_or_default();
+            collected.extend(Self::elements_from_value(
+                &Value::Array(elements),
+                Some(context),
+                Some((origin.left, origin.top)),
+            )?);
+        }
+        Ok(collected)
+    }
+
+    fn ensure_eval_ok(&self, result: &Value) -> Result<(), RobotError> {
+        if let Some(exception) = result.get("exceptionDetails") {
+            let detail = exception
+                .pointer("/exception/description")
+                .or_else(|| exception.get("text"))
+                .and_then(Value::as_str)
+                .unwrap_or("JavaScript evaluation failed");
+            return Err(RobotError::CommandFailed(format!(
+                "Chrome DOM/accessibility query failed: {detail}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn eval_in_context(
+        &self,
+        target: &ChromeTarget,
+        context: &WebContext,
+        expression: &str,
+    ) -> Result<(), RobotError> {
+        if let Some(page) = &context.page {
+            if page.url.as_deref().is_some_and(|url| url != target.url)
+                || page
+                    .title
+                    .as_deref()
+                    .is_some_and(|title| title != target.title)
+            {
+                return Err(RobotError::InvalidInput(
+                    "The selected Chrome page changed; inspect it again".into(),
+                ));
+            }
+        }
+        let (tree, authorized) = {
+            let mut browser = self.browser_session.lock().await;
+            let session = browser.as_mut().ok_or_else(|| {
+                RobotError::CommandFailed("Chrome case context is not started".into())
+            })?;
+            session.discover_frames(target).await?
+        };
+        let owners_value = self
+            .session_eval(target, None, &tree.id, include_str!("frame-owners.js"))
+            .await?;
+        self.ensure_eval_ok(&owners_value)?;
+        let raw_owners = owners_value
+            .pointer("/result/value")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut owners = frames::bind_owners(&tree.children, &raw_owners);
+        for child in frames::descendant_frames(&tree) {
+            let child_session = frames::session_for_frame(&tree, &child.id, &authorized);
+            if let Ok(nested) = self
+                .session_eval(
+                    target,
+                    child_session,
+                    &child.id,
+                    include_str!("frame-owners.js"),
+                )
+                .await
+            {
+                if let Some(values) = nested.pointer("/result/value").and_then(Value::as_array) {
+                    if let Some(node) = frames::find_frame(&tree, &child.id) {
+                        owners.extend(frames::bind_owners(&node.children, values));
+                    }
+                }
+            }
+        }
+        let frame = frames::resolve_frame(&tree, &owners, context)?;
+        let session = frames::session_for_frame(&tree, &frame.id, &authorized);
+        let result = self
+            .session_eval(target, session, &frame.id, expression)
+            .await?;
+        self.ensure_eval_ok(&result)
     }
 
     async fn dispatch_tap(&self, target: &ChromeTarget, point: Point) -> Result<(), RobotError> {
@@ -456,6 +736,56 @@ fn value_i32(value: &Value, key: &str) -> i32 {
 
 #[async_trait]
 impl Robot for ChromeRobot {
+    async fn scroll_in_context(
+        &self,
+        id: &str,
+        point: Point,
+        dx: f64,
+        dy: f64,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        let Some(context) = context.filter(|value| !value.is_empty()) else {
+            return self.scroll(id, point, dx, dy).await;
+        };
+        let reference = context.element_ref.as_ref().ok_or_else(|| {
+            RobotError::InvalidInput("Inspect the DOM element again before scrolling it".into())
+        })?;
+        if !dx.is_finite() || !dy.is_finite() {
+            return Err(RobotError::InvalidInput("Invalid scroll delta".into()));
+        }
+        let target = self.page(id).await?;
+        let script = format!(
+            "({})(document, {}, {}, {}, {})",
+            include_str!("../../robot-ios-real/webview-helper/dom-scroll.js"),
+            include_str!("../../robot-ios-real/webview-helper/dom-references.js"),
+            serde_json::to_string(reference).unwrap(),
+            dx,
+            dy
+        );
+        self.eval_in_context(&target, context, &script).await
+    }
+
+    async fn tap_in_context(
+        &self,
+        id: &str,
+        point: Point,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        let Some(context) = context.filter(|value| !value.is_empty()) else {
+            return self.tap(id, point).await;
+        };
+        let reference = context.element_ref.as_ref().ok_or_else(|| {
+            RobotError::InvalidInput("Inspect the DOM element again before activating it".into())
+        })?;
+        let target = self.page(id).await?;
+        let script = format!(
+            "({})(document, {}, {})",
+            include_str!("../../robot-ios-real/webview-helper/dom-tap.js"),
+            include_str!("../../robot-ios-real/webview-helper/dom-references.js"),
+            serde_json::to_string(reference).unwrap()
+        );
+        self.eval_in_context(&target, context, &script).await
+    }
     async fn negotiate_native_video(
         &self,
         id: &str,
@@ -810,7 +1140,88 @@ impl Robot for ChromeRobot {
 
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         let target = self.page(device_id).await?;
-        self.query_dom(&target).await
+        let mut elements = self.query_dom(&target).await?;
+        // A child-frame failure keeps the root document usable.
+        if let Ok(children) = self.query_child_frames(&target, false).await {
+            elements.extend(children);
+        }
+        Ok(elements)
+    }
+
+    async fn list_elements_query(
+        &self,
+        device_id: &str,
+        query: ElementQuery,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        if let Some(context) = query.web_context.clone() {
+            context.validate()?;
+            if !context.is_empty() {
+                let target = self.page(device_id).await?;
+                self.eval_in_context(&target, &context, "true").await?;
+                let mut elements = self
+                    .query_child_frames(&target, context.frame_path.is_empty())
+                    .await?;
+                for element in &mut elements {
+                    if let Some(actual) = element.web_context.as_mut() {
+                        actual.page = context.page.clone();
+                    }
+                }
+                let scoped = ElementQuery {
+                    include_frames: true,
+                    ..query
+                };
+                return Ok(apply_element_query(elements, &scoped));
+            }
+        }
+        if query.include_frames {
+            let target = self.page(device_id).await?;
+            let mut elements = self.query_dom(&target).await?;
+            elements.extend(self.query_child_frames(&target, false).await?);
+            return Ok(apply_element_query(elements, &query));
+        }
+        let target = self.page(device_id).await?;
+        let elements = self.query_dom(&target).await?;
+        Ok(apply_element_query(elements, &query))
+    }
+
+    async fn type_text_in_context(
+        &self,
+        device_id: &str,
+        text: &str,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        let Some(context) = context.filter(|context| !context.is_empty()) else {
+            return self.type_text(device_id, text).await;
+        };
+        context.validate()?;
+        let target = self.page(device_id).await?;
+        let script = format!(
+            "({})(document, {}, {}, \"type\", {})",
+            include_str!("../../robot-ios-real/webview-helper/dom-edit.js"),
+            include_str!("../../robot-ios-real/webview-helper/dom-references.js"),
+            serde_json::to_string(&context.element_ref).unwrap(),
+            serde_json::to_string(text).unwrap()
+        );
+        self.eval_in_context(&target, context, &script).await
+    }
+
+    async fn clear_text_in_context(
+        &self,
+        device_id: &str,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        let Some(context) = context.filter(|context| !context.is_empty()) else {
+            return self.clear_text(device_id).await;
+        };
+        context.validate()?;
+        let target = self.page(device_id).await?;
+        let script = format!(
+            "({})(document, {}, {}, \"clear\", \"\")",
+            include_str!("../../robot-ios-real/webview-helper/dom-edit.js"),
+            include_str!("../../robot-ios-real/webview-helper/dom-references.js"),
+            serde_json::to_string(&context.element_ref).unwrap()
+        );
+        self.eval_in_context(&target, context, &script).await
     }
 }
 

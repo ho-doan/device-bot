@@ -5,6 +5,21 @@ import 'package:mobile_mcp_companion/companion_home.dart';
 import 'package:mobile_mcp_companion/models.dart';
 
 void main() {
+  test(
+    'DOM runtime references are sent with actions and excluded from YAML',
+    () {
+      final context = WebContext.fromJson({
+        'appId': 'fixture.app',
+        'elementRef': 'document:node',
+        'page': {'url': 'https://fixture/'},
+        'framePath': <dynamic>[],
+      });
+      expect(context.toJson()['elementRef'], 'document:node');
+      expect(context.toYaml(''), contains('app_id: "fixture.app"'));
+      expect(context.toYaml(''), isNot(contains('document:node')));
+      expect(context.identity, isNot(contains('document:node')));
+    },
+  );
   test('parses the public admin API response shapes', () {
     final device = AdminDevice.fromJson({
       'id': 'device-1',

@@ -17,7 +17,7 @@ pub(super) fn definitions() -> [ToolDefinition; 5] {
     [
         ToolDefinition { name:SCROLL_NAME.into(),title:Some("Scroll by pixels".into()),
             description:"Scroll at a viewport point by deltaX/deltaY pixels. Chrome uses wheel input; Android uses the equivalent touch displacement.".into(),
-            input_schema:json!({"type":"object","properties":{"deviceId":{"type":"string","minLength":1},"x":{"type":"number"},"y":{"type":"number"},"deltaX":{"type":"number","minimum":-10000,"maximum":10000},"deltaY":{"type":"number","minimum":-10000,"maximum":10000}},"required":["deviceId","x","y","deltaX","deltaY"],"additionalProperties":false}) },
+            input_schema:json!({"type":"object","properties":{"deviceId":{"type":"string","minLength":1},"x":{"type":"number"},"y":{"type":"number"},"deltaX":{"type":"number","minimum":-10000,"maximum":10000},"deltaY":{"type":"number","minimum":-10000,"maximum":10000},"webContext":{"type":"object"}},"required":["deviceId","x","y","deltaX","deltaY"],"additionalProperties":false}) },
         ToolDefinition {
             name: DISPLAYS_NAME.into(), title: Some("List desktop displays".into()),
             description: "List macOS/Windows displays with IDs, primary status and global coordinate bounds. Refresh before capture when the monitor configuration changes.".into(),
@@ -43,7 +43,8 @@ pub(super) fn definitions() -> [ToolDefinition; 5] {
                 "properties": {
                     "deviceId": { "type": "string", "minLength": 1 },
                     "x": { "type": "number" },
-                    "y": { "type": "number" }
+                    "y": { "type": "number" },
+                    "webContext": { "type": "object" }
                 },
                 "required": ["deviceId", "x", "y"],
                 "additionalProperties": false
@@ -142,7 +143,19 @@ pub(super) async fn tap(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResult
         Err(error) => return error,
     };
 
-    match robot.tap(&device_id, Point { x, y }).await {
+    let context: Option<robot_core::WebContext> = match arguments.get("webContext") {
+        Some(value) => match serde_json::from_value(value.clone()) {
+            Ok(context) => Some(context),
+            Err(error) => {
+                return ToolResult::execution_error(format!("invalid webContext: {error}"));
+            }
+        },
+        None => None,
+    };
+    match robot
+        .tap_in_context(&device_id, Point { x, y }, context.as_ref())
+        .await
+    {
         Ok(()) => ToolResult::text("Tap completed"),
         Err(error) => ToolResult::execution_error(error.to_string()),
     }
@@ -217,8 +230,17 @@ pub(super) async fn scroll(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolRes
     if values[2].abs() > 10000. || values[3].abs() > 10000. {
         return ToolResult::execution_error("Scroll delta exceeds 10000 pixels");
     }
+    let context: Option<robot_core::WebContext> = match arguments.get("webContext") {
+        Some(value) => match serde_json::from_value(value.clone()) {
+            Ok(context) => Some(context),
+            Err(error) => {
+                return ToolResult::execution_error(format!("invalid webContext: {error}"));
+            }
+        },
+        None => None,
+    };
     match robot
-        .scroll(
+        .scroll_in_context(
             &id,
             Point {
                 x: values[0],
@@ -226,6 +248,7 @@ pub(super) async fn scroll(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolRes
             },
             values[2],
             values[3],
+            context.as_ref(),
         )
         .await
     {

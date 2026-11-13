@@ -231,12 +231,93 @@ impl ImeAction {
     }
 }
 
+/// One hop from a parent document to the iframe or WebView frame it owns.
+///
+/// Selectors name the owner element in the parent. Runtime frame and session
+/// ids are never stored here.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebFrameSelector {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub css: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// One-based position among owners that match the other fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebPageSelector {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+/// Stable document identity for a Chrome frame or an in-app WebView.
+///
+/// An empty value means the driver's unscoped root document. Old YAML stays
+/// unscoped and must not start matching descendant frames.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebContext {
+    /// Runtime-only node identity. Never persist in a replay selector.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<WebPageSelector>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frame_path: Vec<WebFrameSelector>,
+}
+
+impl WebContext {
+    pub fn is_empty(&self) -> bool {
+        self.app_id.as_deref().unwrap_or("").is_empty()
+            && self.page.as_ref().is_none_or(|page| {
+                page.url.as_deref().unwrap_or("").is_empty()
+                    && page.title.as_deref().unwrap_or("").is_empty()
+            })
+            && self.frame_path.is_empty()
+            && self.element_ref.is_none()
+    }
+
+    pub fn validate(&self) -> Result<(), RobotError> {
+        for (index, frame) in self.frame_path.iter().enumerate() {
+            let css = frame.css.as_deref().unwrap_or("").trim();
+            let name = frame.name.as_deref().unwrap_or("").trim();
+            let url = frame.url.as_deref().unwrap_or("").trim();
+            if css.is_empty() && name.is_empty() && url.is_empty() {
+                return Err(RobotError::InvalidInput(format!(
+                    "web frame {} needs a css selector, name, or url",
+                    index + 1
+                )));
+            }
+            if frame.position.is_some_and(|position| position == 0) {
+                return Err(RobotError::InvalidInput(
+                    "web frame position is one-based".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Owned query so drivers can apply type and text before `max_results`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ElementQuery {
     pub filter: Option<String>,
     pub element_type: Option<ElementType>,
     pub max_results: Option<usize>,
+    /// When set, only elements in this document are eligible.
+    pub web_context: Option<WebContext>,
+    /// Live inspection opts into descendant frames. Unscoped queries stay on the root document.
+    pub include_frames: bool,
 }
 
 /// A normalized accessibility node from the platform UI tree.
@@ -264,6 +345,9 @@ pub struct UiElement {
     pub value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub element_type: Option<ElementType>,
+    /// Present when the node was read from a descendant frame or in-app WebView.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_context: Option<WebContext>,
 }
 
 /// A UI input operation that can be executed in one driver session.
@@ -333,6 +417,35 @@ pub struct NativeVideoStream {
 /// Async, platform-independent device control boundary.
 #[async_trait]
 pub trait Robot: Send + Sync {
+    async fn scroll_in_context(
+        &self,
+        id: &str,
+        point: Point,
+        dx: f64,
+        dy: f64,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        if context.is_some_and(|value| !value.is_empty()) {
+            return Err(RobotError::Unsupported(
+                "context-bound DOM scrolling is unavailable".into(),
+            ));
+        }
+        self.scroll(id, point, dx, dy).await
+    }
+    /// DOM activation must validate the node's document before acting.
+    async fn tap_in_context(
+        &self,
+        id: &str,
+        point: Point,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        if context.is_some_and(|value| !value.is_empty()) {
+            return Err(RobotError::Unsupported(
+                "context-bound DOM activation is unavailable".into(),
+            ));
+        }
+        self.tap(id, point).await
+    }
     async fn stream_context(&self, _id: &str) -> Result<Value, RobotError> {
         Ok(Value::Null)
     }
@@ -570,11 +683,12 @@ pub trait Robot: Send + Sync {
             elements,
             &ElementQuery {
                 filter: filter.map(str::to_owned),
-                element_type: None,
                 max_results,
+                ..ElementQuery::default()
             },
         ))
     }
+
     /// Applies `element_type` and `filter` before `max_results`.
     ///
     /// Queries without a type keep the driver's `list_elements_filtered` path.
@@ -585,6 +699,15 @@ pub trait Robot: Send + Sync {
         device_id: &str,
         query: ElementQuery,
     ) -> Result<Vec<UiElement>, RobotError> {
+        if query
+            .web_context
+            .as_ref()
+            .is_some_and(|context| !context.is_empty())
+        {
+            return Err(RobotError::Unsupported(format!(
+                "web context queries are not supported for {device_id}"
+            )));
+        }
         if query.element_type.is_none() {
             return self
                 .list_elements_filtered(device_id, query.filter.as_deref(), query.max_results)
@@ -593,10 +716,39 @@ pub trait Robot: Send + Sync {
         let elements = self.list_elements(device_id).await?;
         Ok(apply_element_query(elements, &query))
     }
+
     /// Presses one named IME action on the focused editor.
     ///
     /// The default is an explicit capability error. Sending Enter or moving focus
     /// is not a fallback for drivers that cannot perform the requested action.
+    /// Types into the focused editable in `context` when that document is not the unscoped root.
+    async fn type_text_in_context(
+        &self,
+        device_id: &str,
+        text: &str,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        if context.is_some_and(|context| !context.is_empty()) {
+            return Err(RobotError::Unsupported(format!(
+                "web context typing is not supported for {device_id}"
+            )));
+        }
+        self.type_text(device_id, text).await
+    }
+
+    async fn clear_text_in_context(
+        &self,
+        device_id: &str,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        if context.is_some_and(|context| !context.is_empty()) {
+            return Err(RobotError::Unsupported(format!(
+                "web context clearing is not supported for {device_id}"
+            )));
+        }
+        self.clear_text(device_id).await
+    }
+
     async fn press_ime_action(&self, device_id: &str, action: ImeAction) -> Result<(), RobotError> {
         Err(RobotError::Unsupported(format!(
             "IME action {} is not supported for device {device_id}",
@@ -679,8 +831,54 @@ pub fn element_matches_filter(element: &UiElement, filter: &str) -> bool {
 }
 
 /// Filters by type and text, then applies `max_results`.
+pub fn web_context_matches(element: &WebContext, query: &WebContext) -> bool {
+    if query.app_id.is_some() && query.app_id != element.app_id {
+        return false;
+    }
+    if let Some(page) = &query.page {
+        let Some(actual) = &element.page else {
+            return false;
+        };
+        if page.url.is_some() && page.url != actual.url
+            || page.title.is_some() && page.title != actual.title
+        {
+            return false;
+        }
+    }
+    query.frame_path.len() == element.frame_path.len()
+        && query
+            .frame_path
+            .iter()
+            .zip(&element.frame_path)
+            .all(|(expected, actual)| {
+                (expected.css.is_none() || expected.css == actual.css)
+                    && (expected.name.is_none() || expected.name == actual.name)
+                    && (expected.url.is_none() || expected.url == actual.url)
+                    && (expected.position.is_none() || expected.position == actual.position)
+            })
+}
+
 pub fn apply_element_query(mut elements: Vec<UiElement>, query: &ElementQuery) -> Vec<UiElement> {
     prepare_elements(&mut elements);
+    if let Some(context) = query
+        .web_context
+        .as_ref()
+        .filter(|context| !context.is_empty())
+    {
+        elements.retain(|element| {
+            element
+                .web_context
+                .as_ref()
+                .is_some_and(|candidate| web_context_matches(candidate, context))
+        });
+    } else if !query.include_frames {
+        elements.retain(|element| {
+            element
+                .web_context
+                .as_ref()
+                .is_none_or(|context| context.frame_path.is_empty() && context.app_id.is_none())
+        });
+    }
     if let Some(filter) = query.filter.as_deref() {
         elements.retain(|element| element_matches_filter(element, filter));
     }
@@ -732,6 +930,51 @@ impl RobotRegistry {
 
 #[async_trait]
 impl Robot for RobotRegistry {
+    async fn scroll_in_context(
+        &self,
+        id: &str,
+        point: Point,
+        dx: f64,
+        dy: f64,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .scroll_in_context(id, point, dx, dy, context)
+            .await
+    }
+    async fn type_text_in_context(
+        &self,
+        id: &str,
+        text: &str,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .type_text_in_context(id, text, context)
+            .await
+    }
+    async fn clear_text_in_context(
+        &self,
+        id: &str,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .clear_text_in_context(id, context)
+            .await
+    }
+    async fn tap_in_context(
+        &self,
+        id: &str,
+        point: Point,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .tap_in_context(id, point, context)
+            .await
+    }
     async fn stream_context(&self, id: &str) -> Result<Value, RobotError> {
         self.driver_for(id).await?.stream_context(id).await
     }
@@ -955,6 +1198,24 @@ mod tests {
 
     #[async_trait]
     impl Robot for StubRobot {
+        async fn type_text_in_context(
+            &self,
+            id: &str,
+            _: &str,
+            context: Option<&WebContext>,
+        ) -> Result<(), RobotError> {
+            Err(RobotError::CommandFailed(format!(
+                "forwarded:{id}:{}",
+                context.unwrap().app_id.as_deref().unwrap()
+            )))
+        }
+        async fn clear_text_in_context(
+            &self,
+            id: &str,
+            context: Option<&WebContext>,
+        ) -> Result<(), RobotError> {
+            self.type_text_in_context(id, "", context).await
+        }
         async fn stream_context(&self, id: &str) -> Result<Value, RobotError> {
             Ok(serde_json::json!({ "deviceId": id }))
         }
@@ -1028,6 +1289,7 @@ mod tests {
             selected: None,
             value: None,
             element_type: None,
+            web_context: None,
         }
     }
 
@@ -1093,6 +1355,8 @@ mod tests {
                     filter: None,
                     element_type: Some(ElementType::TextField),
                     max_results: Some(1),
+                    web_context: None,
+                    include_frames: false,
                 },
             )
             .await
@@ -1111,6 +1375,8 @@ mod tests {
                     filter: Some("user@example.com".into()),
                     element_type: Some(ElementType::TextField),
                     max_results: Some(2),
+                    web_context: None,
+                    include_frames: false,
                 },
             )
             .await
@@ -1184,6 +1450,73 @@ mod tests {
             &registry.driver_for("chrome:browser").await.unwrap(),
             &driver
         ));
+    }
+
+    #[tokio::test]
+    async fn registry_forwards_context_editing_to_the_selected_driver() {
+        let registry = RobotRegistry::new(vec![Arc::new(StubRobot {
+            device: Some(RobotDevice {
+                id: "ios-fixture".into(),
+                name: "Fixture".into(),
+                platform: Platform::Ios,
+                state: DeviceState::Available,
+            }),
+            list_error: false,
+        }) as Arc<dyn Robot>]);
+        let context = WebContext {
+            app_id: Some("fixture.app".into()),
+            ..Default::default()
+        };
+        for result in [
+            registry
+                .type_text_in_context("ios-fixture", "text", Some(&context))
+                .await,
+            registry
+                .clear_text_in_context("ios-fixture", Some(&context))
+                .await,
+        ] {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("forwarded:ios-fixture:fixture.app")
+            );
+        }
+    }
+
+    #[test]
+    fn context_queries_match_constraints_without_runtime_identity() {
+        let actual = WebContext {
+            app_id: Some("fixture.app".into()),
+            page: Some(WebPageSelector {
+                url: Some("https://fixture/".into()),
+                title: Some("Fixture".into()),
+            }),
+            element_ref: Some("runtime:1".into()),
+            frame_path: vec![WebFrameSelector {
+                css: Some("iframe#payment".into()),
+                name: Some("payment".into()),
+                ..Default::default()
+            }],
+        };
+        let query = WebContext {
+            app_id: actual.app_id.clone(),
+            page: Some(WebPageSelector {
+                url: Some("https://fixture/".into()),
+                ..Default::default()
+            }),
+            frame_path: vec![WebFrameSelector {
+                name: Some("payment".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(web_context_matches(&actual, &query));
+        let wrong = WebContext {
+            app_id: Some("another.app".into()),
+            ..query
+        };
+        assert!(!web_context_matches(&actual, &wrong));
     }
 
     #[tokio::test]

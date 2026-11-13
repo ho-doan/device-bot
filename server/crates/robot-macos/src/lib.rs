@@ -543,6 +543,7 @@ fn native_collect_elements(
                     selected: None,
                     value,
                     element_type: None,
+                    web_context: None,
                 });
             }
         }
@@ -1145,6 +1146,7 @@ fn parse_accessibility_elements(output: &str) -> Vec<UiElement> {
                 selected: None,
                 value,
                 element_type: None,
+                web_context: None,
             })
         })
         .collect()
@@ -1618,6 +1620,26 @@ impl Robot for MacosRobot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn window_live_ids_reach_the_real_macos_driver() {
+        let robot = MacosRobot::new("artifacts");
+        assert!(robot.require_device("macos:38553:2219").is_ok());
+        let registry = robot_core::RobotRegistry::new(vec![Arc::new(robot) as Arc<dyn Robot>]);
+        assert!(
+            registry
+                .negotiate_native_video("macos:38553:2219", "")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // A gone window must reach geometry validation, never fail registry routing.
+        assert!(matches!(
+            registry.stream_context("macos:2147483647:4294967295").await,
+            Err(RobotError::InvalidInput(_))
+        ));
+    }
 
     #[tokio::test]
     async fn target_selection_is_isolated_per_mcp_session() {

@@ -9,10 +9,13 @@ String buildInspectorFlowYaml({
   String inputText = '',
   List<AdminElement> elements = const [],
 }) {
-  final selectedIndex = elements.indexOf(element);
+  final peers = elements
+      .where((candidate) => _sameWebContext(candidate, element))
+      .toList();
+  final selectedIndex = peers.indexOf(element);
   final classPosition = selectedIndex < 0
       ? 1
-      : elements
+      : peers
             .take(selectedIndex + 1)
             .where(
               (candidate) => candidate.className.contains(element.className),
@@ -24,12 +27,11 @@ String buildInspectorFlowYaml({
   final uniqueId =
       id != null &&
       id.isNotEmpty &&
-      (elements.isEmpty ||
-          elements.where((e) => e.resourceId == id).length == 1);
+      (peers.isEmpty || peers.where((e) => e.resourceId == id).length == 1);
   final uniqueLabel =
       element.hasLabel &&
-      (elements.isEmpty ||
-          elements
+      (peers.isEmpty ||
+          peers
                   .where(
                     (e) => [e.text, e.contentDescription].any(
                       (value) =>
@@ -42,26 +44,31 @@ String buildInspectorFlowYaml({
                   )
                   .length ==
               1);
+  final context = element.webContext == null || element.webContext!.isEmpty
+      ? ''
+      : '${element.webContext!.toYaml('      ')}\n';
   final source = element.source == null
       ? ''
       : '      source: ${element.source}\n';
   if (uniqueId) {
-    selector = '$source      resource_id: "${_yamlQuoteValue(id)}"';
+    selector = '$context$source      resource_id: "${_yamlQuoteValue(id)}"';
   } else if (uniqueLabel) {
-    selector = '$source      label: "${_yamlQuoteValue(element.name)}"';
+    selector = '$context$source      label: "${_yamlQuoteValue(element.name)}"';
   } else if (element.position != null || selectedIndex >= 0) {
     selector = [
+      if (context.isNotEmpty) context.trimRight(),
       if (element.source != null) '      source: ${element.source}',
       '      class_contains: "${_yamlQuoteValue(element.className)}"',
       '      position: $position',
     ].join('\n');
   } else if (element.resourceId?.trim().isNotEmpty ?? false) {
-    selector = '      resource_id: "${_yamlQuoteValue(element.resourceId!)}"';
+    selector =
+        '$context      resource_id: "${_yamlQuoteValue(element.resourceId!)}"';
   } else if (element.hasLabel) {
-    selector = '      label: "${_yamlQuoteValue(element.name)}"';
+    selector = '$context      label: "${_yamlQuoteValue(element.name)}"';
   } else {
     selector =
-        '      class_contains: "${_yamlQuoteValue(element.className)}"\n'
+        '$context      class_contains: "${_yamlQuoteValue(element.className)}"\n'
         '      position: 1';
   }
   switch (action) {
@@ -70,7 +77,8 @@ String buildInspectorFlowYaml({
     case InspectorFlowAction.typeText:
       return '  - id: tap_element_$sequence\n    tap_element:\n$selector\n'
           '  - id: type_text_$sequence\n    type_text:\n'
-          '      text: "${_yamlQuoteValue(inputText)}"';
+          '      text: "${_yamlQuoteValue(inputText)}"'
+          '${context.isEmpty ? '' : '\n$context'}';
     case InspectorFlowAction.assertVisible:
       return '  - id: assert_element_$sequence\n    assert_element:\n$selector';
     case InspectorFlowAction.scrollUp:
@@ -82,3 +90,6 @@ String buildInspectorFlowYaml({
 
 String _yamlQuoteValue(String value) =>
     value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', ' ');
+
+bool _sameWebContext(AdminElement left, AdminElement right) =>
+    (left.webContext?.identity ?? '') == (right.webContext?.identity ?? '');

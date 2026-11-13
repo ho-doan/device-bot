@@ -52,6 +52,7 @@ Offset? devicePointForLocal({
 
 AdminElement? elementAtDevicePoint(List<AdminElement> elements, Offset point) {
   for (final element in elements.reversed) {
+    if (element.webContext?.appId != null) continue;
     final bounds = element.bounds;
     if (point.dx >= bounds.left &&
         point.dx <= bounds.right &&
@@ -429,6 +430,19 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     final queuedVideo = _video;
     final snapshot = List<AdminElement>.of(_elements);
     final selected = _selectedIndex == null ? null : snapshot[_selectedIndex!];
+    if (input['action'] == 'type' || input['action'] == 'clear') {
+      final focused = snapshot
+          .where((element) => element.focused == true)
+          .toList();
+      final field = selected?.webContext != null
+          ? selected
+          : focused.length == 1
+          ? focused.single
+          : null;
+      if (field?.webContext != null) {
+        input = {...input, 'webContext': field!.webContext!.toJson()};
+      }
+    }
     // Resolve the selector at click time. Reserve the sequence inside the queue.
     _inputs = _inputs
         .then((_) async {
@@ -485,7 +499,15 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     final y = (bounds != null ? (bounds.top + bounds.bottom) / 2 : height / 2)
         .clamp(math.min(51.0, height / 2), math.max(height - 51, height / 2));
     if (x <= 0 || y <= 0) return;
-    _send({'action': 'scroll', 'x': x, 'y': y, 'deltaX': 0, 'deltaY': delta});
+    _send({
+      'action': 'scroll',
+      'x': x,
+      'y': y,
+      'deltaX': 0,
+      'deltaY': delta,
+      if (selected?.webContext != null)
+        'webContext': selected!.webContext!.toJson(),
+    });
   }
 
   Future<void> _exportRecording() async {
@@ -550,6 +572,8 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     final bounds = element.bounds;
     _send({
       'action': 'tap',
+      if (element.webContext != null)
+        'webContext': element.webContext!.toJson(),
       'x': ((bounds.left + bounds.right) / 2).round(),
       'y': ((bounds.top + bounds.bottom) / 2).round(),
     });
@@ -1130,6 +1154,8 @@ class _LiveBoxPainter extends CustomPainter {
     final scaleX = fitted.width / imageSize.width;
     final scaleY = fitted.height / imageSize.height;
     for (var index = 0; index < elements.length; index++) {
+      // WebView CSS rectangles have no verified native screen mapping yet.
+      if (elements[index].webContext?.appId != null) continue;
       final bounds = elements[index].bounds;
       final rect = Rect.fromLTRB(
         fitted.left + bounds.left * scaleX,

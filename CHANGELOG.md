@@ -1,4 +1,16 @@
-## Unreleased
+## 0.1.17 — 2026-11-13
+
+* Keep Windows Live app/window discovery usable when a window title contains
+  malformed UTF-16, while preserving valid emoji and window identities.
+* Bind iframe/WebView activation and scrolling to the selected DOM document and
+  node; reject stale references instead of sending native input to old bounds.
+* Ship the optional iOS WebView helper, dependency lockfile and setup guide in
+  native archives and preserve it during installation.
+* Read Chrome iframe documents, including nested and cross-origin frames, and
+  keep their stable `web_context` on elements, input, and YAML replay. Unscoped
+  selectors stay on the root document.
+* Add an iOS in-app WebView helper seam. An explicit web context never falls
+  back to XCTest, and a missing helper leaves native accessibility usable.
 
 ## 0.1.11 — 2026-11-12
 

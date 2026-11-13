@@ -407,6 +407,7 @@ mod tests {
                 selected: None,
                 value: None,
                 element_type: None,
+                web_context: None,
             }])
         }
     }

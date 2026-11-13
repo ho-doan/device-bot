@@ -270,6 +270,123 @@ class AdminBounds {
   int get height => bottom - top;
 }
 
+class WebFrameSelector {
+  const WebFrameSelector({this.css, this.name, this.url, this.position});
+
+  factory WebFrameSelector.fromJson(Map<String, dynamic> json) =>
+      WebFrameSelector(
+        css: json['css'] as String?,
+        name: json['name'] as String?,
+        url: json['url'] as String?,
+        position: json['position'] as int?,
+      );
+
+  final String? css;
+  final String? name;
+  final String? url;
+  final int? position;
+
+  Map<String, dynamic> toJson() => {
+    'css': ?css,
+    'name': ?name,
+    'url': ?url,
+    'position': ?position,
+  };
+}
+
+class WebContext {
+  const WebContext({
+    this.elementRef,
+    this.appId,
+    this.pageUrl,
+    this.pageTitle,
+    this.framePath = const [],
+  });
+
+  factory WebContext.fromJson(Map<String, dynamic> json) {
+    final page = json['page'];
+    final frames = json['framePath'];
+    return WebContext(
+      elementRef: json['elementRef'] as String?,
+      appId: json['appId'] as String?,
+      pageUrl: page is Map ? page['url'] as String? : null,
+      pageTitle: page is Map ? page['title'] as String? : null,
+      framePath: frames is List
+          ? [
+              for (final frame in frames)
+                if (frame is Map)
+                  WebFrameSelector.fromJson(Map<String, dynamic>.from(frame)),
+            ]
+          : const [],
+    );
+  }
+
+  final String? elementRef;
+  final String? appId;
+  final String? pageUrl;
+  final String? pageTitle;
+  final List<WebFrameSelector> framePath;
+
+  bool get isEmpty =>
+      (appId == null || appId!.isEmpty) &&
+      (pageUrl == null || pageUrl!.isEmpty) &&
+      (pageTitle == null || pageTitle!.isEmpty) &&
+      framePath.isEmpty;
+
+  String get identity => [
+    appId ?? '',
+    pageUrl ?? '',
+    pageTitle ?? '',
+    for (final frame in framePath)
+      '${frame.css}|${frame.name}|${frame.url}|${frame.position}',
+  ].join('\n');
+
+  Map<String, dynamic> toJson() => {
+    'elementRef': ?elementRef,
+    'appId': ?appId,
+    'page': pageUrl == null && pageTitle == null
+        ? null
+        : {'url': ?pageUrl, 'title': ?pageTitle},
+    'framePath': [for (final frame in framePath) frame.toJson()],
+  }..removeWhere((key, value) => value == null);
+
+  String toYaml(String indent) {
+    final lines = <String>['${indent}web_context:'];
+    if (appId != null && appId!.isNotEmpty) {
+      lines.add('$indent  app_id: "${_yaml(appId!)}"');
+    }
+    if ((pageUrl != null && pageUrl!.isNotEmpty) ||
+        (pageTitle != null && pageTitle!.isNotEmpty)) {
+      lines.add('$indent  page:');
+      if (pageUrl != null && pageUrl!.isNotEmpty) {
+        lines.add('$indent    url: "${_yaml(pageUrl!)}"');
+      }
+      if (pageTitle != null && pageTitle!.isNotEmpty) {
+        lines.add('$indent    title: "${_yaml(pageTitle!)}"');
+      }
+    }
+    if (framePath.isNotEmpty) {
+      lines.add('$indent  frame_path:');
+      for (final frame in framePath) {
+        final fields = <String>[
+          if (frame.css != null && frame.css!.isNotEmpty)
+            'css: "${_yaml(frame.css!)}"',
+          if (frame.name != null && frame.name!.isNotEmpty)
+            'name: "${_yaml(frame.name!)}"',
+          if (frame.url != null && frame.url!.isNotEmpty)
+            'url: "${_yaml(frame.url!)}"',
+          if (frame.position != null) 'position: ${frame.position}',
+        ];
+        lines.add('$indent    - ${fields.join('\n$indent      ')}');
+      }
+    }
+    return lines.join('\n');
+  }
+}
+
+String _yaml(String value) =>
+    value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', ' ');
+
 class AdminElement {
   const AdminElement({
     required this.className,
@@ -284,6 +401,7 @@ class AdminElement {
     this.position,
     this.focused,
     this.elementType,
+    this.webContext,
   });
 
   factory AdminElement.fromJson(Map<String, dynamic> json) => AdminElement(
@@ -299,6 +417,11 @@ class AdminElement {
     position: json['position'] as int?,
     focused: json['focused'] as bool?,
     elementType: json['elementType'] as String?,
+    webContext: json['webContext'] is Map
+        ? WebContext.fromJson(
+            Map<String, dynamic>.from(json['webContext'] as Map),
+          )
+        : null,
   );
 
   final String className;
@@ -310,6 +433,7 @@ class AdminElement {
   final bool enabled;
   final bool? focused;
   final String? elementType;
+  final WebContext? webContext;
   bool get isEditable =>
       elementType == 'textField' ||
       className.toLowerCase().contains('edittext');

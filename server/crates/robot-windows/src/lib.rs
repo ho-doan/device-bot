@@ -186,7 +186,7 @@ struct WindowProcess {
 }
 
 fn parse_window_processes(output: &[u8]) -> Result<Vec<WindowProcess>, RobotError> {
-    let value = serde_json::from_slice::<Value>(output).map_err(|error| {
+    let value = parse_powershell_json(output).map_err(|error| {
         RobotError::CommandFailed(format!("PowerShell returned invalid window JSON: {error}"))
     })?;
     let rows = match value {
@@ -230,6 +230,52 @@ fn parse_window_processes(output: &[u8]) -> Result<Vec<WindowProcess>, RobotErro
             })
         })
         .collect()
+}
+
+/// .NET window/UIA strings may contain unpaired UTF-16 code units. Preserve
+/// valid pairs and literal backslashes, replacing only isolated surrogates.
+fn parse_powershell_json(output: &[u8]) -> Result<Value, serde_json::Error> {
+    let output = output.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(output);
+    let unit = |at: usize| -> Option<u16> {
+        if output.get(at..at + 2)? != b"\\u" {
+            return None;
+        }
+        u16::from_str_radix(std::str::from_utf8(output.get(at + 2..at + 6)?).ok()?, 16).ok()
+    };
+    let mut normalized = Vec::with_capacity(output.len());
+    let mut at = 0;
+    let mut in_string = false;
+    while at < output.len() {
+        let byte = output[at];
+        if byte == b'"' {
+            in_string = !in_string;
+        }
+        if in_string && byte == b'\\' {
+            if let Some(value) = unit(at) {
+                if (0xd800..=0xdbff).contains(&value)
+                    && unit(at + 6).is_some_and(|low| (0xdc00..=0xdfff).contains(&low))
+                {
+                    normalized.extend_from_slice(&output[at..at + 12]);
+                    at += 12;
+                    continue;
+                }
+                if (0xd800..=0xdfff).contains(&value) {
+                    normalized.extend_from_slice(b"\\ufffd");
+                    at += 6;
+                    continue;
+                }
+            }
+            // Consume escapes together so an escaped backslash cannot start
+            // a Unicode escape and an escaped quote cannot end the string.
+            let end = (at + 2).min(output.len());
+            normalized.extend_from_slice(&output[at..end]);
+            at = end;
+            continue;
+        }
+        normalized.push(byte);
+        at += 1;
+    }
+    serde_json::from_slice(&normalized)
 }
 
 fn ps_quote(value: &str) -> String {
@@ -450,7 +496,7 @@ if ($nodes.Count -eq 0) { '[]' } else { $nodes | ConvertTo-Json -Depth 4 -Compre
 
 fn parse_uia_elements(output: &[u8]) -> Result<Vec<UiElement>, RobotError> {
     let output = output.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(output);
-    let value = serde_json::from_slice::<Value>(output).map_err(|error| {
+    let value = parse_powershell_json(output).map_err(|error| {
         RobotError::CommandFailed(format!(
             "PowerShell returned invalid UI Automation JSON: {error}"
         ))
@@ -521,6 +567,7 @@ fn parse_uia_elements(output: &[u8]) -> Result<Vec<UiElement>, RobotError> {
                 selected: object.get("selected").and_then(Value::as_bool),
                 value: optional_string("value"),
                 element_type: None,
+                web_context: None,
             })
         })
         .collect()
@@ -1015,6 +1062,25 @@ public static class DeviceBotKeyboard {
 mod tests {
     use super::*;
 
+    #[test]
+    fn window_titles_with_unpaired_utf16_do_not_break_discovery() {
+        let windows = parse_window_processes(br#"[{"processId":20,"name":"app","windowId":"111","title":"Broken \ud83d title \ude00; emoji \ud83d\ude00"}]"#).unwrap();
+        assert_eq!(windows[0].title, "Broken \u{fffd} title \u{fffd}; emoji 😀");
+        assert_eq!(windows[0].window_id, "111");
+    }
+
+    #[test]
+    fn powershell_json_keeps_valid_escapes_and_rejects_broken_structure() {
+        let value =
+            parse_powershell_json(br#"{"title":"literal \\ud83d and \"quoted\"; \ud83d\ude00"}"#)
+                .unwrap();
+        assert_eq!(value["title"], "literal \\ud83d and \"quoted\"; 😀");
+        assert!(parse_powershell_json(br#"{"title":"\ud800",oops}"#).is_err());
+        let mut bom = vec![0xef, 0xbb, 0xbf];
+        bom.extend_from_slice(b"[]");
+        assert_eq!(parse_powershell_json(&bom).unwrap(), serde_json::json!([]));
+    }
+
     #[tokio::test]
     async fn target_selection_is_isolated_per_mcp_session() {
         let robot = WindowsRobot::new("artifacts");
@@ -1115,6 +1181,8 @@ mod tests {
             element_type: Some(robot_core::ElementType::TextField),
             filter: Some("email-field".into()),
             max_results: Some(1),
+            web_context: None,
+            include_frames: false,
         };
         let elements = robot_core::apply_element_query(
             robot.list_flutter_elements(DEVICE_ID).await.unwrap(),

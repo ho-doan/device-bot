@@ -154,6 +154,9 @@ public final class DeviceKitXCTestHostAgent {
       }
       let ok = driver.pressBack()
       return ["ok": ok, "message": ok ? "button" : "button_failed"]
+    case "screenInfo":
+      let frame = driver.liveScreenBounds()
+      return ["ok": true, "width": frame.width, "height": frame.height]
     case "screenshot":
       guard let data = driver.screenshot() else {
         return ["ok": false, "message": "screenshot_empty"]

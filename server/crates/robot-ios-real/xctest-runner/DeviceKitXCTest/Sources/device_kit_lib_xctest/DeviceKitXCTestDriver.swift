@@ -229,6 +229,10 @@ public final class DeviceKitXCTestDriver {
     XCUIDevice.shared.press(.home)
   }
 
+  public func liveScreenBounds() -> CGRect {
+    XCUIApplication(bundleIdentifier: "com.apple.springboard").frame
+  }
+
   public func screenshot() -> Data? {
     XCUIScreen.main.screenshot().pngRepresentation
   }

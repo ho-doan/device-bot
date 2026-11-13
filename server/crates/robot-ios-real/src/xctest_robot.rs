@@ -234,6 +234,7 @@ pub struct IosXCTestRobot {
     agent_launcher: Option<XCTestAgentLauncher>,
     persistent_agents: Arc<Mutex<HashMap<String, Child>>>,
     runner_project: PathBuf,
+    live_sources: Arc<Mutex<HashMap<String, crate::live::Source>>>,
 }
 
 impl IosXCTestRobot {
@@ -253,6 +254,7 @@ impl IosXCTestRobot {
             recording: Arc::default(),
             agent_launcher: None,
             persistent_agents: Arc::default(),
+            live_sources: Arc::default(),
             runner_project: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("xctest-runner/MobileMcpRealRunner.xcodeproj"),
         }
@@ -657,6 +659,75 @@ impl IosXCTestRobot {
 
 #[async_trait]
 impl Robot for IosXCTestRobot {
+    fn fork_session(&self) -> Option<Arc<dyn Robot>> {
+        Some(Arc::new(Self {
+            xcrun_path: self.xcrun_path.clone(),
+            agent: self.agent.clone(),
+            artifact_dir: self.artifact_dir.clone(),
+            recording: self.recording.clone(),
+            agent_launcher: self.agent_launcher.clone(),
+            persistent_agents: self.persistent_agents.clone(),
+            runner_project: self.runner_project.clone(),
+            live_sources: Arc::default(),
+        }))
+    }
+
+    async fn stream_context(&self, device_id: &str) -> Result<Value, RobotError> {
+        validate_device_id(device_id)?;
+        // A failed retry must not leave previously prepared capture geometry usable.
+        self.live_sources.lock().await.remove(device_id);
+        self.ensure_device_unlocked(device_id).await?;
+        // Geometry is returned by XCTest in the same logical coordinates used
+        // for tap/swipe. Video dimensions come from an actual USB video frame.
+        let logical = self.dispatch(device_id, "screenInfo", json!({})).await?;
+        let width = logical
+            .get("width")
+            .and_then(Value::as_f64)
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .ok_or_else(|| {
+                RobotError::Unsupported(
+                    "Rebuild/reinstall the iOS XCTest runner for Live screenInfo support".into(),
+                )
+            })?;
+        let height = logical
+            .get("height")
+            .and_then(Value::as_f64)
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .ok_or_else(|| {
+                RobotError::Unsupported(
+                    "Rebuild/reinstall the iOS XCTest runner for Live screenInfo support".into(),
+                )
+            })?;
+        let source = crate::live::prepare(&self.artifact_dir, &self.xcrun_path, device_id).await?;
+        crate::live::validate_geometry(width, height, source.width, source.height)?;
+        let context = json!({"deviceId":device_id, "logicalWidth":width, "logicalHeight":height,
+            "physicalWidth":source.width, "physicalHeight":source.height, "originX":0, "originY":0,
+            "captureBackend":"avfoundation-usb-videotoolbox"});
+        self.live_sources
+            .lock()
+            .await
+            .insert(device_id.into(), source);
+        Ok(context)
+    }
+
+    async fn start_video_stream(
+        &self,
+        device_id: &str,
+    ) -> Result<robot_core::VideoStream, RobotError> {
+        validate_device_id(device_id)?;
+        self.ensure_device_unlocked(device_id).await?;
+        let source = self
+            .live_sources
+            .lock()
+            .await
+            .get(device_id)
+            .cloned()
+            .ok_or_else(|| {
+                RobotError::InvalidInput("Prepare iOS stream context before starting Live".into())
+            })?;
+        crate::live::start(source).await
+    }
+
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
         self.devicectl_devices().await
     }

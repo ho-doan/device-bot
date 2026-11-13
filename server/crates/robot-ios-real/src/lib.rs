@@ -4,6 +4,7 @@
 //! primary server-side real-device implementation and uses Apple CoreDevice plus
 //! a signed XCTest runner kept in this crate.
 
+mod live;
 mod quicktime_recording;
 pub mod xctest_agent;
 pub mod xctest_robot;

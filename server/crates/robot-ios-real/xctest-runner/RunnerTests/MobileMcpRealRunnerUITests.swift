@@ -393,6 +393,9 @@ private final class MobileMcpRealHostAgent {
         "ok": ok,
         "message": ok ? "ime_action" : "IME action \(action) is not available on the keyboard",
       ]
+    case "screenInfo":
+      let frame = driver.liveScreenBounds()
+      return ["ok": true, "width": frame.width, "height": frame.height]
     case "screenshot":
       guard let data = driver.screenshot() else {
         return ["ok": false, "message": "screenshot_empty"]

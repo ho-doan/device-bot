@@ -11,6 +11,7 @@ libc.workspace = true
 robot-core = { path = "../robot-core" }
 robot-flutter-bridge = { path = "../robot-flutter-bridge" }
 robot-ios-real = { path = "../robot-ios-real" }
+robot-macos = { path = "../robot-macos" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

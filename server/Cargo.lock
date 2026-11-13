@@ -1772,6 +1772,7 @@ dependencies = [
  "robot-core",
  "robot-flutter-bridge",
  "robot-ios-real",
+ "robot-macos",
  "serde",
  "serde_json",
  "tokio",

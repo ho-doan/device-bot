@@ -42,6 +42,12 @@ final class DeviceKitXCTestHostAgent {
       currentBundleId = bundleId
       driver.launch()
       return ["ok": true, "message": "app_launched"]
+    case "screen-geometry":
+      ensureApp()
+      guard let frame = driver.screenGeometry(), frame.minX == 0, frame.minY == 0 else {
+        return ["ok": false, "message": "A foreground app covering the simulator screen is required for Live."]
+      }
+      return ["ok": true, "logicalWidth": frame.width, "logicalHeight": frame.height]
     case "dump":
       ensureApp()
       let elementType = string(command.params["elementType"])

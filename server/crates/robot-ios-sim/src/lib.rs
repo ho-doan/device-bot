@@ -30,12 +30,14 @@ use tokio::{
 };
 
 pub mod health;
+mod live;
 static ARTIFACT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const XCTEST_BUILD_TIMEOUT: Duration = Duration::from_secs(90);
 const XCTEST_RUNNER_BUNDLE_ID: &str = "com.mobilemcp.simulatorrunner.tests.xctrunner";
 
 #[derive(Clone)]
 pub struct IosSimulatorRobot {
+    live_targets: Arc<Mutex<HashMap<String, live::LiveTarget>>>,
     xcrun_path: String,
     xcodebuild_path: String,
     xctest_project: PathBuf,
@@ -114,6 +116,7 @@ impl IosSimulatorRobot {
         simulator_agent_port: u16,
     ) -> Self {
         Self {
+            live_targets: Arc::default(),
             xcrun_path: xcrun_path.into(),
             xcodebuild_path: xcodebuild_path.into(),
             xctest_project: xctest_project.into(),
@@ -676,6 +679,11 @@ impl IosSimulatorRobot {
             .collect::<serde_json::Map<_, _>>();
         let timeout = timeout.unwrap_or(Duration::from_secs(45));
         match action {
+            "screen-geometry" => {
+                agent
+                    .dispatch_for(device_id, "screen-geometry", Value::Object(params), timeout)
+                    .await
+            }
             "tap" => {
                 agent
                     .dispatch_for(device_id, "tap", Value::Object(params), timeout)
@@ -748,6 +756,23 @@ impl IosSimulatorRobot {
 
 #[async_trait]
 impl Robot for IosSimulatorRobot {
+    fn fork_session(&self) -> Option<Arc<dyn Robot>> {
+        let mut session = self.clone();
+        session.live_targets = Arc::default();
+        Some(Arc::new(session))
+    }
+
+    async fn stream_context(&self, device_id: &str) -> Result<Value, RobotError> {
+        self.live_context(device_id).await
+    }
+
+    async fn start_video_stream(
+        &self,
+        device_id: &str,
+    ) -> Result<robot_core::VideoStream, RobotError> {
+        self.start_live_video(device_id).await
+    }
+
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
         let stdout = self
             .simctl(&[

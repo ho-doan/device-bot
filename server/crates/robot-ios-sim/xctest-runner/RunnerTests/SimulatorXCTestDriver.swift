@@ -41,6 +41,12 @@ final class DeviceKitXCTestDriver {
     app?.launch()
   }
 
+  func screenGeometry() -> CGRect? {
+    guard let app, app.state == .runningForeground else { return nil }
+    let frame = app.frame
+    return frame.width > 0 && frame.height > 0 ? frame : nil
+  }
+
   func dumpUi(filter: String? = nil, elementType: String? = nil, maxResults: Int? = nil) throws -> [UiElement] {
     guard let app else { return [] }
     generation += 1

@@ -128,9 +128,12 @@ $screens = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object {{
 }})
 ConvertTo-Json -InputObject $screens -Depth 4 -Compress
 "#)).await?;
-        serde_json::from_slice(output.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&output)).map_err(
-            |error| RobotError::CommandFailed(format!("invalid Windows display list: {error}")),
-        )
+        serde_json::from_value(parse_powershell_json(&output).map_err(|error| {
+            RobotError::CommandFailed(format!("invalid Windows display list: {error}"))
+        })?)
+        .map_err(|error| {
+            RobotError::CommandFailed(format!("invalid Windows display list: {error}"))
+        })
     }
 
     pub(super) async fn capture_desktop(

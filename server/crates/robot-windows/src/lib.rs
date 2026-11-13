@@ -73,6 +73,9 @@ impl WindowsRobot {
     }
 
     async fn powershell(&self, script: String) -> Result<Vec<u8>, RobotError> {
+        // Windows PowerShell otherwise encodes stdout in the OEM code page.
+        // A window title outside that page then makes the whole JSON unreadable.
+        let script = utf8_powershell(script);
         let mut command = Command::new(&self.powershell_path);
         command
             .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", &script])
@@ -232,8 +235,17 @@ fn parse_window_processes(output: &[u8]) -> Result<Vec<WindowProcess>, RobotErro
         .collect()
 }
 
-/// .NET window/UIA strings may contain unpaired UTF-16 code units. Preserve
-/// valid pairs and literal backslashes, replacing only isolated surrogates.
+/// Windows PowerShell writes child stdout as UTF-8 without a BOM. A missing
+/// console must not fail the script: redirected output still uses `$OutputEncoding`.
+fn utf8_powershell(script: String) -> String {
+    const PREFIX: &str = "$OutputEncoding = New-Object System.Text.UTF8Encoding $false\ntry { [Console]::OutputEncoding = $OutputEncoding } catch {}\n";
+    format!("{PREFIX}{script}")
+}
+
+/// .NET window/UIA strings may contain unpaired UTF-16 code units, and a
+/// console code page can emit bytes that are not UTF-8. Preserve valid pairs
+/// and literal backslashes, replace isolated surrogates, and keep one bad
+/// byte from rejecting the rest of the JSON.
 fn parse_powershell_json(output: &[u8]) -> Result<Value, serde_json::Error> {
     let output = output.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(output);
     let unit = |at: usize| -> Option<u16> {
@@ -275,7 +287,7 @@ fn parse_powershell_json(output: &[u8]) -> Result<Value, serde_json::Error> {
         normalized.push(byte);
         at += 1;
     }
-    serde_json::from_slice(&normalized)
+    serde_json::from_str(&String::from_utf8_lossy(&normalized))
 }
 
 fn ps_quote(value: &str) -> String {
@@ -752,7 +764,7 @@ if ($null -eq $apps) {
 }
 "#;
         let output = self.powershell(script.into()).await?;
-        let value = serde_json::from_slice::<Value>(&output).map_err(|error| {
+        let value = parse_powershell_json(&output).map_err(|error| {
             RobotError::CommandFailed(format!("PowerShell returned invalid app JSON: {error}"))
         })?;
         let apps = match value {
@@ -1067,6 +1079,21 @@ mod tests {
         let windows = parse_window_processes(br#"[{"processId":20,"name":"app","windowId":"111","title":"Broken \ud83d title \ude00; emoji \ud83d\ude00"}]"#).unwrap();
         assert_eq!(windows[0].title, "Broken \u{fffd} title \u{fffd}; emoji 😀");
         assert_eq!(windows[0].window_id, "111");
+    }
+
+    #[test]
+    fn window_list_keeps_titles_when_powershell_bytes_are_not_utf8() {
+        let windows = parse_window_processes(
+            b"[{\"processId\":7,\"name\":\"Notepad\",\"windowId\":\"9\",\"title\":\"Caf\xe9 notes\"},{\"processId\":8,\"name\":\"Calculator\",\"windowId\":\"10\",\"title\":\"Calculator\"}]",
+        )
+        .unwrap();
+        assert_eq!(windows[0].title, "Caf\u{fffd} notes");
+        assert_eq!(windows[1].name, "Calculator");
+        let script = utf8_powershell(live::window_list_script(None));
+        assert!(
+            script.starts_with("$OutputEncoding = New-Object System.Text.UTF8Encoding $false\n")
+        );
+        assert!(script.contains("ConvertTo-Json -InputObject $rows"));
     }
 
     #[test]

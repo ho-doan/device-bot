@@ -189,7 +189,7 @@ impl WindowsRobot {
             ))
             .await?;
         let values: Vec<i64> =
-            serde_json::from_slice(output.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&output))
+            serde_json::from_value(parse_powershell_json(&output).map_err(failure)?)
                 .map_err(failure)?;
         if values.len() != 4 {
             return Err(failure("invalid target geometry"));

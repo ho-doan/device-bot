@@ -19,6 +19,6 @@ Mỗi khi bot chạy flow, tự lưu một bản flow đã chạy cùng kết qu
 
 - Chưa có UI lọc đa nhóm trên robot-report.
 - Không copy profile đã resolve; YAML là bản đã chạy. `mcp-calls.jsonl` vẫn theo cơ chế redact sẵn có của runner.
-- Cần xác minh từ máy LAN: mở YAML/evidence của lượt CLI và QC sau khi đổi cwd và restart report.
+- Xác minh từ máy LAN thật (không chỉ HTTP test): mở YAML/evidence của lượt CLI và QC sau khi đổi cwd và restart report.
 
 Liên quan: [QC/report qua LAN](2026-11-12-qc-web-lan.md).

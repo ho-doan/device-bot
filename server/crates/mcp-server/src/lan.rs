@@ -7,10 +7,11 @@ use std::{
 use axum::{
     Router,
     body::Body,
-    extract::Request,
+    extract::{Request, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header},
     middleware::Next,
     response::{IntoResponse, Response},
+    routing::get,
 };
 
 pub(crate) async fn cors(request: Request, next: Next) -> Response {
@@ -90,11 +91,23 @@ pub fn qc_web_root() -> Option<PathBuf> {
         .find(|path| path.join("index.html").is_file())
 }
 
+#[derive(Clone)]
+struct QcRoot(PathBuf);
+
 pub(crate) fn qc_router(root: PathBuf) -> Router {
-    Router::new().fallback(move |uri: Uri| {
-        let root = root.clone();
-        async move { serve_qc(&root, uri.path()).await }
-    })
+    Router::new()
+        .route("/qc", get(serve_qc_index))
+        .route("/qc/", get(serve_qc_index))
+        .route("/qc/{*path}", get(serve_qc_asset))
+        .with_state(QcRoot(root))
+}
+
+async fn serve_qc_index(State(QcRoot(root)): State<QcRoot>) -> Response {
+    serve_qc(&root, "/").await
+}
+
+async fn serve_qc_asset(State(QcRoot(root)): State<QcRoot>, uri: Uri) -> Response {
+    serve_qc(&root, uri.path()).await
 }
 
 async fn serve_qc(root: &Path, request_path: &str) -> Response {

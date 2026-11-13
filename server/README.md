@@ -42,7 +42,7 @@ device-bot mcp --listen 0.0.0.0:3337
 ```
 
 HTTP MCP binds every interface by default (`0.0.0.0`). Same-origin UI lives at
-`/qc/` (Flutter web, when `flutter build web --base-href /qc/` assets are present)
+`/qc/` (Flutter web; `scripts/build_qc_web.sh` or `flutter build web --base-href /qc/`)
 and `/reports/` (robot-report). A browser on another LAN machine should open
 `http://<LAN-IP>:3337/qc/` and paste the bearer token; do not point that browser
 at `127.0.0.1`. CORS allows private LAN origins when the UI is hosted separately.

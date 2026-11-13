@@ -53,3 +53,14 @@ fallback details.
 When rebuilding after Flutter/plugin changes, fully quit the running QC app
 and launch QC again. Building the Rust binary alone does not replace a running
 Flutter UI.
+
+To serve this companion from the MCP origin at `/qc/` (LAN browsers):
+
+```bash
+../../scripts/build_qc_web.sh
+```
+
+That writes `build/web` with `<base href="/qc/">`. `device-bot mcp --listen`
+picks it up automatically, or copy the folder to `qc-web` next to the binary /
+set `DEVICE_BOT_QC_WEB_DIR`. The server also rewrites a default `<base href="/">`
+if the build omitted `--base-href`.

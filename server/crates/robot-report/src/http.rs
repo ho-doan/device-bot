@@ -40,13 +40,17 @@ async fn blocking<T: Send + 'static>(
         .map_err(ApiError)
 }
 
+pub async fn index_page() -> Html<&'static str> {
+    Html(include_str!("web/index.html"))
+}
+
 pub fn router(store: Store) -> Router {
     Router::new()
         .route(
             "/health",
             get(|| async { Json(json!({"status":"ok","service":"robot-report"})) }),
         )
-        .route("/", get(|| async { Html(include_str!("web/index.html")) }))
+        .route("/", get(index_page))
         .route(
             "/assets/report.css",
             get(|| async {

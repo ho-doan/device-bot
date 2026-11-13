@@ -77,10 +77,12 @@ pub fn lan_router(
             bearer_token,
         )));
     if let Some(store) = reports {
-        app = app.nest("/reports", robot_report::router(store));
+        app = app
+            .route("/reports/", get(robot_report::index_page))
+            .nest("/reports", robot_report::router(store));
     }
     if let Some(root) = qc_root {
-        app = app.nest("/qc", crate::lan::qc_router(root));
+        app = app.merge(crate::lan::qc_router(root));
     }
     app.fallback(lan_options_fallback)
         .layer(middleware::from_fn(crate::lan::cors))
@@ -718,5 +720,209 @@ mod tests {
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
         assert_eq!(robot.preparations.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn lan_origin_serves_qc_web_and_nested_report_yaml() {
+        use std::fs;
+
+        let root = std::env::temp_dir().join(format!("device-bot-lan-{}", Uuid::new_v4()));
+        let qc = root.join("qc-web");
+        fs::create_dir_all(qc.join("assets")).unwrap();
+        fs::write(
+            qc.join("index.html"),
+            r#"<!doctype html><base href="/"><script src="main.dart.js"></script>"#,
+        )
+        .unwrap();
+        fs::write(qc.join("main.dart.js"), b"window.qc=true;").unwrap();
+        fs::write(qc.join("assets/app.js"), b"asset").unwrap();
+        fs::write(root.join("secret.txt"), b"leaked").unwrap();
+
+        let store = robot_report::Store::open(root.join("history")).unwrap();
+        let source = root.join("case");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("report.json"),
+            serde_json::to_vec(&json!({
+                "name": "lan",
+                "status": "PASS",
+                "selected_device": {"platform": "android", "id": "dev"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            source.join("scenario.yaml"),
+            "url: https://shop.example.com/app\n",
+        )
+        .unwrap();
+        let summary = store
+            .ingest_flow(robot_report::FlowIngest {
+                name: "LAN yaml".into(),
+                source: "qc".into(),
+                case_dir: source,
+                app_id: None,
+                url: None,
+            })
+            .unwrap();
+        let run = store.run(&summary.project_id, &summary.id).unwrap();
+        let yaml = run.cases[0]
+            .files
+            .iter()
+            .find(|file| file.name.ends_with("scenario.yaml"))
+            .unwrap();
+
+        let app = lan_router(
+            Arc::new(NoopRobot::default()),
+            Some("secret".into()),
+            Some(qc),
+            Some(store),
+        );
+
+        for uri in ["/qc", "/qc/"] {
+            let qc_home = app
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(qc_home.status(), StatusCode::OK, "{uri}");
+            assert_eq!(
+                qc_home.headers()[header::CONTENT_TYPE],
+                "text/html; charset=utf-8"
+            );
+            let html = String::from_utf8(
+                axum::body::to_bytes(qc_home.into_body(), 10_000)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap();
+            assert!(html.contains("<base href=\"/qc/\">"), "{uri}");
+            assert!(!html.contains("<base href=\"/\">"), "{uri}");
+        }
+
+        let js = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/qc/main.dart.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(js.status(), StatusCode::OK);
+        assert_eq!(
+            js.headers()[header::CONTENT_TYPE],
+            "text/javascript; charset=utf-8"
+        );
+
+        let asset = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/qc/assets/app.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(asset.status(), StatusCode::OK);
+
+        let escape = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/qc/../secret.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let escaped = axum::body::to_bytes(escape.into_body(), 10_000)
+            .await
+            .unwrap();
+        assert_ne!(escaped.as_ref(), b"leaked");
+
+        let reports_health = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/reports/health")
+                    .header("host", "192.168.1.20:3337")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reports_health.status(), StatusCode::OK);
+        let health: Value = serde_json::from_slice(
+            &axum::body::to_bytes(reports_health.into_body(), 1000)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(health["service"], "robot-report");
+
+        let reports_home = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/reports/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reports_home.status(), StatusCode::OK);
+        let page = String::from_utf8(
+            axum::body::to_bytes(reports_home.into_body(), 50_000)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(page.contains("assets/report.js"));
+
+        let report_js = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/reports/assets/report.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(report_js.status(), StatusCode::OK);
+        let script = String::from_utf8(
+            axum::body::to_bytes(report_js.into_body(), 50_000)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(script.contains("pathname.startsWith('/reports')"));
+
+        let yaml_response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/reports/api/projects/{}/runs/{}/cases/0/files/{}",
+                        summary.project_id, summary.id, yaml.id
+                    ))
+                    .header("host", "192.168.1.20:3337")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(yaml_response.status(), StatusCode::OK);
+        let yaml_body = axum::body::to_bytes(yaml_response.into_body(), 10_000)
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&yaml_body).contains("https://shop.example.com/app"));
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

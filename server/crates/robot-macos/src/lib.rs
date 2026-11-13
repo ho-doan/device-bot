@@ -30,6 +30,9 @@ use tokio::{
     sync::Mutex,
 };
 
+mod live;
+pub use live::{prepare_window_capture, start_window_capture};
+
 const DEVICE_ID: &str = "macos-host";
 #[cfg(target_os = "macos")]
 const NATIVE_FILTER_BUDGET: Duration = Duration::from_secs(2);
@@ -896,6 +899,7 @@ pub struct MacosRobot {
     active_process_id: Arc<Mutex<Option<i32>>>,
     active_window_id: Arc<Mutex<Option<String>>>,
     capture_lock: Arc<Mutex<()>>,
+    live_geometry: Arc<Mutex<std::collections::HashMap<String, live::Geometry>>>,
 }
 
 impl MacosRobot {
@@ -911,6 +915,7 @@ impl MacosRobot {
             active_process_id: Arc::default(),
             active_window_id: Arc::default(),
             capture_lock: Arc::default(),
+            live_geometry: Arc::default(),
         }
     }
 
@@ -936,7 +941,7 @@ impl MacosRobot {
     }
 
     fn require_device(&self, device_id: &str) -> Result<(), RobotError> {
-        if device_id != DEVICE_ID {
+        if device_id != DEVICE_ID && live::Target::parse(device_id)?.is_none() {
             return Err(RobotError::DeviceNotFound(device_id.into()));
         }
         if !cfg!(target_os = "macos") {
@@ -1152,11 +1157,36 @@ fn non_empty(value: &str) -> Option<String> {
 
 #[async_trait]
 impl Robot for MacosRobot {
+    async fn stream_context(&self, id: &str) -> Result<Value, RobotError> {
+        self.live_context(id).await
+    }
+
+    async fn start_video_stream(&self, id: &str) -> Result<robot_core::VideoStream, RobotError> {
+        self.start_live(id).await
+    }
+
+    async fn clear_text(&self, id: &str) -> Result<(), RobotError> {
+        self.require_device(id)?;
+        let _guard = self.capture_lock.lock().await;
+        let target = self.live_guard(id, &[]).await?;
+        if self.live_edit_text(target, "", true) {
+            return Ok(());
+        }
+        self.apple_script("tell application \"System Events\"\n keystroke \"a\" using command down\n key code 51\nend tell", &[]).await
+    }
+
+    async fn scroll(&self, id: &str, at: Point, dx: f64, dy: f64) -> Result<(), RobotError> {
+        self.require_device(id)?;
+        let _guard = self.capture_lock.lock().await;
+        self.live_guard(id, &[at]).await?;
+        live::scroll(at, dx, dy)
+    }
     fn fork_session(&self) -> Option<Arc<dyn Robot>> {
         let mut session = self.clone();
         session.active_application = Arc::default();
         session.active_process_id = Arc::default();
         session.active_window_id = Arc::default();
+        session.live_geometry = Arc::default();
         Some(Arc::new(session))
     }
 
@@ -1201,6 +1231,11 @@ impl Robot for MacosRobot {
 
     async fn select_ui_target(&self, device_id: &str, target: UiTarget) -> Result<(), RobotError> {
         self.require_device(device_id)?;
+        if live::Target::parse(device_id)?.is_some() {
+            return Err(RobotError::InvalidInput(
+                "A macOS Live target is immutable; choose another app/window on macos-host".into(),
+            ));
+        }
         if let Some(process_id) = target.process_id {
             if process_id == 0 || process_id > i32::MAX as u32 {
                 return Err(RobotError::InvalidInput(
@@ -1229,6 +1264,12 @@ impl Robot for MacosRobot {
         device_id: &str,
         target: UiTarget,
     ) -> Result<(), RobotError> {
+        let _guard = self.capture_lock.lock().await;
+        if live::Target::parse(device_id)?.is_some() {
+            self.require_device(device_id)?;
+            self.live_guard(device_id, &[]).await?;
+            return Ok(());
+        }
         self.select_ui_target(device_id, target.clone()).await?;
         let Some(process_id) = *self.active_process_id.lock().await else {
             return Err(RobotError::InvalidInput(
@@ -1408,11 +1449,25 @@ impl Robot for MacosRobot {
 
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
         self.require_device(device_id)?;
+        let _guard = self.capture_lock.lock().await;
+        if live::Target::parse(device_id)?.is_some() {
+            let target = self.live_guard(device_id, &[point]).await?;
+            #[cfg(target_os = "macos")]
+            return native_accessibility_tap(point, Some(target.pid));
+            #[cfg(not(target_os = "macos"))]
+            let _ = target;
+        }
         self.accessibility_tap(point).await
     }
 
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
+        if live::Target::parse(device_id)?.is_some() {
+            return Err(RobotError::Unsupported(
+                "A Live window target is fixed; choose another window to change apps".into(),
+            ));
+        }
+        let _guard = self.capture_lock.lock().await;
         if let Ok(arguments) = std::env::var("DEVICE_BOT_MACOS_APP_ARGS") {
             let arguments = arguments.split_whitespace().collect::<Vec<_>>();
             if !arguments.is_empty() {
@@ -1458,6 +1513,14 @@ impl Robot for MacosRobot {
 
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
+        let _guard = self.capture_lock.lock().await;
+        if live::Target::parse(device_id)?.is_some() {
+            let target = self.live_guard(device_id, &[]).await?;
+            if text != "\u{1b}" && self.live_edit_text(target, text, false) {
+                return Ok(());
+            }
+            return self.apple_script("on run argv\n tell application \"System Events\" to keystroke (item 1 of argv)\nend run", &[text.into()]).await;
+        }
         self.require_input_target().await?;
         self.apple_script(
             "on run argv\n set targetApp to item 1 of argv\n set textToType to item 2 of argv\n if targetApp is not \"\" then tell application targetApp to activate\n tell application \"System Events\"\n  if textToType is character id 27 then\n   key code 53\n  else\n   set AppleScript's text item delimiters to linefeed\n   set parts to text items of textToType\n   repeat with index from 1 to count of parts\n    keystroke (item index of parts)\n    if index is less than count of parts then key code 36\n   end repeat\n  end if\n end tell\nend run",
@@ -1476,6 +1539,11 @@ impl Robot for MacosRobot {
         duration_ms: Option<u64>,
     ) -> Result<(), RobotError> {
         self.require_device(device_id)?;
+        let _guard = self.capture_lock.lock().await;
+        if live::Target::parse(device_id)?.is_some() {
+            self.live_guard(device_id, &[start, end]).await?;
+            return pointer::drag(start, end, duration_ms.unwrap_or(300)).await;
+        }
         self.require_input_target().await?;
         pointer::drag(start, end, duration_ms.unwrap_or(300)).await
     }
@@ -1496,6 +1564,10 @@ impl Robot for MacosRobot {
 
     async fn list_flutter_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.require_device(device_id)?;
+        if live::Target::parse(device_id)?.is_some() {
+            // The widget bridge identifies only a PID, not an individual window.
+            return Ok(vec![]);
+        }
         if let Some(elements) = robot_flutter_bridge::configured(device_id).await {
             return Ok(elements);
         }
@@ -1521,6 +1593,9 @@ impl Robot for MacosRobot {
 
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.require_device(device_id)?;
+        if live::Target::parse(device_id)?.is_some() {
+            return self.live_elements(device_id, None, None).await;
+        }
         self.accessibility_elements(None, None).await
     }
 
@@ -1531,6 +1606,9 @@ impl Robot for MacosRobot {
         max_results: Option<usize>,
     ) -> Result<Vec<UiElement>, RobotError> {
         self.require_device(device_id)?;
+        if live::Target::parse(device_id)?.is_some() {
+            return self.live_elements(device_id, filter, max_results).await;
+        }
         // Filter during native AXUIElement traversal in the MCP process, and
         // stop descending once the requested result count has been reached.
         self.accessibility_elements(filter, max_results).await

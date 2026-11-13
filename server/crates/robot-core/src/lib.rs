@@ -1,5 +1,7 @@
 //! Platform-neutral contracts for mobile device drivers.
 
+pub mod video;
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -717,6 +719,9 @@ impl RobotRegistry {
                     || (device_id.starts_with("windows:")
                         && device.id == "windows-host"
                         && device.platform == Platform::Windows)
+                    || (device_id.starts_with("macos:")
+                        && device.id == "macos-host"
+                        && device.platform == Platform::Macos)
             }) {
                 return Ok(Arc::clone(driver));
             }
@@ -1182,34 +1187,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn windows_window_target_routes_without_changing_its_identity() {
-        let driver: Arc<dyn Robot> = Arc::new(StubRobot {
-            device: Some(RobotDevice {
-                id: "windows-host".into(),
-                name: "Windows".into(),
-                platform: Platform::Windows,
-                state: DeviceState::Available,
-            }),
-            list_error: false,
-        });
-        let registry = RobotRegistry::new(vec![Arc::clone(&driver)]);
-        assert!(Arc::ptr_eq(
-            &registry.driver_for("windows:123:456").await.unwrap(),
-            &driver
-        ));
-        assert_eq!(
-            registry.stream_context("windows:123:456").await.unwrap(),
-            serde_json::json!({ "deviceId": "windows:123:456" })
-        );
-        assert!(matches!(
-            registry.driver_for("windows-other").await,
-            Err(RobotError::DeviceNotFound(_))
-        ));
-        let empty = RobotRegistry::new(vec![]);
-        assert!(matches!(
-            empty.driver_for("windows:123:456").await,
-            Err(RobotError::DeviceNotFound(_))
-        ));
+    async fn desktop_window_targets_route_without_changing_their_identity() {
+        for (host, platform, target) in [
+            ("windows-host", Platform::Windows, "windows:123:456"),
+            ("macos-host", Platform::Macos, "macos:123:456"),
+        ] {
+            let driver: Arc<dyn Robot> = Arc::new(StubRobot {
+                device: Some(RobotDevice {
+                    id: host.into(),
+                    name: "Desktop".into(),
+                    platform,
+                    state: DeviceState::Available,
+                }),
+                list_error: false,
+            });
+            let registry = RobotRegistry::new(vec![Arc::clone(&driver)]);
+            assert!(Arc::ptr_eq(
+                &registry.driver_for(target).await.unwrap(),
+                &driver
+            ));
+            assert_eq!(
+                registry.stream_context(target).await.unwrap(),
+                serde_json::json!({ "deviceId": target })
+            );
+            assert!(matches!(
+                registry.driver_for("windows-other").await,
+                Err(RobotError::DeviceNotFound(_))
+            ));
+            let empty = RobotRegistry::new(vec![]);
+            assert!(matches!(
+                empty.driver_for(target).await,
+                Err(RobotError::DeviceNotFound(_))
+            ));
+        }
     }
 
     #[tokio::test]

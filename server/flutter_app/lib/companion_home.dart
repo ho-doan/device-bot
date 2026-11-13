@@ -16,6 +16,7 @@ import 'android_live.dart';
 import 'flow_import.dart';
 import 'dashboard.dart';
 import 'desktop_capture.dart';
+import 'windows_live.dart';
 import 'mcp_client.dart';
 import 'models.dart';
 
@@ -336,12 +337,27 @@ class _CompanionHomeState extends State<CompanionHome> {
     }
   }
 
-  void _showAndroidLive(AdminDevice device) {
+  void _showAndroidLive(AdminDevice device) async {
     final client = _client();
+    var targetId = device.id;
+    var targetName = device.name;
+    if (device.platform == 'windows') {
+      final window = await showDialog<AppWindow>(
+        context: context,
+        builder: (_) => WindowsLiveTargetDialog(
+          runningApps: client.listRunningApps(device.id),
+          windowsFor: (pid) => client.listWindows(device.id, processId: pid),
+        ),
+      );
+      if (!mounted || window == null) return;
+      targetId = windowsLiveDeviceId(window);
+      targetName = '${device.name} · ${window.label}';
+    }
+    if (!mounted) return;
     showDialog<void>(
       context: context,
       builder: (context) => AndroidLiveDialog(
-        deviceName: device.name,
+        deviceName: targetName,
         recording: _recordings.putIfAbsent(
           device.id,
           () => LiveRecording(
@@ -350,13 +366,13 @@ class _CompanionHomeState extends State<CompanionHome> {
             directory: LiveRecording.defaultDirectory(),
           ),
         ),
-        connect: () => device.platform == 'chrome'
-            ? client.watchWebLive(device.id)
+        connect: () => ['chrome', 'windows'].contains(device.platform)
+            ? client.watchWebLive(targetId)
             : client.watchAndroidLive(device.id),
         platform: device.platform,
-        openVideo: () => AndroidVideoSession.connect(client, device.id),
-        onInput: (input) => device.platform == 'chrome'
-            ? client.sendWebInput(device.id, input)
+        openVideo: () => AndroidVideoSession.connect(client, targetId),
+        onInput: (input) => ['chrome', 'windows'].contains(device.platform)
+            ? client.sendWebInput(targetId, input)
             : client.sendAndroidInput(device.id, input),
         onRunFlow: client.runFlow,
         onTerminateApps: device.platform == 'android'

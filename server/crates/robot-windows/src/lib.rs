@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 use tokio::{process::Command, sync::Mutex};
 
 mod flutter_bridge;
+mod live;
 mod recording;
 
 const DEVICE_ID: &str = "windows-host";
@@ -35,8 +36,10 @@ pub struct WindowsRobot {
     artifact_dir: PathBuf,
     powershell_path: String,
     active_process_id: Arc<Mutex<Option<u32>>>,
+    active_window_id: Arc<Mutex<Option<i64>>>,
     recording: Arc<Mutex<recording::DesktopRecorder>>,
     capture_lock: Arc<Mutex<()>>,
+    live_geometry: Arc<Mutex<std::collections::HashMap<String, live::Geometry>>>,
 }
 
 impl WindowsRobot {
@@ -46,8 +49,10 @@ impl WindowsRobot {
             powershell_path: std::env::var("DEVICE_BOT_POWERSHELL_PATH")
                 .unwrap_or_else(|_| "powershell.exe".into()),
             active_process_id: Arc::new(Mutex::new(None)),
+            active_window_id: Arc::default(),
             recording: Arc::new(Mutex::new(recording::DesktopRecorder::default())),
             capture_lock: Arc::default(),
+            live_geometry: Arc::default(),
         }
     }
 
@@ -56,7 +61,7 @@ impl WindowsRobot {
     }
 
     fn require_device(&self, device_id: &str) -> Result<(), RobotError> {
-        if device_id != DEVICE_ID {
+        if device_id != DEVICE_ID && live::Target::parse(device_id)?.is_none() {
             return Err(RobotError::DeviceNotFound(device_id.into()));
         }
         if !cfg!(target_os = "windows") {
@@ -105,6 +110,12 @@ impl WindowsRobot {
 
         // UIA can query the selected process while QC remains foreground.
         let process_id = *self.active_process_id.lock().await;
+        let window_id = *self.active_window_id.lock().await;
+        if let (Some(pid), Some(hwnd)) = (process_id, window_id) {
+            return self
+                .live_elements(&format!("windows:{pid}:{hwnd}"), filter, max_results)
+                .await;
+        }
         let script = build_uia_script(process_id, filter, max_results);
         let output = tokio::time::timeout(UIA_QUERY_TIMEOUT, self.powershell(script))
             .await
@@ -145,6 +156,12 @@ $targetPid = [uint32]0
         let Some(id) = *self.active_process_id.lock().await else {
             return Ok(());
         };
+        if let Some(hwnd) = *self.active_window_id.lock().await {
+            let prefix = self
+                .live_input_prefix(&format!("windows:{id}:{hwnd}"), &[])
+                .await?;
+            return self.powershell(prefix).await.map(|_| ());
+        }
         self.powershell(screenshot::activate_script(id))
             .await
             .map(|_| ())
@@ -154,22 +171,7 @@ $targetPid = [uint32]0
         &self,
         process_id: Option<u32>,
     ) -> Result<Vec<WindowProcess>, RobotError> {
-        let filter = process_id
-            .map(|id| format!(" | Where-Object {{ $_.Id -eq {id} }}"))
-            .unwrap_or_default();
-        let script = format!(
-            r#"
-$windows = Get-Process{filter} | Where-Object {{ $_.MainWindowHandle -ne 0 }} | ForEach-Object {{
-  [pscustomobject]@{{
-    processId = $_.Id
-    name = $_.ProcessName
-    windowId = [string]([int64]$_.MainWindowHandle)
-    title = $_.MainWindowTitle
-  }}
-}}
-if ($null -eq $windows) {{ '[]' }} else {{ @($windows) | ConvertTo-Json -Depth 3 -Compress }}
-"#
-        );
+        let script = live::window_list_script(process_id);
         let output = self.powershell(script).await?;
         parse_window_processes(&output)
     }
@@ -526,9 +528,40 @@ fn parse_uia_elements(output: &[u8]) -> Result<Vec<UiElement>, RobotError> {
 
 #[async_trait]
 impl Robot for WindowsRobot {
+    async fn scroll(&self, id: &str, at: Point, dx: f64, dy: f64) -> Result<(), RobotError> {
+        self.require_device(id)?;
+        let _input = self.capture_lock.lock().await;
+        if !dx.is_finite()
+            || !dy.is_finite()
+            || dx.abs() > i32::MAX as f64
+            || dy.abs() > i32::MAX as f64
+        {
+            return Err(RobotError::InvalidInput(
+                "Scroll deltas must be finite 32-bit values.".into(),
+            ));
+        }
+        let prefix = self.live_input_prefix(id, &[at]).await?;
+        if prefix.is_empty() {
+            self.activate_target().await?;
+        }
+        let vertical = (-dy.round() as i32) as u32;
+        let horizontal = (dx.round() as i32) as u32;
+        self.powershell(format!("{}\n{prefix}\n[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {}); [MobileMcpMouse]::mouse_event(0x0800, 0, 0, {vertical}, [UIntPtr]::Zero); [MobileMcpMouse]::mouse_event(0x1000, 0, 0, {horizontal}, [UIntPtr]::Zero)", mouse_helpers(), at.x.round(), at.y.round())).await.map(|_| ())
+    }
+
+    async fn stream_context(&self, id: &str) -> Result<Value, RobotError> {
+        self.live_context(id).await
+    }
+
+    async fn start_video_stream(&self, id: &str) -> Result<robot_core::VideoStream, RobotError> {
+        self.start_live_video(id).await
+    }
+
     fn fork_session(&self) -> Option<Arc<dyn Robot>> {
         let mut session = self.clone();
         session.active_process_id = Arc::default();
+        session.active_window_id = Arc::default();
+        session.live_geometry = Arc::default();
         Some(Arc::new(session))
     }
 
@@ -596,6 +629,25 @@ impl Robot for WindowsRobot {
 
     async fn select_ui_target(&self, device_id: &str, target: UiTarget) -> Result<(), RobotError> {
         self.require_device(device_id)?;
+        if live::Target::parse(device_id)?.is_some() {
+            return Err(RobotError::InvalidInput(
+                "A Windows Live target is immutable; select another window on windows-host.".into(),
+            ));
+        }
+        let pid = target.process_id.or(*self.active_process_id.lock().await);
+        let selected_window = if let Some(window) = target.window_id.as_deref() {
+            let pid = pid.ok_or_else(|| {
+                RobotError::InvalidInput(
+                    "Select the owning process before selecting a window.".into(),
+                )
+            })?;
+            let id = format!("windows:{pid}:{window}");
+            let selected = live::Target::parse(&id)?.expect("Windows target prefix");
+            self.live_geometry_for(selected).await?;
+            Some(selected.hwnd)
+        } else {
+            None
+        };
         if let Some(process_id) = target.process_id {
             if process_id == 0 {
                 return Err(RobotError::InvalidInput(
@@ -609,6 +661,7 @@ impl Robot for WindowsRobot {
                 "select a running app before querying elements".into(),
             ));
         }
+        *self.active_window_id.lock().await = selected_window;
         Ok(())
     }
 
@@ -617,6 +670,14 @@ impl Robot for WindowsRobot {
         device_id: &str,
         target: UiTarget,
     ) -> Result<(), RobotError> {
+        let _input = self.capture_lock.lock().await;
+        if live::Target::parse(device_id)?.is_some() {
+            self.require_device(device_id)?;
+            return self
+                .powershell(self.live_input_prefix(device_id, &[]).await?)
+                .await
+                .map(|_| ());
+        }
         self.select_ui_target(device_id, target).await?;
         self.activate_target().await
     }
@@ -700,15 +761,20 @@ if ($null -eq $apps) {
 
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
         self.require_device(device_id)?;
-        self.activate_target().await?;
+        let _input = self.capture_lock.lock().await;
+        let prefix = self.live_input_prefix(device_id, &[point]).await?;
+        if prefix.is_empty() {
+            self.activate_target().await?;
+        }
         self.powershell(format!(
-            "{}; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {}); [MobileMcpMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); [MobileMcpMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)",
+            "{}; {prefix}\n[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {}); [MobileMcpMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); [MobileMcpMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)",
             mouse_helpers(), point.x.round(), point.y.round()
         )).await.map(|_| ())
     }
 
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
+        let _input = self.capture_lock.lock().await;
         if app_id.trim().is_empty() {
             return Err(RobotError::InvalidInput("app id must not be empty".into()));
         }
@@ -720,6 +786,7 @@ if ($null -eq $apps) {
             .await?;
         let process_id = parse_process_id(&output)?;
         *self.active_process_id.lock().await = Some(process_id);
+        *self.active_window_id.lock().await = None;
         Ok(())
     }
 
@@ -739,7 +806,11 @@ if ($null -eq $apps) {
 
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
-        self.activate_target().await?;
+        let _input = self.capture_lock.lock().await;
+        let prefix = self.live_input_prefix(device_id, &[]).await?;
+        if prefix.is_empty() {
+            self.activate_target().await?;
+        }
         let script = r#"
 Add-Type @'
 using System;
@@ -792,7 +863,34 @@ public static class DeviceBotKeyboard {
 '@
 [DeviceBotKeyboard]::TypeLiteral(__TEXT__)
 "#.replace("__TEXT__", &ps_quote(text));
-        self.powershell(script).await.map(|_| ())
+        self.powershell(script.replacen(
+            "[DeviceBotKeyboard]::TypeLiteral(",
+            &format!("{prefix}\n[DeviceBotKeyboard]::TypeLiteral("),
+            1,
+        ))
+        .await
+        .map(|_| ())
+    }
+
+    async fn clear_text(&self, device_id: &str) -> Result<(), RobotError> {
+        self.require_device(device_id)?;
+        let _input = self.capture_lock.lock().await;
+        let selected_id = if device_id == DEVICE_ID {
+            let pid = *self.active_process_id.lock().await;
+            let hwnd = *self.active_window_id.lock().await;
+            let (Some(pid), Some(hwnd)) = (pid, hwnd) else {
+                return Err(RobotError::InvalidInput(
+                    "Select an app window before clearing text.".into(),
+                ));
+            };
+            format!("windows:{pid}:{hwnd}")
+        } else {
+            device_id.to_owned()
+        };
+        let prefix = self.live_input_prefix(&selected_id, &[]).await?;
+        self.powershell(live::clear_text_script(&prefix))
+            .await
+            .map(|_| ())
     }
 
     async fn swipe(
@@ -803,8 +901,12 @@ public static class DeviceBotKeyboard {
         duration_ms: Option<u64>,
     ) -> Result<(), RobotError> {
         self.require_device(device_id)?;
-        self.activate_target().await?;
-        if (end.y - start.y).abs() > (end.x - start.x).abs() {
+        let _input = self.capture_lock.lock().await;
+        let prefix = self.live_input_prefix(device_id, &[start, end]).await?;
+        if prefix.is_empty() {
+            self.activate_target().await?;
+        }
+        if prefix.is_empty() && (end.y - start.y).abs() > (end.x - start.x).abs() {
             let process_id = self.target_process_id().await?;
             if flutter_bridge::action(
                 process_id,
@@ -820,16 +922,27 @@ public static class DeviceBotKeyboard {
                 return Ok(());
             }
         }
+        let guard = if prefix.is_empty() {
+            ""
+        } else {
+            "if ([DeviceBotLive]::GetForegroundWindow() -ne $target) { throw 'Target lost focus during drag.' }; [DeviceBotLive]::CheckPoint($target, [System.Windows.Forms.Cursor]::Position.X, [System.Windows.Forms.Cursor]::Position.Y); "
+        };
         let steps = 12_u64;
         let delay = duration_ms.unwrap_or(300) / steps;
         self.powershell(format!(
-            "{}; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {}); [MobileMcpMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); for ($step = 1; $step -le {}; $step++) {{ [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point([Math]::Round({} + ({} - {}) * $step / {}), [Math]::Round({} + ({} - {}) * $step / {})); Start-Sleep -Milliseconds {} }}; [MobileMcpMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)",
+            "{}; {prefix}\n[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {}); [MobileMcpMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); try {{ for ($step = 1; $step -le {}; $step++) {{ {guard}[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point([Math]::Round({} + ({} - {}) * $step / {}), [Math]::Round({} + ({} - {}) * $step / {})); Start-Sleep -Milliseconds {} }} }} finally {{ [MobileMcpMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero) }}",
             mouse_helpers(), start.x.round(), start.y.round(), steps, start.x, end.x, start.x, steps, start.y, end.y, start.y, steps, delay
         )).await.map(|_| ())
     }
 
     async fn press_ime_action(&self, device_id: &str, action: ImeAction) -> Result<(), RobotError> {
         self.require_device(device_id)?;
+        let _input = self.capture_lock.lock().await;
+        if live::Target::parse(device_id)?.is_some() {
+            return Err(RobotError::Unsupported(
+                "Windows Live IME actions require a window-scoped Flutter bridge".into(),
+            ));
+        }
         self.activate_target().await?;
         let process_id = self.target_process_id().await?;
         if flutter_bridge::action(
@@ -864,6 +977,9 @@ public static class DeviceBotKeyboard {
 
     async fn list_flutter_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.require_device(device_id)?;
+        if live::Target::parse(device_id)?.is_some() {
+            return Ok(vec![]);
+        }
         if let Some(elements) = robot_flutter_bridge::configured(device_id).await {
             return Ok(elements);
         }
@@ -875,6 +991,9 @@ public static class DeviceBotKeyboard {
 
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.require_device(device_id)?;
+        if live::Target::parse(device_id)?.is_some() {
+            return self.live_elements(device_id, None, None).await;
+        }
         self.uia_elements(None, None).await
     }
 
@@ -885,6 +1004,9 @@ public static class DeviceBotKeyboard {
         max_results: Option<usize>,
     ) -> Result<Vec<UiElement>, RobotError> {
         self.require_device(device_id)?;
+        if live::Target::parse(device_id)?.is_some() {
+            return self.live_elements(device_id, filter, max_results).await;
+        }
         self.uia_elements(filter, max_results).await
     }
 }

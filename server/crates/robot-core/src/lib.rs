@@ -712,6 +712,11 @@ impl RobotRegistry {
             if devices.iter().any(|device| {
                 device.id == device_id
                     || (device_id == "chrome:browser" && device.platform == Platform::Chrome)
+                    // Window-scoped Windows IDs retain the selected PID/HWND for
+                    // every operation. The driver validates the actual identity.
+                    || (device_id.starts_with("windows:")
+                        && device.id == "windows-host"
+                        && device.platform == Platform::Windows)
             }) {
                 return Ok(Arc::clone(driver));
             }
@@ -945,6 +950,10 @@ mod tests {
 
     #[async_trait]
     impl Robot for StubRobot {
+        async fn stream_context(&self, id: &str) -> Result<Value, RobotError> {
+            Ok(serde_json::json!({ "deviceId": id }))
+        }
+
         async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
             if self.list_error {
                 return Err(RobotError::CommandFailed("driver unavailable".into()));
@@ -1169,6 +1178,37 @@ mod tests {
         assert!(Arc::ptr_eq(
             &registry.driver_for("chrome:browser").await.unwrap(),
             &driver
+        ));
+    }
+
+    #[tokio::test]
+    async fn windows_window_target_routes_without_changing_its_identity() {
+        let driver: Arc<dyn Robot> = Arc::new(StubRobot {
+            device: Some(RobotDevice {
+                id: "windows-host".into(),
+                name: "Windows".into(),
+                platform: Platform::Windows,
+                state: DeviceState::Available,
+            }),
+            list_error: false,
+        });
+        let registry = RobotRegistry::new(vec![Arc::clone(&driver)]);
+        assert!(Arc::ptr_eq(
+            &registry.driver_for("windows:123:456").await.unwrap(),
+            &driver
+        ));
+        assert_eq!(
+            registry.stream_context("windows:123:456").await.unwrap(),
+            serde_json::json!({ "deviceId": "windows:123:456" })
+        );
+        assert!(matches!(
+            registry.driver_for("windows-other").await,
+            Err(RobotError::DeviceNotFound(_))
+        ));
+        let empty = RobotRegistry::new(vec![]);
+        assert!(matches!(
+            empty.driver_for("windows:123:456").await,
+            Err(RobotError::DeviceNotFound(_))
         ));
     }
 

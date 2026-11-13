@@ -8,10 +8,10 @@ pub(super) const START_NAME: &str = "mobile_start_stream";
 pub(super) const STOP_NAME: &str = "mobile_stop_stream";
 pub(super) fn definitions() -> [ToolDefinition; 2] {
     [ToolDefinition { name: START_NAME.into(), title: Some("Start realtime video".into()),
-        description: "Negotiate Android H.264 or Chrome browser-native WebRTC. Supply a gathered recvonly video SDP offer; returns streamId, SDP answer and device dimensions. Video travels over WebRTC, never MCP.".into(),
+        description: "Negotiate Android or Windows H.264, or Chrome browser-native WebRTC. Windows requires a window-scoped deviceId windows:<processId>:<windowId> from the running app/window lists; use that same ID for inspection and input. Supply a gathered recvonly video SDP offer; returns streamId, SDP answer, dimensions and context. Video travels over WebRTC, never MCP.".into(),
         input_schema: json!({"type":"object","properties":{"deviceId":{"type":"string","minLength":1},"sdp":{"type":"string","minLength":1}},"required":["deviceId","sdp"],"additionalProperties":false}) },
     ToolDefinition { name: STOP_NAME.into(), title: Some("Stop realtime video".into()),
-        description: "Idempotently close this MCP session's WebRTC stream and Android capture.".into(),
+        description: "Idempotently close this MCP session's WebRTC stream and capture process.".into(),
         input_schema: json!({"type":"object","properties":{"streamId":{"type":"string","minLength":1}},"required":["streamId"],"additionalProperties":false}) }]
 }
 pub(super) async fn start(

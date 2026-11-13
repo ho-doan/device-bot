@@ -15,6 +15,7 @@ import 'android_video.dart';
 
 import 'mcp_client.dart';
 import 'models.dart';
+import 'windows_live.dart';
 
 /// Where a fitted screenshot sits inside the mirror viewport.
 Rect fittedScreenshotRect({required Size viewport, required Size image}) {
@@ -126,7 +127,8 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         widget.recording ??
         LiveRecording(deviceId: 'selected', platform: widget.platform);
     if (widget.openVideo != null) unawaited(_openVideo());
-    if (widget.platform != 'chrome' || widget.openVideo == null) {
+    if (!['chrome', 'windows'].contains(widget.platform) ||
+        widget.openVideo == null) {
       _connectInspection();
     }
   }
@@ -220,7 +222,20 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     switch (update) {
       case AndroidLiveFrame():
         break;
-      case AndroidLiveElements(:final elements, :final source):
+      case AndroidLiveElements(elements: var elements, :final source):
+        if (widget.platform == 'windows') {
+          final context = _video?.recordingContext;
+          if (context == null) return;
+          try {
+            elements = windowElementsForVideo(elements, context);
+          } on Object catch (error) {
+            setState(() {
+              _status = error.toString();
+              _stopped = true;
+            });
+            return;
+          }
+        }
         final previous = _selectedIndex == null
             ? null
             : _elements[_selectedIndex!];
@@ -291,8 +306,18 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
       _video = null;
       _videoError = null;
       _status = null;
+      if (widget.platform == 'windows') {
+        _elements = const [];
+        _selectedIndex = null;
+        _deviceFocus = null;
+      }
     });
     try {
+      if (widget.platform == 'windows') {
+        await _subscription?.cancel();
+        _subscription = null;
+        _stopped = false;
+      }
       await previous?.close();
       if (!mounted) return;
       final video = await widget.openVideo!();
@@ -305,7 +330,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         _recording.context = video.recordingContext;
       }
       video.addListener(_videoChanged);
-      if (widget.platform == 'chrome') _connectInspection();
+      if (['chrome', 'windows'].contains(widget.platform)) _connectInspection();
       setState(() {});
     } on Object catch (error) {
       if (mounted) {
@@ -348,18 +373,33 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   }
 
   void _send(Map<String, dynamic> input) {
+    final queuedVideo = _video;
     final snapshot = List<AdminElement>.of(_elements);
     final selected = _selectedIndex == null ? null : snapshot[_selectedIndex!];
     // Resolve the selector at click time. Reserve the sequence inside the queue.
     _inputs = _inputs
         .then((_) async {
-          final step = _recording.prepare(
-            input,
-            snapshot,
-            input['action'] == 'tap' ? selected : null,
-          );
-          await widget.onInput(input);
-          await _recording.commit(step);
+          if (widget.platform == 'windows') {
+            final video = _video;
+            if (!mounted ||
+                video == null ||
+                !identical(video, queuedVideo) ||
+                video.status != null ||
+                _stopped) {
+              throw StateError('Open Windows Live before sending input.');
+            }
+            await widget.onInput(
+              windowInputForDesktop(input, video.recordingContext),
+            );
+          } else {
+            final step = _recording.prepare(
+              input,
+              snapshot,
+              input['action'] == 'tap' ? selected : null,
+            );
+            await widget.onInput(input);
+            await _recording.commit(step);
+          }
           if (mounted) setState(() {});
         })
         .catchError((Object error) {
@@ -490,12 +530,13 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         appBar: AppBar(
           title: Text('${widget.deviceName} live'),
           actions: [
-            TextButton.icon(
-              key: const Key('live-export-yaml'),
-              onPressed: _recording.count > 0 ? _reviewRecording : null,
-              icon: const Icon(Icons.save_alt),
-              label: Text('Review YAML (${_recording.count})'),
-            ),
+            if (widget.platform != 'windows')
+              TextButton.icon(
+                key: const Key('live-export-yaml'),
+                onPressed: _recording.count > 0 ? _reviewRecording : null,
+                icon: const Icon(Icons.save_alt),
+                label: Text('Review YAML (${_recording.count})'),
+              ),
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Close'),
@@ -976,6 +1017,8 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                     child: Text(
                                       widget.platform == 'chrome'
                                           ? 'Clear web field'
+                                          : widget.platform == 'windows'
+                                          ? 'Clear Windows field'
                                           : 'Clear Android field',
                                     ),
                                   ),

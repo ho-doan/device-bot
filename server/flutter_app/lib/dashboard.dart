@@ -183,7 +183,11 @@ class _DevicesPanel extends StatelessWidget {
                             ),
                           ),
                           if (onLive != null &&
-                              ['android', 'chrome'].contains(device.platform))
+                              [
+                                'android',
+                                'chrome',
+                                'windows',
+                              ].contains(device.platform))
                             IconButton(
                               tooltip: liveActionLabel(device),
                               onPressed: busy || device.state != 'available'

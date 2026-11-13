@@ -24,7 +24,13 @@ The web app keeps running after the terminal closes. Its history lives in
 `~/.device-bot/reports`; set `DEVICE_BOT_REPORT_DATA_DIR` before startup to use
 another store. MCP clients must pass `mcp` as an argument.
 
-QC is a separate optional desktop app. See the [QC setup](server/README.md#qc-desktop-app)
+Release bundles include both QC desktop and QC web. Start MCP with
+`device-bot qc` (or `device-bot mcp --listen 0.0.0.0:3337`), then open
+`http://<server-ip>:3337/qc/` in a browser. Enter the server bearer token in QC
+web; the same-origin report is at `/reports/`. Devices and native drivers remain
+on the backend machine. The desktop app discovers the local token automatically.
+
+QC is also available as a separate desktop app. See the [QC setup](server/README.md#qc-desktop-app)
 to build or locate it before using `device-bot qc`.
 
 Build the native suite from the repository root:

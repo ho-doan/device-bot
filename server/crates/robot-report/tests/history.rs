@@ -591,3 +591,33 @@ fn ingest_does_not_require_a_manual_project_and_rejects_store_overlap() {
             .is_err()
     );
 }
+
+#[test]
+fn resolved_flow_metadata_classifies_the_real_app_instead_of_a_template() {
+    let f = Fixture::new();
+    let case = f.case("profiled", "PASS");
+    fs::write(
+        case.join("scenario.yaml"),
+        "version: 2\nname: fixture\nsteps:\n- launch_app: {app_id: '${app_id}'}\n",
+    )
+    .unwrap();
+    fs::write(
+        case.join("expanded-flow.yaml"),
+        "version: 2\nname: fixture\nsteps:\n- launch_app:\n    app_id: com.example.resolved\n",
+    )
+    .unwrap();
+    let run = f
+        .store
+        .ingest_flow(FlowIngest {
+            name: "Resolved profile".into(),
+            source: "cli".into(),
+            case_dir: case,
+            app_id: None,
+            url: None,
+        })
+        .unwrap();
+    assert_eq!(
+        f.store.project(&run.project_id).unwrap().source_dir,
+        "auto:ios:com.example.resolved"
+    );
+}

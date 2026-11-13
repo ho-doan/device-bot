@@ -99,6 +99,7 @@ class _CompanionHomeState extends State<CompanionHome> {
   late Future<DashboardSnapshot> _snapshot;
   McpClient? _mcpClient;
   String? _sessionBaseUrl;
+  String? _sessionAuthToken;
   StreamSubscription<AdminEvent>? _mcpEventSubscription;
   List<AdminEvent> _liveEvents = const [];
   String _activityStatus = 'Activity stream is connecting…';
@@ -128,6 +129,7 @@ class _CompanionHomeState extends State<CompanionHome> {
 
   McpClient _client() {
     _sessionBaseUrl ??= _baseUrlController.text;
+    _sessionAuthToken ??= _tokenController.text;
     return _mcpClient ??= McpClient(
       baseUrl: _baseUrlController.text,
       bearerToken: _tokenController.text,
@@ -155,11 +157,14 @@ class _CompanionHomeState extends State<CompanionHome> {
 
   void _refresh() {
     final existing = _mcpClient;
-    if (existing != null && _sessionBaseUrl == _baseUrlController.text) {
+    if (existing != null &&
+        _sessionBaseUrl == _baseUrlController.text &&
+        _sessionAuthToken == _tokenController.text) {
       setState(() => _snapshot = existing.loadDashboard());
       return;
     }
     _sessionBaseUrl = _baseUrlController.text;
+    _sessionAuthToken = _tokenController.text;
     _readinessTimer ??= Timer.periodic(
       const Duration(seconds: 5),
       (_) => _pollDeviceReadiness(),

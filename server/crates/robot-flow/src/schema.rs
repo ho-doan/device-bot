@@ -228,6 +228,9 @@ pub(crate) fn compile_with_profile(
     // this resolved profile rather than interpolating already resolved data.
     let selector_source = serde_json::to_value(&profile.selectors).unwrap();
     let mut resolved_profile = profile.clone();
+    resolved_profile.variables = vars.clone();
+    resolved_profile.device = vars["device"].clone();
+    resolved_profile.app_id = vars["app_id"].as_str().unwrap_or_default().to_owned();
     resolved_profile.selectors = serde_json::from_value(resolve(&selector_source, &vars)?)
         .map_err(|e| format!("invalid resolved selectors: {e}"))?;
     let profile = &resolved_profile;

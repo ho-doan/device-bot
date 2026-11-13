@@ -32,7 +32,7 @@ def stage_qc(stage, target, qc):
     shutil.copytree(app, destination / 'mobile_mcp_companion.app', symlinks=True)
 
 
-def package(binary, target, version, output, qc=None):
+def package(binary, target, version, output, qc=None, qc_web=None):
     expected = re.search(r'^version\s*=\s*"([^"]+)"',
                          (ROOT / 'server/crates/mcp-server/Cargo.toml').read_text(), re.M)[1]
     if version != expected:
@@ -70,6 +70,10 @@ def package(binary, target, version, output, qc=None):
         if not files:
             raise ValueError('No tracked XCTest assets were found')
         stage_qc(stage, target, qc)
+        if qc_web is not None:
+            if not (qc_web / 'index.html').is_file() or not (qc_web / 'flutter_bootstrap.js').is_file():
+                raise ValueError(f'Missing QC web build: {qc_web}')
+            shutil.copytree(qc_web, stage / 'qc-web', symlinks=True)
         (assets / 'manifest.json').write_text(json.dumps({
             'version': version, 'files': sorted(files),
         }, indent=2) + '\n')
@@ -96,5 +100,6 @@ if __name__ == '__main__':
     parser.add_argument('--version', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--qc', type=Path)
+    parser.add_argument('--qc-web', type=Path)
     args = parser.parse_args()
-    package(args.binary, args.target, args.version.removeprefix('v'), args.output, args.qc)
+    package(args.binary, args.target, args.version.removeprefix('v'), args.output, args.qc, args.qc_web)

@@ -61,6 +61,15 @@ pub fn router(store: Store) -> Router {
             }),
         )
         .route(
+            "/assets/history.js",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                    include_str!("web/history.js"),
+                )
+            }),
+        )
+        .route(
             "/assets/report.js",
             get(|| async {
                 (

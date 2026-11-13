@@ -384,6 +384,8 @@ impl ChromeRobot {
 
     async fn dispatch_tap(&self, target: &ChromeTarget, point: Point) -> Result<(), RobotError> {
         self.cdp(target, "Page.bringToFront", json!({})).await?;
+        self.dispatch_mouse(target, "mouseMoved", point, None)
+            .await?;
         self.dispatch_mouse(target, "mousePressed", point, Some("left"))
             .await?;
         self.dispatch_mouse(target, "mouseReleased", point, Some("left"))
@@ -397,9 +399,13 @@ impl ChromeRobot {
         point: Point,
         button: Option<&str>,
     ) -> Result<(), RobotError> {
-        let mut params = json!({ "type": event_type, "x": point.x, "y": point.y });
+        let mut params = json!({ "type": event_type, "x": point.x, "y": point.y,
+            "buttons": if button.is_some() && event_type != "mouseReleased" { 1 } else { 0 } });
         if let Some(button) = button {
             params["button"] = Value::String(button.into());
+            // Flutter Web checks PointerEvent.buttons, not only button/clickCount.
+            // CDP defaults the held-button bitmask to zero, even on mousePressed.
+            params["buttons"] = json!(if event_type == "mouseReleased" { 0 } else { 1 });
             params["clickCount"] = json!(1);
         }
         self.cdp(target, "Input.dispatchMouseEvent", params)
@@ -932,6 +938,7 @@ mod tests {
                         "Page.bringToFront",
                         "Input.dispatchMouseEvent",
                         "Input.dispatchMouseEvent",
+                        "Input.dispatchMouseEvent",
                     ]
                 };
                 for (index, method) in expected.iter().enumerate() {
@@ -946,6 +953,8 @@ mod tests {
                         assert_eq!(
                             request["params"]["type"],
                             if index == 1 {
+                                "mouseMoved"
+                            } else if index == 2 {
                                 "mousePressed"
                             } else {
                                 "mouseReleased"
@@ -953,6 +962,7 @@ mod tests {
                         );
                         assert_eq!(request["params"]["x"].as_f64(), Some(10.0));
                         assert_eq!(request["params"]["y"].as_f64(), Some(20.0));
+                        assert_eq!(request["params"]["buttons"], if index == 2 { 1 } else { 0 });
                     }
                     let response = if activation_fails {
                         json!({"id":request["id"],"error":{"code":-32000,"message":"activation failed"}})

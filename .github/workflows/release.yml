@@ -58,16 +58,19 @@ jobs:
         run: |
           flutter config --enable-windows-desktop
           flutter build windows --release
+      - name: Build QC web app
+        working-directory: server/flutter_app
+        run: flutter build web --release --base-href /qc/
       - name: Package macOS binary
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          python3 scripts/package_release.py --binary "server/target/${{ matrix.target }}/release/device-bot" --target '${{ matrix.target }}' --version "$GITHUB_REF_NAME" --output dist --qc server/flutter_app/build/macos/Build/Products/Release/mobile_mcp_companion.app
+          python3 scripts/package_release.py --binary "server/target/${{ matrix.target }}/release/device-bot" --target '${{ matrix.target }}' --version "$GITHUB_REF_NAME" --output dist --qc server/flutter_app/build/macos/Build/Products/Release/mobile_mcp_companion.app --qc-web server/flutter_app/build/web
       - name: Package Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          python scripts/package_release.py --binary "server/target/${{ matrix.target }}/release/device-bot.exe" --target '${{ matrix.target }}' --version $env:GITHUB_REF_NAME --output dist --qc server/flutter_app/build/windows/x64/runner/Release
+          python scripts/package_release.py --binary "server/target/${{ matrix.target }}/release/device-bot.exe" --target '${{ matrix.target }}' --version $env:GITHUB_REF_NAME --output dist --qc server/flutter_app/build/windows/x64/runner/Release --qc-web server/flutter_app/build/web
       - uses: actions/upload-artifact@v4
         with:
           name: device-bot-${{ matrix.target }}

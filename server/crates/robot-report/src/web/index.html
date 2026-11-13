@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light"><title>Device Bot · QA Reports</title>
-  <link rel="stylesheet" href="assets/report.css"><script defer src="assets/report.js"></script>
+  <link rel="stylesheet" href="assets/report.css"><script defer src="assets/history.js"></script><script defer src="assets/report.js"></script>
 </head>
 <body>
 <a class="skip" href="#main">Đến nội dung báo cáo</a>
@@ -11,6 +11,7 @@
 <div class="shell">
   <aside class="sidebar" aria-label="Projects">
     <div class="section-label">WORKSPACE</div><div class="sidebar-title">Projects <span id="project-count" class="count">0</span></div>
+    <label class="small" for="group-mode">Lọc nhiều nhóm</label><select id="group-mode"><option value="any">Có ít nhất một nhóm</option><option value="all">Có đủ các nhóm đã chọn</option></select>
     <nav id="projects" aria-label="Danh sách project"></nav>
     <button id="add-project" class="button secondary full manage" hidden>+ Thêm project</button>
     <div class="sidebar-foot"><strong>Mỗi lượt chạy, một bản lưu.</strong><p>Kết quả và evidence được giữ riêng trong history, kể cả khi nguồn test thay đổi.</p></div>

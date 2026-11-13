@@ -1018,6 +1018,20 @@ impl MacosRobot {
         }
     }
 
+    async fn require_input_target(&self) -> Result<(), RobotError> {
+        #[cfg(target_os = "macos")]
+        if let Some(target) = *self.active_process_id.lock().await {
+            let foreground = native_frontmost_application(None)?;
+            let mut pid = 0;
+            if unsafe { AXUIElementGetPid(foreground.0, &mut pid) } != 0 || pid != target {
+                return Err(RobotError::InvalidInput(
+                    "Activate the selected macOS app before typing or dragging".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     async fn accessibility_tap(&self, point: Point) -> Result<(), RobotError> {
         #[cfg(target_os = "macos")]
         {
@@ -1137,6 +1151,14 @@ fn non_empty(value: &str) -> Option<String> {
 
 #[async_trait]
 impl Robot for MacosRobot {
+    fn fork_session(&self) -> Option<Arc<dyn Robot>> {
+        let mut session = self.clone();
+        session.active_application = Arc::default();
+        session.active_process_id = Arc::default();
+        session.active_window_id = Arc::default();
+        Some(Arc::new(session))
+    }
+
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
         if !cfg!(target_os = "macos") {
             return Ok(vec![]);
@@ -1183,6 +1205,10 @@ impl Robot for MacosRobot {
                 return Err(RobotError::InvalidInput(
                     "processId must be a positive 32-bit integer".into(),
                 ));
+            }
+            if *self.active_process_id.lock().await != Some(process_id as i32) {
+                *self.active_window_id.lock().await = None;
+                *self.active_application.lock().await = None;
             }
             *self.active_process_id.lock().await = Some(process_id as i32);
         }
@@ -1417,6 +1443,7 @@ impl Robot for MacosRobot {
 
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
+        self.require_input_target().await?;
         self.apple_script(
             "on run argv\n set targetApp to item 1 of argv\n set textToType to item 2 of argv\n if targetApp is not \"\" then tell application targetApp to activate\n tell application \"System Events\"\n  if textToType is character id 27 then\n   key code 53\n  else\n   set AppleScript's text item delimiters to linefeed\n   set parts to text items of textToType\n   repeat with index from 1 to count of parts\n    keystroke (item index of parts)\n    if index is less than count of parts then key code 36\n   end repeat\n  end if\n end tell\nend run",
             &[
@@ -1429,14 +1456,13 @@ impl Robot for MacosRobot {
     async fn swipe(
         &self,
         device_id: &str,
-        _start: Point,
-        _end: Point,
-        _duration_ms: Option<u64>,
+        start: Point,
+        end: Point,
+        duration_ms: Option<u64>,
     ) -> Result<(), RobotError> {
         self.require_device(device_id)?;
-        Err(RobotError::Unsupported(
-            "macOS drag gestures require a pointer automation backend; tap and keyboard input are available through System Events".into(),
-        ))
+        self.require_input_target().await?;
+        pointer::drag(start, end, duration_ms.unwrap_or(300)).await
     }
 
     async fn install_app(&self, device_id: &str, _apk_path: &str) -> Result<(), RobotError> {
@@ -1499,6 +1525,46 @@ impl Robot for MacosRobot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn target_selection_is_isolated_per_mcp_session() {
+        let robot = MacosRobot::new("artifacts");
+        let first = robot
+            .fork_session()
+            .expect("desktop sessions must have independent targets");
+        let second = robot.fork_session().expect("second session");
+        first
+            .select_ui_target(
+                "macos-host",
+                UiTarget {
+                    process_id: Some(123),
+                    window_id: Some("window-a".into()),
+                },
+            )
+            .await
+            .unwrap();
+        second
+            .select_ui_target(
+                "macos-host",
+                UiTarget {
+                    process_id: Some(456),
+                    window_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(robot.active_process_id.lock().await.is_none());
+        assert!(
+            robot
+                .select_ui_target("macos-host", UiTarget::default())
+                .await
+                .is_err()
+        );
+        first
+            .select_ui_target("macos-host", UiTarget::default())
+            .await
+            .unwrap();
+    }
 
     #[test]
     fn rejects_other_device_ids() {
@@ -1570,3 +1636,5 @@ mod tests {
 mod screenshot_tests;
 
 mod screenshot;
+
+mod pointer;

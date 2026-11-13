@@ -201,6 +201,12 @@ try {
         if (Test-Path $qcDestination) { Remove-Item -Recurse -Force $qcDestination }
         Copy-Item -Path $qcSource -Destination $qcDestination -Recurse -Force
     }
+    $qcWebSource = Join-Path $TempDir "qc-web"
+    if (Test-Path $qcWebSource) {
+        $qcWebDestination = Join-Path $InstallDir "qc-web"
+        if (Test-Path $qcWebDestination) { Remove-Item -Recurse -Force $qcWebDestination }
+        Copy-Item -Path $qcWebSource -Destination $qcWebDestination -Recurse -Force
+    }
     & (Join-Path $InstallDir $BinaryName) --check-install
     if ($LASTEXITCODE -ne 0) { throw "Installed Device Bot verification failed." }
 

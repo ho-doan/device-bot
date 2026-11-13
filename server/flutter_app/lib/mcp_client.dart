@@ -609,15 +609,20 @@ class McpClient {
     final negotiatingVideo =
         body['method'] == 'tools/call' &&
         (body['params'] as Map?)?['name'] == 'mobile_start_stream';
+    final runningFlow =
+        body['method'] == 'tools/call' &&
+        (body['params'] as Map?)?['name'] == 'mobile_run_flow';
     final timeout = Duration(
-      seconds: preparing || starting ? 300 : (negotiatingVideo ? 60 : 30),
+      seconds: runningFlow
+          ? 650
+          : (preparing || starting ? 300 : (negotiatingVideo ? 60 : 30)),
     );
     try {
       final headers = <String, String>{
         'content-type': 'application/json',
         'accept': 'application/json',
         ..._bearerHeaders(),
-        if (_sessionId != null) 'mcp-session-id': _sessionId!,
+        'mcp-session-id': ?_sessionId,
       };
       final response = await client
           .post(

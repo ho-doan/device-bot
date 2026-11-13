@@ -317,7 +317,10 @@ impl Store {
             return Err(invalid("Nguồn history không được chồng lên kho report"));
         }
         let manifest = read_json::<InboxManifest>(&snapshot.join("manifest.json")).ok();
-        let yaml = fs::read_to_string(snapshot.join("scenario.yaml")).ok();
+        // Recipe/profile variables in the source can hide the actual app/URL.
+        let yaml = fs::read_to_string(snapshot.join("expanded-flow.yaml"))
+            .or_else(|_| fs::read_to_string(snapshot.join("scenario.yaml")))
+            .ok();
         let mut reports = Vec::new();
         walk(&snapshot, &mut reports, 0)?;
         let report_path = reports

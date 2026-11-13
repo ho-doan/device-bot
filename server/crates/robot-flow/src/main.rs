@@ -222,6 +222,13 @@ async fn main() {
                         let mut report = runner
                             .run(&flow, &profile, &o.confirmed, Duration::from_secs(o.case))
                             .await;
+                        if o.dry {
+                            if let Err(error) = runner.save_execution_snapshot() {
+                                eprintln!(
+                                    "Could not save resolved scenario configuration: {error}"
+                                );
+                            }
+                        }
                         if !o.dry {
                             if let Err(error) = runner.annotate_video(&report).await {
                                 report.status = "FAIL".into();

@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'inspector_yaml.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -356,8 +357,9 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         suggestedName: '${_recording.name}.yaml',
       );
       if (location == null) return;
-      final path =
-          location.path.endsWith('.yaml') || location.path.endsWith('.yml')
+      final path = kIsWeb
+          ? '${_recording.name}.yaml'
+          : location.path.endsWith('.yaml') || location.path.endsWith('.yml')
           ? location.path
           : '${location.path}.yaml';
       await XFile.fromData(
@@ -366,9 +368,11 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         name: '${_recording.name}.yaml',
       ).saveTo(path);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Saved YAML: $path')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${kIsWeb ? 'Downloaded' : 'Saved'} YAML: $path'),
+          ),
+        );
       }
     } on Object catch (error) {
       if (mounted) setState(() => _status = error.toString());

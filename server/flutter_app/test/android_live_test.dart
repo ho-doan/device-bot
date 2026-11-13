@@ -480,7 +480,7 @@ void main() {
     },
   );
 
-  AdminElement _row(String name, {required int top, bool focused = false}) {
+  AdminElement row(String name, {required int top, bool focused = false}) {
     return AdminElement(
       className: 'Button',
       resourceId: name.toLowerCase(),
@@ -510,7 +510,7 @@ void main() {
       updates.add(
         AndroidLiveElements(
           source: 'native',
-          elements: [_row('Save', top: 0), _row('Email', top: 40)],
+          elements: [row('Save', top: 0), row('Email', top: 40)],
         ),
       );
       await tester.pump();
@@ -519,10 +519,7 @@ void main() {
       updates.add(
         AndroidLiveElements(
           source: 'native',
-          elements: [
-            _row('Save', top: 2),
-            _row('Email', top: 42, focused: true),
-          ],
+          elements: [row('Save', top: 2), row('Email', top: 42, focused: true)],
         ),
       );
       await tester.pump();
@@ -562,7 +559,7 @@ void main() {
     updates.add(
       AndroidLiveElements(
         source: 'native',
-        elements: [_row('Save', top: 0), _row('Email', top: 40, focused: true)],
+        elements: [row('Save', top: 0), row('Email', top: 40, focused: true)],
       ),
     );
     await tester.pump();
@@ -577,7 +574,7 @@ void main() {
     updates.add(
       AndroidLiveElements(
         source: 'native',
-        elements: [_row('Save', top: 0, focused: true), _row('Email', top: 40)],
+        elements: [row('Save', top: 0, focused: true), row('Email', top: 40)],
       ),
     );
     await tester.pump();

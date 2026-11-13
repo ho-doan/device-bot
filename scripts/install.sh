@@ -197,6 +197,10 @@ if [ -d "${TEMP_DIR}/qc" ]; then
   rm -rf "${INSTALL_DIR}/qc"
   cp -R "${TEMP_DIR}/qc" "${INSTALL_DIR}/qc"
 fi
+if [ -d "${TEMP_DIR}/qc-web" ]; then
+  rm -rf "${INSTALL_DIR}/qc-web"
+  cp -R "${TEMP_DIR}/qc-web" "${INSTALL_DIR}/qc-web"
+fi
 env -u DEVICE_BOT_ASSET_DIR "${INSTALL_DIR}/${BINARY_NAME}" --check-install
 "${INSTALL_DIR}/scrcpy" --version
 "${INSTALL_DIR}/adb" version

@@ -63,6 +63,7 @@ pub struct FlowRunner {
     active_step: Option<(String, String)>,
     active_note: Option<String>,
     video_overlay: Option<crate::video::VideoOverlay>,
+    execution_snapshot: Option<Value>,
 }
 
 impl FlowRunner {
@@ -85,6 +86,7 @@ impl FlowRunner {
             active_step: None,
             active_note: None,
             video_overlay: None,
+            execution_snapshot: None,
         }
     }
 
@@ -108,6 +110,10 @@ impl FlowRunner {
             let (steps, resolved_profile) = schema::compile_with_profile(flow, profile)?;
             self.profile = resolved_profile;
             collect_secrets(&serde_json::to_value(&steps).unwrap(), &mut self.secrets);
+            self.execution_snapshot = Some(json!({
+                "profile": self.profile,
+                "flow": FlowDocument { steps: steps.clone(), ..flow.clone() },
+            }));
             if !dry_run {
                 for condition in &preconditions {
                     if !confirmed.contains(condition) {
@@ -117,6 +123,7 @@ impl FlowRunner {
                     }
                 }
                 fs::create_dir_all(&self.directory).map_err(|e| e.to_string())?;
+                self.save_execution_snapshot()?;
                 self.client = Some(Box::new(crate::trace::TracedMcp::new(
                     self.client.take().unwrap(),
                     self.directory.join("mcp-calls.jsonl"),
@@ -211,6 +218,24 @@ impl FlowRunner {
             error,
             error_kind,
         }
+    }
+
+    /// Store the resolved configuration alongside evidence; sensitive inputs
+    /// use the same redaction rules as MCP traces and query snapshots.
+    pub fn save_execution_snapshot(&self) -> Result<()> {
+        let Some(mut snapshot) = self.execution_snapshot.clone() else {
+            return Ok(());
+        };
+        self.scrub(&mut snapshot);
+        fs::create_dir_all(&self.directory).map_err(|e| e.to_string())?;
+        for (key, name) in [
+            ("profile", "resolved-profile.yaml"),
+            ("flow", "expanded-flow.yaml"),
+        ] {
+            let yaml = serde_yaml::to_string(&snapshot[key]).map_err(|e| e.to_string())?;
+            fs::write(self.directory.join(name), yaml).map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 
     fn preflight(&self, steps: &[Step]) -> Result<()> {

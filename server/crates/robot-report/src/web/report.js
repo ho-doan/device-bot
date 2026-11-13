@@ -1,7 +1,7 @@
 'use strict';
 const ROOT = location.pathname.startsWith('/reports') ? '/reports' : '';
 const $ = id => document.getElementById(id);
-const state = { projects: [], project: null, runs: [], run: null, selectedCase: null, canManage: false, tab: 'steps', kind: 'video', busy: false, generation: 0 };
+const state = { projects: [], project: null, projectIds: [], groupMode: 'any', runs: [], run: null, selectedCase: null, canManage: false, tab: 'steps', kind: 'video', busy: false, generation: 0 };
 const labels = { PASS: 'PASS', PARTIAL: 'PARTIAL', FAIL: 'FAIL', DRY_RUN: 'CHƯA CHẠY', 'NOT RUN': 'CHƯA CHẠY' };
 const actions = { select_device: 'Chọn thiết bị', launch_app: 'Mở ứng dụng / trang web', start_screen_recording: 'Bắt đầu ghi hình', stop_screen_recording: 'Kết thúc ghi hình', assert_element: 'Kiểm tra nội dung hiển thị', assert_absent: 'Kiểm tra nội dung đã ẩn', assert_state: 'Kiểm tra trạng thái', assert_value: 'Kiểm tra giá trị', assert_count: 'Kiểm tra số phần tử', tap_element: 'Chạm control', focus_field: 'Đặt focus vào ô nhập', fill_field: 'Điền / thay dữ liệu', type_text: 'Nhập văn bản', gesture: 'Thao tác cử chỉ', scroll: 'Cuộn màn hình', screenshot: 'Chụp ảnh evidence', call_tool: 'Gọi công cụ kiểm thử', if_element: 'Kiểm tra điều kiện', note_limitation: 'Ghi nhận giới hạn coverage', reset_fields: 'Đặt lại dữ liệu theo dõi', wait: 'Chờ trạng thái', tap: 'Chạm tọa độ', swipe: 'Vuốt màn hình' };
 function node(tag, className, text) { const e = document.createElement(tag); if (className) e.className = className; if (text !== undefined) e.textContent = text; return e; }
@@ -30,7 +30,8 @@ async function api(path, body) {
 function route() { return new URLSearchParams(location.hash.slice(1)); }
 function remember() {
   const params = new URLSearchParams();
-  if (state.project) params.set('project', state.project.id);
+  if (state.projectIds.length) params.set('projects', state.projectIds.join(','));
+  if (state.groupMode !== 'any') params.set('groups', state.groupMode);
   if (state.run) params.set('run', state.run.id);
   if (state.selectedCase !== null) params.set('case', state.selectedCase);
   history.replaceState(null, '', `#${params}`);
@@ -38,14 +39,25 @@ function remember() {
 function renderProjects() {
   $('project-count').textContent = state.projects.length;
   $('projects').replaceChildren(...state.projects.map(project => {
-    const b = node('button', `project-button${project.id === state.project?.id ? ' active' : ''}`);
-    b.setAttribute('aria-current', project.id === state.project?.id ? 'page' : 'false');
+    const selected = state.projectIds.includes(project.id);
+    const row = node('div', 'project-option');
+    const label = node('label', 'project-check');
+    const check = node('input'); check.type = 'checkbox'; check.checked = selected;
+    check.setAttribute('aria-label', `Lọc nhóm ${project.name}`);
+    check.onchange = () => {
+      const ids = check.checked ? [...state.projectIds, project.id] : state.projectIds.filter(id => id !== project.id);
+      chooseProjects(ids).catch(showError);
+    };
+    label.append(check);
+    const b = node('button', `project-button${selected ? ' active' : ''}`);
+    b.setAttribute('aria-current', selected ? 'page' : 'false');
     b.append(node('span', 'project-initial', project.name.slice(0, 1).toUpperCase()), node('span', '', project.name));
     b.onclick = () => chooseProject(project.id).catch(showError);
-    return b;
+    row.append(label, b); return row;
   }));
+  $('group-mode').value = state.groupMode;
   document.querySelectorAll('.manage').forEach(e => { e.hidden = !state.canManage; });
-  $('import-run').hidden = !state.canManage || !state.project;
+  $('import-run').hidden = !state.canManage || state.projectIds.length !== 1;
 }
 function renderHistory() {
   $('run-count').textContent = state.runs.length;
@@ -58,23 +70,29 @@ function renderHistory() {
     return row;
   }));
 }
-async function chooseProject(id, runId, caseId) {
+async function loadGroupRuns(ids) {
+  const groups = await Promise.all(ids.map(async projectId => ({ projectId, runs: await api(`/api/projects/${projectId}/runs`) })));
+  return ReportHistory.merge(groups, ids, state.groupMode);
+}
+function chooseProject(id, runId, caseId) { return chooseProjects(id ? [id] : [], runId, caseId); }
+async function chooseProjects(ids, runId, caseId) {
   const generation = ++state.generation;
-  state.project = state.projects.find(p => p.id === id) || null;
+  state.projectIds = [...new Set(ids)].filter(id => state.projects.some(project => project.id === id));
+  state.project = state.projects.find(p => p.id === state.projectIds[0]) || null;
   state.run = null; state.runs = []; state.selectedCase = null;
-  renderProjects();
+  renderProjects(); renderHistory();
   $('workspace').hidden = !state.project; $('empty').hidden = !!state.project; $('run-content').hidden = true;
-  if (!state.project) return;
-  $('project-title').textContent = state.project.name;
-  $('project-subtitle').textContent = 'Lịch sử từng lượt chạy · Kết quả, bước lỗi và evidence trong cùng một nơi.';
-  const runs = await api(`/api/projects/${state.project.id}/runs`);
+  if (!state.project) { remember(); return; }
+  $('project-title').textContent = state.projectIds.length > 1 ? `${state.projectIds.length} nhóm đã chọn` : state.project.name;
+  $('project-subtitle').textContent = 'Lịch sử theo nhóm app/web · Mỗi lượt chạy chỉ xuất hiện một lần.';
+  const runs = await loadGroupRuns(state.projectIds);
   if (generation !== state.generation) return;
   state.runs = runs; renderHistory();
   if (runs.length) await chooseRun(runs.some(r => r.id === runId) ? runId : runs[0].id, caseId);
   else remember();
 }
 async function chooseRun(id, requestedCase) {
-  const projectId = state.project.id;
+  const projectId = state.runs.find(run => run.id === id)?.projectId || state.project.id;
   const generation = ++state.generation;
   const run = await api(`/api/projects/${projectId}/runs/${id}`);
   if (generation !== state.generation) return;
@@ -112,7 +130,7 @@ function renderCaseList() {
   }));
   if (!cases.length) $('case-list').append(node('p', 'empty-inline', 'Không có case khớp bộ lọc.'));
 }
-function fileUrl(c, file, download = false) { return `${ROOT}/api/projects/${state.project.id}/runs/${state.run.id}/cases/${c.id}/files/${file.id}${download ? '?download=true' : ''}`; }
+function fileUrl(c, file, download = false) { return `${ROOT}/api/projects/${state.run.projectId}/runs/${state.run.id}/cases/${c.id}/files/${file.id}${download ? '?download=true' : ''}`; }
 function downloadLink(c, file, text = 'Tải xuống') { const a = node('a', '', text); a.href = fileUrl(c, file, true); a.download = file.name.split('/').pop(); return a; }
 function renderCase() {
   const detail = $('case-detail'); detail.replaceChildren();
@@ -219,14 +237,17 @@ function showError(error) { notice(error.message || String(error)); }
 async function refresh() {
   const projects = await api('/api/projects'); state.projects = projects; renderProjects();
   if (!state.project) {
-    const params = route(); await chooseProject(projects.some(p => p.id === params.get('project')) ? params.get('project') : projects[0]?.id, params.get('run'), params.get('case'));
-    return;
+    const params = route(); state.groupMode = params.get('groups') === 'all' ? 'all' : 'any';
+    const ids = (params.get('projects') || params.get('project') || projects[0]?.id || '').split(',').filter(Boolean);
+    await chooseProjects(ids, params.get('run'), params.get('case')); return;
   }
-  const id = state.project.id; const runs = await api(`/api/projects/${id}/runs`);
-  if (state.project?.id !== id) return;
+  const selection = state.projectIds.join(','); const generation = state.generation;
+  const runs = await loadGroupRuns(state.projectIds);
+  if (selection !== state.projectIds.join(',') || generation !== state.generation) return;
   state.runs = runs; renderHistory();
-  if (!state.run && runs.length) await chooseRun(runs[0].id);
+  if (runs.length && (!state.run || !runs.some(run => run.id === state.run.id))) await chooseRun(runs[0].id);
 }
+$('group-mode').onchange = () => { state.groupMode = $('group-mode').value; chooseProjects(state.projectIds).catch(showError); };
 $('refresh').onclick = () => refresh().catch(showError);
 $('search').oninput = renderCaseList; $('status-filter').onchange = renderCaseList;
 function openProject() { $('project-form').reset(); $('project-form').querySelector('.form-error').textContent = ''; $('project-dialog').showModal(); }
@@ -244,8 +265,8 @@ function formHandler(id, submit) {
   };
 }
 formHandler('project-form', async body => { const project = await api('/api/projects', body); state.projects = await api('/api/projects'); await chooseProject(project.id); });
-formHandler('run-form', async body => { const id = state.project.id; const run = await api(`/api/projects/${id}/runs`, body); state.runs = await api(`/api/projects/${id}/runs`); await chooseRun(run.id); });
-window.addEventListener('hashchange', () => { const params = route(); chooseProject(params.get('project'), params.get('run'), params.get('case')).catch(showError); });
+formHandler('run-form', async body => { const id = state.project.id; const run = await api(`/api/projects/${id}/runs`, body); state.runs = await loadGroupRuns(state.projectIds); await chooseRun(run.id); });
+window.addEventListener('hashchange', () => { const params = route(); state.groupMode = params.get('groups') === 'all' ? 'all' : 'any'; chooseProjects((params.get('projects') || params.get('project') || '').split(',').filter(Boolean), params.get('run'), params.get('case')).catch(showError); });
 (async () => {
   try { const capability = await api('/api/capabilities'); state.canManage = capability.canManage; await refresh(); }
   catch (error) { showError(error); }

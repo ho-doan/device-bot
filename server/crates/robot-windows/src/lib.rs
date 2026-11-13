@@ -526,6 +526,12 @@ fn parse_uia_elements(output: &[u8]) -> Result<Vec<UiElement>, RobotError> {
 
 #[async_trait]
 impl Robot for WindowsRobot {
+    fn fork_session(&self) -> Option<Arc<dyn Robot>> {
+        let mut session = self.clone();
+        session.active_process_id = Arc::default();
+        Some(Arc::new(session))
+    }
+
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
         if !cfg!(target_os = "windows") {
             return Ok(vec![]);
@@ -886,6 +892,17 @@ public static class DeviceBotKeyboard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn target_selection_is_isolated_per_mcp_session() {
+        let robot = WindowsRobot::new("artifacts");
+        let first = robot
+            .fork_session()
+            .expect("desktop sessions must have independent targets");
+        let second = robot.fork_session().expect("second session");
+        assert_eq!(Arc::strong_count(&robot.active_process_id), 1);
+        drop((first, second));
+    }
 
     #[test]
     fn powershell_literals_are_quoted() {

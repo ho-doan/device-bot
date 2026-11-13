@@ -60,12 +60,32 @@ esac
         deploy.mkdir(exist_ok=True)
         (deploy / 'README.md').write_text('Production deployment guide\n')
 
-    def package(self, target='aarch64-apple-darwin', qc=None):
+    def package(self, target='aarch64-apple-darwin', qc=None, qc_web=None):
         suffix = '.exe' if 'windows' in target else ''
         def tracked(args, **_):
             return args[-1] + 'Runner.swift\n'
         with patch.object(release, 'ROOT', self.repo), patch.object(release.subprocess, 'check_output', tracked), contextlib.redirect_stdout(io.StringIO()):
-            return release.package(self.bins / ('device-bot' + suffix), target, self.version, self.out, qc)
+            return release.package(self.bins / ('device-bot' + suffix), target, self.version, self.out, qc, qc_web)
+
+    def test_release_archives_include_the_web_runtime_beside_the_cli(self):
+        web = self.root / 'web'
+        web.mkdir()
+        for name in ['index.html', 'flutter_bootstrap.js', 'main.dart.js']:
+            (web / name).write_text('fixture')
+        for target in ['aarch64-apple-darwin', 'x86_64-pc-windows-msvc']:
+            archive = self.package(target, qc_web=web)
+            if archive.suffix == '.zip':
+                with zipfile.ZipFile(archive) as bundle:
+                    names = bundle.namelist()
+            else:
+                with tarfile.open(archive) as bundle:
+                    names = bundle.getnames()
+            self.assertIn('qc-web/index.html', names)
+            self.assertIn('qc-web/flutter_bootstrap.js', names)
+            self.assertIn('qc-web/main.dart.js', names)
+        (web / 'flutter_bootstrap.js').unlink()
+        with self.assertRaisesRegex(ValueError, 'Missing QC web build'):
+            self.package(qc_web=web)
 
     def test_mac_bundle_contains_all_tools_and_versioned_assets(self):
         archive = self.package()
@@ -161,6 +181,17 @@ cp "$TEST_DOWNLOAD_ROOT/${url##*/}" "$output"
                    DEVICE_BOT_VERSION=self.version, DEVICE_BOT_INSTALL_DIR=str(self.install_dir),
                    TEST_DOWNLOAD_ROOT=str(self.out))
         return subprocess.run(['sh', str(installer_path)], env=env, capture_output=True, text=True)
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
+    def test_mac_installer_copies_the_qc_web_runtime(self):
+        web = self.root / 'web'
+        web.mkdir()
+        for name in ['index.html', 'flutter_bootstrap.js', 'main.dart.js']:
+            (web / name).write_text('fixture')
+        result = self.install(self.package(qc_web=web))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.install_dir / 'qc-web/index.html').is_file())
+        self.assertTrue((self.install_dir / 'qc-web/main.dart.js').is_file())
 
     @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
     def test_mac_installer_installs_three_verified_tools(self):

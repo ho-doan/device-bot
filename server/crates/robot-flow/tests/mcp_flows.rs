@@ -796,7 +796,12 @@ async fn sensitive_input_keeps_recording_until_yaml_stop() {
             "mobile_stop_screen_recording",
         ]
     );
-    for artifact in ["query-1.json", "mcp-calls.jsonl"] {
+    for artifact in [
+        "query-1.json",
+        "mcp-calls.jsonl",
+        "resolved-profile.yaml",
+        "expanded-flow.yaml",
+    ] {
         assert!(
             !std::fs::read_to_string(tmp.0.join(artifact))
                 .unwrap()

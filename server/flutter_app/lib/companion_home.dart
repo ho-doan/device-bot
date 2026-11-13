@@ -19,6 +19,8 @@ import 'desktop_capture.dart';
 import 'windows_live.dart';
 import 'mcp_client.dart';
 import 'models.dart';
+import 'launch_app.dart';
+export 'launch_app.dart' show installedAppsErrorMessage;
 
 const _configuredMcpUrl = String.fromEnvironment('DEVICE_BOT_URL');
 
@@ -33,16 +35,6 @@ String get defaultMcpUrl {
 String get companionTitle =>
     kDebugMode ? 'Device Bot Dev' : 'Device Bot Companion';
 const _defaultAuthToken = String.fromEnvironment('DEVICE_BOT_AUTH');
-
-String installedAppsErrorMessage(Object? error) {
-  final message = error.toString();
-  if (message.contains('requireContainerAccess')) {
-    return 'The selected Xcode/CoreDevice cannot decode this iOS app list '
-        '(missing requireContainerAccess). Check Xcode device compatibility, '
-        'or enter the app bundle ID below.';
-  }
-  return 'Could not list installed apps: $message\nEnter the identifier manually.';
-}
 
 String elementInspectionErrorMessage(Object error) {
   final message = error.toString();
@@ -459,8 +451,10 @@ class _CompanionHomeState extends State<CompanionHome> {
     final installedApps = _client().listInstalledApps(device.id);
     final appId = await showDialog<String>(
       context: context,
-      builder: (context) =>
-          _LaunchAppDialog(device: device, installedApps: installedApps),
+      builder: (context) => LaunchAppDialog(
+        deviceName: device.name,
+        installedApps: installedApps,
+      ),
     );
     if (!mounted || appId == null || appId.trim().isEmpty) return;
     try {
@@ -722,121 +716,6 @@ class _ErrorPanel extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _LaunchAppDialog extends StatefulWidget {
-  const _LaunchAppDialog({required this.device, required this.installedApps});
-
-  final AdminDevice device;
-  final Future<List<InstalledApp>> installedApps;
-
-  @override
-  State<_LaunchAppDialog> createState() => _LaunchAppDialogState();
-}
-
-class _LaunchAppDialogState extends State<_LaunchAppDialog> {
-  final _appIdController = TextEditingController();
-  String? _selectedAppId;
-
-  @override
-  void dispose() {
-    _appIdController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Launch app on ${widget.device.name}'),
-      content: SizedBox(
-        width: 520,
-        child: FutureBuilder<List<InstalledApp>>(
-          future: widget.installedApps,
-          builder: (context, snapshot) {
-            final apps = snapshot.data ?? const <InstalledApp>[];
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (snapshot.connectionState == ConnectionState.waiting)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 12),
-                    child: LinearProgressIndicator(),
-                  ),
-                if (snapshot.hasError)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Text(
-                      installedAppsErrorMessage(snapshot.error),
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                  ),
-                if (apps.isNotEmpty) ...[
-                  Text(
-                    'Installed apps (${apps.length})',
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                  const SizedBox(height: 6),
-                  SizedBox(
-                    height: 260,
-                    child: ListView.separated(
-                      itemCount: apps.length,
-                      separatorBuilder: (_, index) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final app = apps[index];
-                        return ListTile(
-                          dense: true,
-                          selected: app.identifier == _selectedAppId,
-                          title: Text(app.name),
-                          subtitle: Text(app.identifier),
-                          onTap: () {
-                            setState(() {
-                              _selectedAppId = app.identifier;
-                              _appIdController.text = app.identifier;
-                            });
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                TextField(
-                  controller: _appIdController,
-                  autofocus: apps.isEmpty,
-                  onChanged: (value) {
-                    if (value != _selectedAppId) {
-                      setState(() => _selectedAppId = null);
-                    }
-                  },
-                  onSubmitted: (value) =>
-                      Navigator.of(context).pop(value.trim()),
-                  decoration: const InputDecoration(
-                    labelText: 'App bundle/package ID',
-                    helperText:
-                        'Select an installed app or enter an identifier manually.',
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () =>
-              Navigator.of(context).pop(_appIdController.text.trim()),
-          child: const Text('Launch'),
-        ),
-      ],
     );
   }
 }

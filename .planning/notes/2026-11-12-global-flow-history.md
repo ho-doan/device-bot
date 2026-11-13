@@ -1,6 +1,6 @@
 # Tự lưu flow và evidence vào history global
 
-- Ngày: 2026-11-12. Cập nhật: **2026-11-12 — CLI và QC tự ghi vào robot-report, nhóm theo app/web**.
+- Ngày: 2026-11-12. Cập nhật: **2026-11-13 — Liên kết đa nhóm (cùng runId, không copy evidence)**.
 
 ## Mục tiêu
 
@@ -13,10 +13,11 @@ Mỗi khi bot chạy flow, tự lưu một bản flow đã chạy cùng kết qu
 3. Project tự tạo theo nhóm: `android|ios|macos|windows:<appId>`, `web:<host>`, hoặc `unclassified`. Cùng nhóm tái sử dụng project; mỗi lần chạy là `runId` mới.
 4. Evidence (yaml, report, ảnh, video, log) copy vào kho report; LAN đọc qua `/reports/` API theo ID.
 5. Dry-run, FAIL/setup failure vẫn được lưu. `DEVICE_BOT_REPORT_DATA_DIR` / `DEVICE_BOT_RUNS_DIR` ghi đè đường dẫn.
+6. Flow nhiều app/web: evidence nằm ở nhóm chính; các nhóm còn lại nhận alias `link.json` cùng `runId` (không copy file). `Store::run` / `evidence` theo alias.
 
 ## Còn hạn chế
 
-- Flow nhiều app/web ghi `targets[]` trên run nhưng file nằm ở nhóm chính (không nhân bản); chưa có UI lọc đa nhóm.
+- Chưa có UI lọc đa nhóm trên robot-report.
 - Không copy profile đã resolve; YAML là bản đã chạy. `mcp-calls.jsonl` vẫn theo cơ chế redact sẵn có của runner.
 - Cần xác minh từ máy LAN: mở YAML/evidence của lượt CLI và QC sau khi đổi cwd và restart report.
 

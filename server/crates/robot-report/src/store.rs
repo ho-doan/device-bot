@@ -35,6 +35,13 @@ struct InboxManifest {
     url: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RunLink {
+    project_id: String,
+    run_id: String,
+}
+
 pub fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message.into())
 }
@@ -150,8 +157,20 @@ impl Store {
     fn run_dir(&self, project: &str, run: &str) -> io::Result<PathBuf> {
         Ok(self.project_dir(project)?.join("runs").join(uuid(run)?))
     }
+    fn resolved_run_dir(&self, project: &str, run: &str) -> io::Result<PathBuf> {
+        let dir = self.run_dir(project, run)?;
+        let link = dir.join("link.json");
+        if link.is_file() {
+            let link: RunLink = read_json(&link)?;
+            return self.run_dir(&link.project_id, &link.run_id);
+        }
+        Ok(dir)
+    }
     pub fn run(&self, project: &str, run: &str) -> io::Result<Run> {
-        read_json(&self.run_dir(project, run)?.join("run.json"))
+        self.project(project)?;
+        let mut report = read_json::<Run>(&self.resolved_run_dir(project, run)?.join("run.json"))?;
+        report.project_id = project.to_owned();
+        Ok(report)
     }
     pub fn evidence(
         &self,
@@ -168,7 +187,7 @@ impl Store {
             .and_then(|c| c.files.iter().find(|f| f.id == file))
             .cloned()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Không tìm thấy evidence"))?;
-        let root = fs::canonicalize(self.run_dir(project, run)?)?;
+        let root = fs::canonicalize(self.resolved_run_dir(project, run)?)?;
         let path = fs::canonicalize(root.join(&evidence.stored_path))?;
         if !path.starts_with(&root) || !path.is_file() {
             return Err(invalid("Evidence không nằm trong snapshot"));
@@ -327,13 +346,48 @@ impl Store {
             .map(|value| value.source.clone())
             .or_else(|| manifest.and_then(|value| value.source))
             .filter(|value| !value.trim().is_empty());
-        self.import_tree(
+        let summary = self.import_tree(
             &project,
             &name,
             &snapshot,
             source,
-            groups.into_iter().map(|group| group.key).collect(),
-        )
+            groups.iter().map(|group| group.key.clone()).collect(),
+        )?;
+        let stored = self.run(&summary.project_id, &summary.id)?;
+        for group in groups.iter().skip(1) {
+            let extra = self.ensure_auto_project(&group.key, &group.name)?;
+            if extra.id != stored.project_id {
+                self.link_run(&extra, &stored)?;
+            }
+        }
+        Ok(summary)
+    }
+
+    fn link_run(&self, project: &Project, run: &Run) -> io::Result<()> {
+        let dest = self.run_dir(&project.id, &run.id)?;
+        if dest.join("link.json").is_file() || dest.join("run.json").is_file() {
+            return Ok(());
+        }
+        if dest.exists() {
+            return Err(invalid("Thư mục run alias đã tồn tại"));
+        }
+        let stage = Staging(
+            self.root
+                .join(format!(".run-link-{}-{}", project.id, run.id)),
+        );
+        fs::create_dir(&stage.0)?;
+        let mut summary = run.summary();
+        summary.project_id = project.id.clone();
+        write_json(&stage.0.join("summary.json"), &summary)?;
+        write_json(
+            &stage.0.join("link.json"),
+            &RunLink {
+                project_id: run.project_id.clone(),
+                run_id: run.id.clone(),
+            },
+        )?;
+        fs::rename(&stage.0, dest)?;
+        Ok(())
     }
 
     fn import_tree(

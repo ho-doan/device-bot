@@ -437,6 +437,115 @@ fn auto_ingest_groups_by_app_and_keeps_failed_and_dry_runs() {
     );
 }
 
+#[tokio::test]
+async fn multi_target_flow_links_one_run_without_copying_evidence() {
+    let f = Fixture::new();
+    let source = f.case("hybrid", "PASS");
+    let report_path = source.join("case-1/report.json");
+    let mut report: Value = serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+    report["selected_device"]["platform"] = json!("android");
+    fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
+    fs::write(
+        source.join("scenario.yaml"),
+        "version: 2\nname: shop\nsteps:\n  - id: open\n    open_url:\n      url: https://shop.example.com/login\n  - id: launch\n    launch_app:\n      app_id: com.example.orbit\n",
+    )
+    .unwrap();
+    let summary = f
+        .store
+        .ingest_flow(FlowIngest {
+            name: "Shop login".into(),
+            source: "qc".into(),
+            case_dir: source,
+            app_id: Some("com.example.orbit".into()),
+            url: Some("https://shop.example.com/login".into()),
+        })
+        .unwrap();
+    let projects = f.store.projects().unwrap();
+    let web = projects
+        .iter()
+        .find(|project| project.source_dir == "auto:web:shop.example.com")
+        .unwrap();
+    let android = projects
+        .iter()
+        .find(|project| project.source_dir == "auto:android:com.example.orbit")
+        .unwrap();
+    assert_eq!(summary.project_id, web.id);
+    assert_eq!(f.store.runs(&web.id).unwrap()[0].id, summary.id);
+    assert_eq!(f.store.runs(&android.id).unwrap()[0].id, summary.id);
+
+    let primary = f
+        .store
+        .root()
+        .join("projects")
+        .join(&web.id)
+        .join("runs")
+        .join(&summary.id);
+    let alias = f
+        .store
+        .root()
+        .join("projects")
+        .join(&android.id)
+        .join("runs")
+        .join(&summary.id);
+    assert!(primary.join("run.json").is_file());
+    assert!(primary.join("files").is_dir());
+    assert!(alias.join("link.json").is_file());
+    assert!(!alias.join("run.json").exists());
+    assert!(!alias.join("files").exists());
+
+    let from_web = f.store.run(&web.id, &summary.id).unwrap();
+    let from_android = f.store.run(&android.id, &summary.id).unwrap();
+    assert_eq!(from_android.project_id, android.id);
+    assert_eq!(from_web.id, from_android.id);
+    assert!(
+        from_web
+            .targets
+            .iter()
+            .any(|target| target == "web:shop.example.com")
+    );
+    assert!(
+        from_web
+            .targets
+            .iter()
+            .any(|target| target == "android:com.example.orbit")
+    );
+    let yaml = from_android.cases[0]
+        .files
+        .iter()
+        .find(|file| file.name.ends_with("scenario.yaml"))
+        .unwrap();
+    let (web_path, _) = f.store.evidence(&web.id, &summary.id, 0, yaml.id).unwrap();
+    let (android_path, _) = f
+        .store
+        .evidence(&android.id, &summary.id, 0, yaml.id)
+        .unwrap();
+    assert_eq!(web_path, android_path);
+    assert!(
+        String::from_utf8_lossy(&fs::read(&android_path).unwrap()).contains("shop.example.com")
+    );
+
+    let restarted = Store::open(f.store.root()).unwrap();
+    assert_eq!(restarted.runs(&android.id).unwrap()[0].id, summary.id);
+    assert!(
+        restarted
+            .evidence(&android.id, &summary.id, 0, yaml.id)
+            .is_ok()
+    );
+
+    let app = robot_report::router(f.store.clone());
+    let path = format!(
+        "/api/projects/{}/runs/{}/cases/0/files/{}",
+        android.id, summary.id, yaml.id
+    );
+    let response = app
+        .oneshot(request(&path, true).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 10_000).await.unwrap();
+    assert!(String::from_utf8_lossy(&body).contains("https://shop.example.com/login"));
+}
+
 #[test]
 fn unpublished_inbox_is_indexed_once_on_store_open() {
     let f = Fixture::new();

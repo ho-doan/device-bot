@@ -69,6 +69,7 @@ for application in applications {
     windows.append((application.processIdentifier,id,window,frame))
   }
 }
+guard !windows.isEmpty else { failure("No visible window is ready for the selected simulator yet.") }
 guard windows.count == 1 else { failure("Open exactly one Simulator or Device Hub window for the selected simulator. Its name must be unique.") }
 let (pid, windowID, window, frame) = windows[0]
 var screens: [CGRect] = []
@@ -78,7 +79,10 @@ func collect(_ node: AXUIElement, _ depth: Int, _ count: inout Int) {
   let role = text(node, kAXRoleAttribute)
   let semantic = [text(node,kAXIdentifierAttribute),text(node,kAXDescriptionAttribute)].joined(separator:" ").lowercased()
   if let rect = bounds(node), rect.width >= 80, rect.height >= 80, frame.contains(rect),
-    (role == kAXImageRole || semantic.contains("screen") || semantic.contains("display")),
+    // Some Simulator versions expose the screen as a direct unnamed AXGroup.
+    // Ownership, direct-child scope, aspect ratio and uniqueness still apply.
+    (role == kAXImageRole || semantic.contains("screen") || semantic.contains("display") ||
+      (role == kAXGroupRole && depth == 1)),
     abs(rect.width/rect.height - width/height) < 0.015,
     !screens.contains(where: { $0.equalTo(rect) }) { screens.append(rect) }
   for child in attribute(node,kAXChildrenAttribute) as? [AXUIElement] ?? [] { collect(child,depth+1,&count) }

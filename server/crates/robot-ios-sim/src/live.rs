@@ -131,11 +131,24 @@ impl IosSimulatorRobot {
                 command.arg(target.to_string());
             }
         }
-        let output =
-            tokio::time::timeout(Duration::from_secs(15), command.kill_on_drop(true).output())
-                .await
-                .map_err(|_| fail("Simulator display accessibility lookup timed out."))?
-                .map_err(fail)?;
+        command.kill_on_drop(true);
+        let output = tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                let output = command.output().await.map_err(fail)?;
+                // Launching the XCTest app can briefly replace the host window.
+                // Wait inside the existing deadline only for that explicit state;
+                // ambiguous identity and permission failures remain immediate.
+                if output.status.success()
+                    || !String::from_utf8_lossy(&output.stderr)
+                        .contains("No visible window is ready for the selected simulator yet.")
+                {
+                    return Ok::<_, RobotError>(output);
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await
+        .map_err(|_| fail("Simulator display accessibility lookup timed out."))??;
         if !output.status.success() {
             return Err(fail(String::from_utf8_lossy(&output.stderr).trim()));
         }

@@ -80,7 +80,7 @@ final class DeviceKitXCTestHostAgent {
         fromY: number(command.params["fromY"]) ?? 0,
         toX: number(command.params["toX"]) ?? 0,
         toY: number(command.params["toY"]) ?? 0,
-        duration: (number(command.params["durationMs"]) ?? 100) / 1000
+        duration: TimeInterval(number(command.params["durationMs"]) ?? 100) / 1000
       )
       return ["ok": ok, "message": ok ? "swipe" : "swipe_failed"]
     case "text":

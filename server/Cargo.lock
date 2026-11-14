@@ -1807,8 +1807,13 @@ dependencies = [
 name = "robot-stream"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "robot-android",
+ "robot-chrome",
  "robot-core",
+ "robot-ios-real",
+ "robot-ios-sim",
+ "robot-macos",
  "serde",
  "serde_json",
  "tokio",

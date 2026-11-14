@@ -14,4 +14,9 @@ uuid.workspace = true
 webrtc = "=0.14.0"
 
 [dev-dependencies]
+axum.workspace = true
 robot-android = { path = "../robot-android" }
+robot-chrome = { path = "../robot-chrome" }
+robot-ios-real = { path = "../robot-ios-real" }
+robot-ios-sim = { path = "../robot-ios-sim" }
+robot-macos = { path = "../robot-macos" }

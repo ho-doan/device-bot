@@ -153,7 +153,9 @@ class _CompanionHomeState extends State<CompanionHome> {
     if (existing != null &&
         _sessionBaseUrl == _baseUrlController.text &&
         _sessionAuthToken == _tokenController.text) {
-      setState(() => _snapshot = existing.loadDashboard());
+      setState(() {
+        _snapshot = existing.loadDashboard();
+      });
       return;
     }
     _sessionBaseUrl = _baseUrlController.text;

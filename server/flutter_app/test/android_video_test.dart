@@ -41,6 +41,8 @@ void main() {
   late bool emulateWindowsTrackRegistry;
   late bool localVideoTrackAdded;
   late Completer<void> nativeVideoAttached;
+  late Completer<void> nativeStreamCreationStarted;
+  Completer<void>? nativeStreamCreationGate;
 
   Future<void> event(String channel, Map<String, Object> value) async {
     await messenger.handlePlatformMessage(
@@ -50,6 +52,48 @@ void main() {
     );
   }
 
+  Future<void> videoTrackEvent({bool streamless = false}) => event(peer, {
+    'event': 'onTrack',
+    'track': {
+      'id': 'video-1',
+      'label': 'video',
+      'kind': 'video',
+      'enabled': true,
+    },
+    'receiver': {
+      'receiverId': 'receiver-1',
+      'track': {
+        'id': 'video-1',
+        'label': 'video',
+        'kind': 'video',
+        'enabled': true,
+      },
+      'rtpParameters': {
+        'encodings': [],
+        'headerExtensions': [],
+        'codecs': [],
+        'rtcp': {'reducedSize': false},
+      },
+    },
+    'streams': streamless
+        ? <Map<String, Object>>[]
+        : [
+            {
+              'streamId': 'remote-video',
+              'ownerTag': 'peer-1',
+              'audioTracks': <Object>[],
+              'videoTracks': [
+                {
+                  'id': 'video-1',
+                  'label': 'video',
+                  'kind': 'video',
+                  'enabled': true,
+                },
+              ],
+            },
+          ],
+  });
+
   setUp(() {
     client = _Client();
     calls = [];
@@ -58,6 +102,8 @@ void main() {
     emulateWindowsTrackRegistry = false;
     localVideoTrackAdded = false;
     nativeVideoAttached = Completer<void>();
+    nativeStreamCreationStarted = Completer<void>();
+    nativeStreamCreationGate = null;
     for (final channel in [texture, peer]) {
       messenger.setMockMethodCallHandler(MethodChannel(channel), (call) async {
         calls.add('$channel:${call.method}');
@@ -71,6 +117,8 @@ void main() {
       }
       switch (call.method) {
         case 'createLocalMediaStream':
+          nativeStreamCreationStarted.complete();
+          await nativeStreamCreationGate?.future;
           return {'streamId': 'local-video'};
         case 'mediaStreamAddTrack':
           final args = call.arguments as Map;
@@ -164,41 +212,13 @@ void main() {
           (session) => session,
           onError: (Object _) => null,
         );
-        const track = {
-          'id': 'video-1',
-          'label': 'video',
-          'kind': 'video',
-          'enabled': true,
-        };
         try {
           await negotiated.future;
-          await event(peer, {
-            'event': 'onTrack',
-            'track': track,
-            'receiver': {
-              'receiverId': 'receiver-1',
-              'track': track,
-              'rtpParameters': {
-                'encodings': [],
-                'headerExtensions': [],
-                'codecs': [],
-                'rtcp': {'reducedSize': false},
-              },
-            },
-            'streams': streamless
-                ? <Map<String, Object>>[]
-                : [
-                    {
-                      'streamId': 'remote-video',
-                      'ownerTag': 'peer-1',
-                      'audioTracks': <Object>[],
-                      'videoTracks': [track],
-                    },
-                  ],
-          });
+          await videoTrackEvent(streamless: streamless);
           await nativeVideoAttached.future.timeout(const Duration(seconds: 1));
           final session = await connected;
           expect(session.hasVideo, isTrue);
+          await videoTrackEvent(streamless: streamless);
         } finally {
           await event(peer, {
             'event': 'peerConnectionState',
@@ -208,9 +228,63 @@ void main() {
           await session?.close();
         }
         expect(calls, contains('streamDispose'));
+        expect(
+          calls.where((call) => call == 'createLocalMediaStream'),
+          hasLength(1),
+        );
+        expect(
+          calls.where((call) => call == 'mediaStreamAddTrack'),
+          hasLength(1),
+        );
       },
     );
   }
+
+  test(
+    'Windows releases a stream created after connection cancellation',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      emulateWindowsTrackRegistry = true;
+      nativeStreamCreationGate = Completer<void>();
+      final connected = AndroidVideoSession.connect(client, 'windows:42:123');
+      final failure = expectLater(connected, throwsA(isA<StateError>()));
+      await negotiated.future;
+      await videoTrackEvent();
+      await nativeStreamCreationStarted.future;
+      await event(peer, {'event': 'peerConnectionState', 'state': 'failed'});
+      await Future<void>.delayed(Duration.zero);
+      nativeStreamCreationGate!.complete();
+      await failure;
+      expect(calls, contains('streamDispose'));
+      expect(calls, isNot(contains('mediaStreamAddTrack')));
+      expect(client.stopped, ['live-1']);
+    },
+  );
+
+  test(
+    'Windows reports native track binding failures and releases the stream',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      emulateWindowsTrackRegistry = true;
+      nativeFailures.add('mediaStreamAddTrack');
+      final connected = AndroidVideoSession.connect(client, 'windows:42:123');
+      final failure = expectLater(
+        connected,
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('Could not attach the Live video track'),
+          ),
+        ),
+      );
+      await negotiated.future;
+      await videoTrackEvent();
+      await failure;
+      expect(calls, contains('streamDispose'));
+      expect(client.stopped, ['live-1']);
+    },
+  );
 
   test('SDP without a frame times out and releases the stream', () async {
     final connected = AndroidVideoSession.connect(client, 'chrome:tab');

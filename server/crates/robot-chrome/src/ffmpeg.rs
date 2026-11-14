@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn discovers_bundled_and_homebrew_encoders_without_path() {
         let root = std::env::temp_dir().join(format!("device-bot-ffmpeg-{}", std::process::id()));
-        let bundled = root.join("ffmpeg/bin").join(if cfg!(windows) {
+        let bundled = root.join("ffmpeg").join("bin").join(if cfg!(windows) {
             "ffmpeg.exe"
         } else {
             "ffmpeg"

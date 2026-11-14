@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Verify capture and console regressions on Windows
-        run: cargo test --manifest-path server/Cargo.toml --release --locked --target x86_64-pc-windows-msvc -p robot-chrome -p robot-windows
+        run: cargo test --manifest-path server/Cargo.toml --release --locked --target x86_64-pc-windows-msvc -p robot-chrome -p robot-windows -p robot-android
       - name: Build candidate CLI tools
         run: cargo build --manifest-path server/Cargo.toml --release --locked --target x86_64-pc-windows-msvc -p device-bot -p robot-flow -p robot-report
       - uses: ./.github/actions/setup-release-flutter

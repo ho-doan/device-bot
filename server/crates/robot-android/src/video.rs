@@ -10,7 +10,7 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    process::{Child, Command},
+    process::Child,
     sync::{Mutex, mpsc},
 };
 
@@ -71,7 +71,7 @@ fn failure(error: impl std::fmt::Display) -> RobotError {
 async fn adb(adb: &str, id: &str, args: &[&str]) -> Result<String, RobotError> {
     let output = tokio::time::timeout(
         Duration::from_secs(15),
-        Command::new(adb)
+        super::helper_command(adb)
             .args(["-s", id])
             .args(args)
             .kill_on_drop(true)
@@ -127,7 +127,7 @@ async fn installation() -> Result<(PathBuf, String), RobotError> {
             .map_err(|_| failure("set SCRCPY_SERVER_VERSION to match SCRCPY_SERVER_PATH"))?;
         return Ok((path.into(), version));
     }
-    let output = Command::new("scrcpy")
+    let output = super::helper_command("scrcpy")
         .arg("--version")
         .kill_on_drop(true)
         .output()
@@ -218,7 +218,7 @@ pub(super) async fn start(
     ];
     let initialized = async {
         capture.child = Some(
-            Command::new(adb_path)
+            super::helper_command(adb_path)
                 .args([
                     "-s",
                     id,

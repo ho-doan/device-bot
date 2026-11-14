@@ -66,6 +66,16 @@ pub trait CommandRunner: Send + Sync {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TokioCommandRunner;
 
+// Discovery also runs while QC is displaying other platforms. A short-lived ADB
+// or scrcpy helper must not create a console over the viewer on Windows.
+fn helper_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    command.kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    command
+}
+
 #[async_trait]
 impl CommandRunner for TokioCommandRunner {
     async fn spawn_background(
@@ -80,7 +90,7 @@ impl CommandRunner for TokioCommandRunner {
         let stderr = log.try_clone().map_err(|error| {
             RobotError::CommandFailed(format!("could not clone emulator log: {error}"))
         })?;
-        Command::new(executable)
+        helper_command(executable)
             .args(args)
             .stdin(Stdio::null())
             .stdout(log)
@@ -94,7 +104,7 @@ impl CommandRunner for TokioCommandRunner {
     }
 
     async fn run(&self, executable: &str, args: &[String]) -> Result<CommandOutput, RobotError> {
-        let output = Command::new(executable)
+        let output = helper_command(executable)
             .args(args)
             .stdin(Stdio::null())
             .kill_on_drop(true)
@@ -994,6 +1004,30 @@ mod tests {
     use std::{collections::VecDeque, sync::Mutex};
 
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn discovery_helper_does_not_create_a_windows_console() {
+        let args = [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Add-Type 'using System; using System.Runtime.InteropServices; public class AdbConsoleProbe { [DllImport(\"kernel32.dll\")] public static extern IntPtr GetConsoleWindow(); }'; [Console]::Write([AdbConsoleProbe]::GetConsoleWindow().ToInt64())",
+        ].map(String::from);
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            TokioCommandRunner.run("powershell.exe", &args),
+        )
+        .await
+        .expect("console probe timed out")
+        .expect("console probe could not start");
+        assert!(
+            output.success,
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0");
+    }
 
     #[derive(Debug)]
     pub(super) struct FakeRunner {

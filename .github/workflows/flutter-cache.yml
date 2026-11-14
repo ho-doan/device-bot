@@ -1,0 +1,43 @@
+name: Warm release Flutter cache
+
+# Tags can restore master's caches, but cannot reuse caches from other tags.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'server/flutter_app/pubspec.yaml'
+      - 'server/flutter_app/pubspec.lock'
+      - '.github/actions/setup-release-flutter/**'
+      - '.github/workflows/flutter-cache.yml'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flutter-cache-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    name: Cache Flutter ${{ matrix.runner }} / ${{ matrix.platform }}
+    if: github.ref == 'refs/heads/master'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: web
+          - runner: macos-15
+            platform: macos
+          - runner: macos-15-intel
+            platform: macos
+          - runner: windows-latest
+            platform: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-release-flutter
+        with:
+          platform: ${{ matrix.platform }}

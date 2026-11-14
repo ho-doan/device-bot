@@ -1,0 +1,67 @@
+name: Set up release Flutter
+description: Restore release dependencies everywhere, but populate shared caches only on master.
+
+inputs:
+  flutter-version:
+    description: Exact Flutter SDK version
+    default: '3.47.8'
+  platform:
+    description: Flutter build platform (web, macos, or windows)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Restore Flutter SDK cache
+      id: sdk-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.tool_cache }}/device-bot-flutter/${{ inputs.flutter-version }}/${{ inputs.platform }}
+        key: release-flutter-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.platform }}-${{ inputs.flutter-version }}
+    - name: Restore Flutter Pub cache
+      id: pub-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.tool_cache }}/device-bot-pub
+        key: release-flutter-pub-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.flutter-version }}-${{ hashFiles('server/flutter_app/pubspec.lock') }}
+        restore-keys: release-flutter-pub-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.flutter-version }}-
+    - name: Install Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ inputs.flutter-version }}
+        cache: false
+        pub-cache: false
+        cache-path: ${{ runner.tool_cache }}/device-bot-flutter/${{ inputs.flutter-version }}/${{ inputs.platform }}
+        pub-cache-path: ${{ runner.tool_cache }}/device-bot-pub
+    - name: Warm Flutter platform artifacts
+      if: github.ref == 'refs/heads/master' && steps.sdk-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        FLUTTER_PLATFORM: ${{ inputs.platform }}
+      run: flutter precache "--${FLUTTER_PLATFORM}"
+    - name: Warm Flutter Pub dependencies
+      if: github.ref == 'refs/heads/master' && steps.pub-cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: server/flutter_app
+      run: flutter pub get
+    - name: Save shared Flutter SDK cache
+      if: github.ref == 'refs/heads/master' && steps.sdk-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.tool_cache }}/device-bot-flutter/${{ inputs.flutter-version }}/${{ inputs.platform }}
+        key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
+    - name: Save shared Flutter Pub cache
+      if: github.ref == 'refs/heads/master' && steps.pub-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.tool_cache }}/device-bot-pub
+        key: ${{ steps.pub-cache.outputs.cache-primary-key }}
+    - name: Report Flutter cache status
+      shell: bash
+      env:
+        SDK_CACHE_HIT: ${{ steps.sdk-cache.outputs.cache-hit }}
+        PUB_CACHE_HIT: ${{ steps.pub-cache.outputs.cache-hit }}
+      run: |
+        echo "Exact Flutter SDK cache hit: ${SDK_CACHE_HIT:-false}"
+        echo "Exact Flutter Pub cache hit: ${PUB_CACHE_HIT:-false}"
+        echo "Cache writes are restricted to master; tag builds only restore dependencies."

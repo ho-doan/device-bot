@@ -3,6 +3,15 @@ name: Release native tools
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing Cargo version to benchmark (for example v0.1.18); does not publish a release'
+        required: true
+        type: string
+
+env:
+  ARCHIVE_VERSION: ${{ inputs.version || github.ref_name }}
 
 permissions:
   contents: write
@@ -15,11 +24,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
-      - uses: subosito/flutter-action@v2
+      - name: Set up release Flutter
+        uses: ./.github/actions/setup-release-flutter
         with:
-          flutter-version: '3.47.8'
-          cache: true
-          pub-cache: true
+          platform: web
       - name: Build QC web app once for every release archive
         working-directory: server/flutter_app
         run: flutter build web --release --base-href /qc/
@@ -40,10 +48,13 @@ jobs:
         include:
           - runner: macos-15
             target: aarch64-apple-darwin
+            flutter-platform: macos
           - runner: macos-15-intel
             target: x86_64-apple-darwin
+            flutter-platform: macos
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
+            flutter-platform: windows
 
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +67,7 @@ jobs:
         with:
           workspaces: server -> target
           shared-key: release-${{ matrix.target }}
+          save-if: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -68,12 +80,12 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile("$PWD/scripts/install.ps1", [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors.Count -gt 0) { $errors | Write-Error; exit 1 }
       - run: python scripts/test_package_release.py
-      - run: cargo build --manifest-path server/Cargo.toml --release --locked -p device-bot -p robot-flow -p robot-report --target ${{ matrix.target }}
-      - uses: subosito/flutter-action@v2
+      - name: Build Rust release tools
+        run: cargo build --manifest-path server/Cargo.toml --release --locked -p device-bot -p robot-flow -p robot-report --target ${{ matrix.target }}
+      - name: Set up release Flutter
+        uses: ./.github/actions/setup-release-flutter
         with:
-          flutter-version: '3.47.8'
-          cache: true
-          pub-cache: true
+          platform: ${{ matrix.flutter-platform }}
       - name: Build QC macOS app
         if: runner.os == 'macOS'
         working-directory: server/flutter_app
@@ -95,23 +107,24 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          python3 scripts/package_release.py --binary "server/target/${{ matrix.target }}/release/device-bot" --target '${{ matrix.target }}' --version "$GITHUB_REF_NAME" --output dist --qc server/flutter_app/build/macos/Build/Products/Release/mobile_mcp_companion.app --qc-web server/flutter_app/build/web
+          python3 scripts/package_release.py --binary "server/target/${{ matrix.target }}/release/device-bot" --target '${{ matrix.target }}' --version "$ARCHIVE_VERSION" --output dist --qc server/flutter_app/build/macos/Build/Products/Release/mobile_mcp_companion.app --qc-web server/flutter_app/build/web
       - name: Package Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          python scripts/package_release.py --binary "server/target/${{ matrix.target }}/release/device-bot.exe" --target '${{ matrix.target }}' --version $env:GITHUB_REF_NAME --output dist --qc server/flutter_app/build/windows/x64/runner/Release --qc-web server/flutter_app/build/web
+          python scripts/package_release.py --binary "server/target/${{ matrix.target }}/release/device-bot.exe" --target '${{ matrix.target }}' --version $env:ARCHIVE_VERSION --output dist --qc server/flutter_app/build/windows/x64/runner/Release --qc-web server/flutter_app/build/web
       - uses: actions/upload-artifact@v4
         with:
           name: device-bot-${{ matrix.target }}
           if-no-files-found: error
           compression-level: 0
           path: |
-            dist/device-bot-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
-            dist/device-bot-${{ github.ref_name }}-${{ matrix.target }}.zip
+            dist/device-bot-${{ env.ARCHIVE_VERSION }}-${{ matrix.target }}.tar.gz
+            dist/device-bot-${{ env.ARCHIVE_VERSION }}-${{ matrix.target }}.zip
 
   publish:
     name: Publish GitHub release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     steps:

@@ -260,7 +260,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       child: Semantics(
                         identifier: 'password-toggle-button',
                         child: IconButton(
-                          key: const ValueKey('password-visibility-control'),
+                          key: const ValueKey('password-toggle-button'),
                           tooltip: _obscure ? 'Show password' : 'Hide password',
                           onPressed: () => setState(() => _obscure = !_obscure),
                           icon: Icon(

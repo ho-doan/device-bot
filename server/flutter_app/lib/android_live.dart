@@ -416,6 +416,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     if (_terminatingApps || widget.onTerminateApps == null) return;
     setState(() => _terminatingApps = true);
     _inputs = _inputs.then((_) async {
+      if (!mounted) return;
       try {
         final message = await widget.onTerminateApps!(all);
         if (mounted) {
@@ -453,6 +454,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     // Resolve the selector at click time. Reserve the sequence inside the queue.
     _inputs = _inputs
         .then((_) async {
+          if (!mounted) return;
           if (widget.openVideo != null) {
             final video = _video;
             if (!mounted ||

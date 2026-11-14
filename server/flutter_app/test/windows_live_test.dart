@@ -241,6 +241,68 @@ void main() {
     await tester.tap(find.byTooltip('Live control of Windows'));
     expect(selected?.id, 'windows-host');
   });
+  testWidgets('closing inspection-only Live cancels queued input', (
+    tester,
+  ) async {
+    final updates = StreamController<AndroidLiveUpdate>();
+    addTearDown(updates.close);
+    final release = Completer<void>();
+    final inputs = <Map<String, dynamic>>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AndroidLiveDialog(
+          deviceName: 'Test',
+          connect: () => updates.stream,
+          onInput: (input) async {
+            inputs.add(input);
+            await release.future;
+          },
+        ),
+      ),
+    );
+    final field = find.byKey(const Key('android-live-type'));
+    final send = find.byKey(const Key('android-live-send-text'));
+    await tester.enterText(field, 'first');
+    await tester.tap(send);
+    await tester.pump();
+    await tester.enterText(field, 'queued');
+    await tester.tap(send);
+    await tester.pump();
+    expect(inputs, hasLength(1));
+    await tester.pumpWidget(const SizedBox());
+    release.complete();
+    await tester.pump();
+    expect(inputs, hasLength(1));
+  });
+
+  testWidgets('closing Live cancels queued app termination', (tester) async {
+    final updates = StreamController<AndroidLiveUpdate>();
+    addTearDown(updates.close);
+    final release = Completer<void>();
+    var terminations = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AndroidLiveDialog(
+          deviceName: 'Test',
+          connect: () => updates.stream,
+          onInput: (_) => release.future,
+          onTerminateApps: (_) async {
+            terminations++;
+            return 'Stopped';
+          },
+        ),
+      ),
+    );
+    await tester.enterText(find.byKey(const Key('android-live-type')), 'first');
+    await tester.tap(find.byKey(const Key('android-live-send-text')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('live-kill-app')));
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox());
+    release.complete();
+    await tester.pump();
+    expect(terminations, 0);
+  });
   const window = AppWindow(windowId: '456', processId: 123, title: 'Editor');
   test('window identity and negative monitor origins remain scoped', () {
     expect(windowsLiveDeviceId(window), 'windows:123:456');

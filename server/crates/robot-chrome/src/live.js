@@ -1,11 +1,25 @@
 (() => {
   const key = __KEY__;
   const state = { closed: false, error: null, errorName: null, phase: 'prepare', answer: null, peer: null, media: null };
+  let iceTimer, connectionTimer, cancelIce;
   const stop = () => {
     state.closed = true;
-    state.media?.getTracks().forEach(track => track.stop());
-    state.peer?.close();
+    clearTimeout(iceTimer);
+    clearTimeout(connectionTimer);
+    cancelIce?.();
+    cancelIce = null;
+    // Take the resources before closing them: callbacks and repeated stop calls
+    // must not release them twice. A late permission result can still be drained.
+    const media = state.media;
+    state.media = null;
+    media?.getTracks().forEach(track => { track.onended = null; track.stop(); });
+    if (state.peer) {
+      state.peer.onconnectionstatechange = null;
+      state.peer.onicegatheringstatechange = null;
+      if (state.peer.connectionState !== 'closed') state.peer.close();
+    }
     window.removeEventListener('resize', stop);
+    if (!state.answer && !state.error) state.error = 'Web Live capture stopped before negotiation completed.';
   };
   state.stop = stop;
   window[key] = state;
@@ -26,6 +40,7 @@
       if (state.closed) {stop(); return;}
       state.phase = 'crop';
       const track = state.media.getVideoTracks()[0];
+      if (track) track.onended = stop;
       if (!track?.cropTo) throw new Error('Choose This Tab for Web Live, then retry.');
       // Cropping is restricted to this document: selecting another tab cannot
       // silently display a different page while input controls this target.
@@ -36,18 +51,23 @@
       peer.onconnectionstatechange = () => {
         if (['failed','disconnected','closed'].includes(peer.connectionState)) stop();
       };
-      track.onended = stop;
       peer.addTrack(track, state.media);
       await peer.setRemoteDescription({type:'offer',sdp:__OFFER__});
-      await peer.setLocalDescription(await peer.createAnswer());
+      if (state.closed) return;
+      const answer = await peer.createAnswer();
+      if (state.closed) return;
+      await peer.setLocalDescription(answer);
+      if (state.closed) return;
       await new Promise((resolve,reject) => {
         if (peer.iceGatheringState === 'complete') return resolve();
-        const timer=setTimeout(() => reject(new Error('Web Live ICE gathering timed out')),10000);
-        peer.onicegatheringstatechange=() => { if(peer.iceGatheringState==='complete'){clearTimeout(timer);resolve();} };
+        cancelIce = () => reject(new Error('Web Live ICE gathering cancelled'));
+        iceTimer=setTimeout(() => reject(new Error('Web Live ICE gathering timed out')),10000);
+        peer.onicegatheringstatechange=() => { if(peer.iceGatheringState==='complete'){clearTimeout(iceTimer);cancelIce=null;peer.onicegatheringstatechange=null;resolve();} };
       });
+      if (state.closed) return;
       state.answer = {sdp:peer.localDescription.sdp,width:innerWidth,height:innerHeight};
       window.addEventListener('resize',stop,{once:true});
-      setTimeout(() => {if(peer.connectionState!=='connected')stop();},20000);
+      connectionTimer=setTimeout(() => {if(peer.connectionState!=='connected')stop();},20000);
     } catch (error) {state.error=String(error);state.errorName=error?.name ?? 'Error';stop();}
   })();
   return true;

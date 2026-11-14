@@ -36,7 +36,7 @@ class WorkspaceShell extends StatelessWidget {
                 child: Semantics(
                   identifier: 'account-avatar-button',
                   child: IconButton(
-                    key: const ValueKey('account-avatar-control'),
+                    key: const ValueKey('account-avatar-button'),
                     tooltip: 'Your account',
                     onPressed: () => navigate(1),
                     icon: const CircleAvatar(child: Text('AL')),
@@ -76,7 +76,7 @@ class WorkspaceShell extends StatelessWidget {
                           child: Semantics(
                             identifier: 'rail-sign-out-button',
                             child: IconButton(
-                              key: const ValueKey('rail-sign-out-control'),
+                              key: const ValueKey('rail-sign-out-button'),
                               tooltip: 'Sign out',
                               onPressed: session.signOut,
                               icon: const Icon(Icons.logout_rounded),

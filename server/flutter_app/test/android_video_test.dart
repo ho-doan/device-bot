@@ -36,6 +36,7 @@ void main() {
   late _Client client;
   late List<String> calls;
   late Completer<void> negotiated;
+  late Set<String> nativeFailures;
 
   Future<void> event(String channel, Map<String, Object> value) async {
     await messenger.handlePlatformMessage(
@@ -49,6 +50,7 @@ void main() {
     client = _Client();
     calls = [];
     negotiated = Completer<void>();
+    nativeFailures = {};
     for (final channel in [texture, peer]) {
       messenger.setMockMethodCallHandler(MethodChannel(channel), (call) async {
         calls.add('$channel:${call.method}');
@@ -57,6 +59,9 @@ void main() {
     }
     messenger.setMockMethodCallHandler(methods, (call) async {
       calls.add(call.method);
+      if (nativeFailures.contains(call.method)) {
+        throw PlatformException(code: 'test', message: call.method);
+      }
       switch (call.method) {
         case 'createVideoRenderer':
           return {'textureId': 1};
@@ -166,6 +171,56 @@ void main() {
     await negotiated.future;
     await event(peer, {'event': 'peerConnectionState', 'state': 'failed'});
     await failure;
+    expect(client.stopped, ['live-1']);
+  });
+
+  for (final method in [
+    'peerConnectionClose',
+    'peerConnectionDispose',
+    'videoRendererDispose',
+  ]) {
+    test('cleanup continues when $method fails', () async {
+      final connected = AndroidVideoSession.connect(client, 'chrome:tab');
+      await negotiated.future;
+      await event(texture, {
+        'event': 'didTextureChangeVideoSize',
+        'width': 800,
+        'height': 600,
+      });
+      final session = await connected;
+      nativeFailures.add(method);
+      await expectLater(session.close(), throwsA(anything));
+      expect(
+        calls,
+        containsAll([
+          'peerConnectionClose',
+          'peerConnectionDispose',
+          'videoRendererDispose',
+        ]),
+      );
+      expect(client.stopped, ['live-1']);
+      await session.close();
+      expect(client.stopped, ['live-1']);
+    });
+  }
+
+  test('cleanup failure preserves the original connection error', () async {
+    nativeFailures.add('peerConnectionClose');
+    final connected = AndroidVideoSession.connect(client, 'chrome:tab');
+    final failure = expectLater(
+      connected,
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('Video connection stopped'),
+        ),
+      ),
+    );
+    await negotiated.future;
+    await event(peer, {'event': 'peerConnectionState', 'state': 'failed'});
+    await failure;
+    expect(calls, contains('videoRendererDispose'));
     expect(client.stopped, ['live-1']);
   });
 }

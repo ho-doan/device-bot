@@ -315,7 +315,7 @@ def main():
                 config = CASES[name]
                 before_recordings = recording_files() if config.get('live') else set()
                 if config.get('live'):
-                    env['QC_LIVE_URL'] = live.url + '?case=' + name
+                    env['QC_LIVE_URL'] = live.url_for(name)
                 if config.get("restart"):
                     arm_embedded_flow_shutdown_probe(env["QC_TEST_URL"], env["DEVICE_BOT_AUTH"])
                     server.terminate()
@@ -359,6 +359,17 @@ def main():
                 result = {"test": name, "status": "PASS" if ok else "FAIL",
                           "report": str(reports[-1]) if reports else None,
                           "error": data.get("error")}
+                if config.get('live'):
+                    # Keep device observations even when the driver fails before
+                    # verification. A failed UI click must remain diagnosable.
+                    (output / f'{name}-events.json').write_text(
+                        json.dumps(live.observations(name), ensure_ascii=False, indent=2))
+                    if not ok:
+                        created = recording_files() - before_recordings
+                        if len(created) == 1:
+                            recording = output / name / 'recorded-unverified.yaml'
+                            recording.write_text(created.pop().read_text())
+                            result['unverifiedRecording'] = str(recording)
                 if ok:
                     try:
                         result["historyEvidence"] = verify_history(env["QC_TEST_URL"], data["name"])

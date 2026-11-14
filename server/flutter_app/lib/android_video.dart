@@ -100,7 +100,12 @@ class AndroidVideoSession extends ChangeNotifier {
       if (session.status != null) throw StateError(session.status!);
       return session;
     } on Object {
-      await session.close();
+      // Cleanup must not replace the failure that explains why Live did not open.
+      try {
+        await session.close();
+      } on Object catch (error) {
+        debugPrint('Live connection cleanup failed: $error');
+      }
       rethrow;
     }
   }
@@ -110,17 +115,25 @@ class AndroidVideoSession extends ChangeNotifier {
     _closed = true;
     renderer.onResize = null;
     renderer.onFirstFrameRendered = null;
-    try {
-      await _peer?.close();
-      await _peer?.dispose();
-      renderer.srcObject = null;
-      await renderer.dispose();
-    } finally {
+    Object? firstError;
+    StackTrace? firstStack;
+    Future<void> release(FutureOr<void> Function() action) async {
       try {
-        if (_streamId != null) await _client.stopAndroidStream(_streamId!);
-      } finally {
-        super.dispose();
+        await action();
+      } on Object catch (error, stack) {
+        firstError ??= error;
+        firstStack ??= stack;
       }
     }
+
+    await release(() async => _peer?.close());
+    await release(() async => _peer?.dispose());
+    await release(() => renderer.srcObject = null);
+    await release(renderer.dispose);
+    await release(() async {
+      if (_streamId != null) await _client.stopAndroidStream(_streamId!);
+    });
+    super.dispose();
+    if (firstError != null) Error.throwWithStackTrace(firstError!, firstStack!);
   }
 }

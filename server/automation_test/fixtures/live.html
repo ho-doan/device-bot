@@ -18,7 +18,7 @@
   const dialog = document.querySelector('dialog');
   const session = `${Date.now()}-${Math.random()}`;
   let sequence = 0;
-  const test = new URLSearchParams(location.search).get('case');
+  const test = new URLSearchParams(location.search).get('0');
   function observe(action) {
     // Passive evidence only: the fixture never drives QC or manufactures a Run result.
     fetch('/events', {method:'POST', headers:{'Content-Type':'application/json'},

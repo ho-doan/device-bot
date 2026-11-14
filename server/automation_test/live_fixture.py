@@ -11,6 +11,7 @@ class LiveFixture:
     def __init__(self, host):
         page = Path(__file__).with_name('fixtures').joinpath('live.html').read_bytes()
         self.events = []
+        self.tests = {}
         self.lock = threading.Lock()
         fixture = self
 
@@ -33,18 +34,29 @@ class LiveFixture:
                 if self.path != '/events':
                     self.send_error(404)
                     return
-                size = int(self.headers.get('Content-Length', 0))
+                try:
+                    size = int(self.headers.get('Content-Length', 0))
+                except ValueError:
+                    self.send_error(400)
+                    return
                 if not 0 < size <= 16384:
                     self.send_error(400)
                     return
                 try:
                     event = json.loads(self.rfile.read(size))
-                    if not isinstance(event, dict) or not isinstance(event.get('session'), str):
+                    if (not isinstance(event, dict)
+                            or not isinstance(event.get('session'), str)
+                            or not isinstance(event.get('test'), str)):
                         raise ValueError('Invalid event')
                 except (ValueError, UnicodeError):
                     self.send_error(400)
                     return
                 with fixture.lock:
+                    test = fixture.tests.get(event.get('test'))
+                    if test is None:
+                        self.send_error(400)
+                        return
+                    event['test'] = test
                     fixture.events.append(event)
                 self.send_response(204)
                 self.end_headers()
@@ -52,6 +64,14 @@ class LiveFixture:
         self.server = ThreadingHTTPServer(('0.0.0.0', 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.url = f'http://{host}:{self.server.server_port}/live'
+
+    def url_for(self, test):
+        # Native keyboard input can pass through Telex (case -> cáe). Keep the
+        # typed discriminator numeric; resolve the real case name on the server.
+        with self.lock:
+            key = str(len(self.tests))
+            self.tests[key] = test
+        return f'{self.url}?0={key}'
 
     def __enter__(self):
         self.thread.start()

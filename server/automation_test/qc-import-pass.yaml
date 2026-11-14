@@ -1,0 +1,16 @@
+version: 2
+name: qc_web_import_pass
+description: Import pass.yaml through the real QC UI and verify its result.
+steps:
+  - run: {recipe: open_qc_web}
+  - tap_element: {label: Import flow, element_type: button}
+  - assert_element: {filter: Run imported flow, source: flutter, timeout_ms: 15000}
+  - assert_element: {filter: pass.yaml, source: flutter}
+  - tap_element: {label: Run on device, element_type: button}
+  - assert_element: {filter: 'Run PASS', source: flutter, timeout_ms: 60000}
+  - screenshot: {path: import-pass.png}
+  - id: repeat_run_keeps_history
+    tap_element: {label: Run on device, element_type: button}
+  - assert_element: {filter: Run PASS, source: flutter, timeout_ms: 60000}
+  - tap_element: {label: Close, element_type: button, stable_samples: 2}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 30000}

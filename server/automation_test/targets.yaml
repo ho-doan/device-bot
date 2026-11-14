@@ -1,0 +1,38 @@
+version: 1
+recipes:
+  open_qc_web:
+    - call_tool:
+        name: mobile_boot_device
+        arguments: {deviceId: 'chrome:browser'}
+    - select_device: {platform: chrome, state: available}
+    - call_tool:
+        name: mobile_open_url
+        arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/qc/'}
+    - tap_element: {label: Bearer token, element_type: textField, timeout_ms: 30000}
+    - type_text: {text: '${env:DEVICE_BOT_AUTH}', sensitive: true}
+    - tap_element: {label: Refresh, element_type: button}
+    - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 60000}
+  clear_search:
+    - tap_element: {resource_id: search, element_type: textField}
+    - call_tool:
+        name: mobile_type_keys
+        arguments: {deviceId: '<selected>', text: '', clear: true}
+  open_report_fixture:
+    - call_tool:
+        name: mobile_boot_device
+        arguments: {deviceId: 'chrome:browser'}
+    - select_device: {platform: chrome, state: available}
+    - call_tool:
+        name: mobile_open_url
+        arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/reports/'}
+    - tap_element: {filter: QC self-test fixture, element_type: button, timeout_ms: 30000}
+    - assert_element: {resource_id: search, element_type: textField, timeout_ms: 15000}
+targets:
+  web:
+    device: {platform: chrome, state: available}
+  macos:
+    device: {id: macos-host, platform: macos, state: available}
+    app_id: '${env:QC_TEST_APP}'
+  windows:
+    device: {id: windows-host, platform: windows, state: available}
+    app_id: '${env:QC_TEST_APP}'

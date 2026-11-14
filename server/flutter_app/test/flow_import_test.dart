@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_mcp_companion/flow_import.dart';
@@ -10,6 +12,69 @@ MaterialApp _app(Widget home) {
 }
 
 void main() {
+  testWidgets('run errors stay visible inside the import dialog', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        Scaffold(
+          body: FlowYamlRunDialog(
+            fileName: 'invalid.yaml',
+            yaml: 'invalid flow',
+            onRun: () async => throw StateError('unknown action'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('import-run-yaml')));
+    await tester.pump();
+    expect(find.byKey(const Key('import-run-result')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('import-run-result')),
+        matching: find.textContaining('unknown action'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('import-run-yaml')))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets('rerunning a flow clears the previous result while busy', (
+    tester,
+  ) async {
+    final pending = Completer<String>();
+    var calls = 0;
+    await tester.pumpWidget(
+      _app(
+        FlowYamlRunDialog(
+          fileName: 'flow.yaml',
+          yaml: 'version: 2\nname: flow\nsteps: []',
+          onRun: () => ++calls == 1 ? Future.value('Run PASS') : pending.future,
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('import-run-yaml')));
+    await tester.pump();
+    expect(find.text('Run PASS'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('import-run-yaml')));
+    await tester.pump();
+    expect(find.text('Run PASS'), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('import-run-yaml')))
+          .onPressed,
+      isNull,
+    );
+    pending.complete('Run FAIL');
+    await tester.pump();
+    expect(find.text('Run FAIL'), findsOneWidget);
+  });
+
   testWidgets('imported yaml runs on the device and shows the report', (
     tester,
   ) async {

@@ -1,0 +1,51 @@
+version: 2
+name: report_web_self_test
+description: Read history, filter cases, inspect failures and open image evidence.
+steps:
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser'}
+  - select_device: {platform: chrome, state: available}
+  - call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/reports/'}
+  - assert_element: {label: Làm mới, element_type: button, timeout_ms: 30000}
+  - id: select_fixture_project
+    tap_element: {filter: QC self-test fixture, element_type: button}
+  - assert_element: {resource_id: search, element_type: textField, timeout_ms: 15000}
+  - assert_element: {label: Tải báo cáo JSON, element_type: link}
+  - screenshot: {path: report-history.png}
+  - call_tool:
+      name: mobile_scroll
+      arguments: {deviceId: '<selected>', x: 400, y: 600, deltaX: 0, deltaY: 450}
+  - id: filter_failure
+    tap_element: {resource_id: search, element_type: textField, stable_samples: 2}
+  - type_text: {text: self-test failure}
+  - assert_value: {resource_id: search, element_type: textField, expected: self-test failure}
+  - assert_element: {resource_id: shown-count, label: '1 / 2 case', timeout_ms: 10000}
+  - assert_element: {filter: self-test failure, element_type: button}
+  - assert_absent: {filter: self-test passed, element_type: button}
+  - tap_element: {filter: self-test failure, element_type: button}
+  - assert_element: {filter: Intentional fixture failure, class_contains: pre}
+  - screenshot: {path: report-failure.png}
+  - id: clear_filter
+    tap_element: {resource_id: search, element_type: textField}
+  - call_tool:
+      name: mobile_type_keys
+      arguments: {deviceId: '<selected>', text: '', clear: true}
+  - tap_element: {filter: self-test passed, element_type: button}
+  - tap_element: {resource_id: tab-evidence, filter: Evidence, element_type: button}
+  - call_tool:
+      name: mobile_scroll
+      arguments: {deviceId: '<selected>', x: 900, y: 600, deltaX: 0, deltaY: 350}
+  - id: open_evidence
+    tap_element: {filter: fixture.png, element_type: button, stable_samples: 2}
+  - assert_element: {label: Tải ảnh gốc, element_type: link}
+  - screenshot: {path: report-evidence.png}
+  - tap_element: {label: Đóng ảnh, element_type: button}
+  - assert_absent: {label: Đóng ảnh, element_type: button}
+  - call_tool:
+      name: mobile_scroll
+      arguments: {deviceId: '<selected>', x: 400, y: 400, deltaX: 0, deltaY: -1000}
+  - tap_element: {label: Làm mới, element_type: button}
+  - assert_element: {filter: self-test passed, element_type: button, timeout_ms: 15000}

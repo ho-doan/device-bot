@@ -1043,7 +1043,35 @@ impl MacosRobot {
         #[cfg(target_os = "macos")]
         {
             let application = *self.active_process_id.lock().await;
-            native_accessibility_tap(point, application)
+            if let Some(app) = self.active_application.lock().await.clone() {
+                self.focus_command("activate", &app).await?;
+            }
+            if native_accessibility_tap(point, application).is_ok() {
+                return Ok(());
+            }
+            // Flutter can expose its widget tree through the bridge while the
+            // native AX tree has no actionable editor. Deliver real pointer
+            // input only after checking the selected foreground window.
+            {
+                let front = native_frontmost_application(None)?;
+                let mut pid = 0;
+                if unsafe { AXUIElementGetPid(front.0, &mut pid) } != 0
+                    || application.is_some_and(|selected| selected != pid)
+                {
+                    return Err(RobotError::InvalidInput(
+                        "Selected app is not foreground; input was not sent".into(),
+                    ));
+                }
+                let attrs = NativeAxAttributes::new()?;
+                let window =
+                    native_required_attribute(front.0, attrs.focused_window, "AXFocusedWindow")?;
+                if native_bounds_contains(window.0, &attrs, point) != Some(true) {
+                    return Err(RobotError::InvalidInput(
+                        "Input is outside the selected app window".into(),
+                    ));
+                }
+            }
+            pointer::drag(point, point, 1).await
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -1170,9 +1198,13 @@ impl Robot for MacosRobot {
     async fn clear_text(&self, id: &str) -> Result<(), RobotError> {
         self.require_device(id)?;
         let _guard = self.capture_lock.lock().await;
-        let target = self.live_guard(id, &[]).await?;
-        if self.live_edit_text(target, "", true) {
-            return Ok(());
+        if live::Target::parse(id)?.is_some() {
+            let target = self.live_guard(id, &[]).await?;
+            if self.live_edit_text(target, "", true) {
+                return Ok(());
+            }
+        } else {
+            self.require_input_target().await?;
         }
         self.apple_script("tell application \"System Events\"\n keystroke \"a\" using command down\n key code 51\nend tell", &[]).await
     }

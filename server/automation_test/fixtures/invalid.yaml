@@ -1,0 +1,4 @@
+version: 2
+name: qc_import_invalid_payload
+steps:
+  - unknown_self_test_action: {}

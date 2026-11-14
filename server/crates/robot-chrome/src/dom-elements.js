@@ -13,7 +13,16 @@
         }
     }
     const refs = typeof deviceBotReferences === 'function' ? deviceBotReferences(document) : null;
-    return Array.from(document.querySelectorAll('body *')).slice(0, 500).map((element) => {
+    // Closed dialogs retain their controls in the DOM. They must not satisfy
+    // accessibility assertions or crowd visible controls out of the result cap.
+    const rendered = Array.from(document.querySelectorAll('body *')).filter(element => {
+        const bounds = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return bounds.right > bounds.left && bounds.bottom > bounds.top &&
+            bounds.right > 0 && bounds.bottom > 0 &&
+            style.display !== 'none' && !['hidden', 'collapse'].includes(style.visibility);
+    });
+    return rendered.slice(0, 500).map((element) => {
             const bounds = element.getBoundingClientRect();
             const tag = element.tagName.toLowerCase();
             const type = (element.getAttribute('type') || '').toLowerCase();

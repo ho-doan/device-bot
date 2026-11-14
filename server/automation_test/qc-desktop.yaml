@@ -1,0 +1,31 @@
+version: 2
+name: qc_desktop_self_test
+description: Launch the real QC app, edit its server URL, recover from connection failure.
+steps:
+  - select_device: '${device}'
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {label: MCP server URL, element_type: textField, timeout_ms: 30000}
+  - assert_element: {label: MCP session connected., timeout_ms: 30000}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 60000}
+  - screenshot: {path: qc-desktop-before-input.png}
+  - id: focus_url
+    tap_element: {label: MCP server URL, element_type: textField}
+  - call_tool:
+      name: mobile_type_keys
+      arguments: {deviceId: '<selected>', text: '', clear: true}
+  - type_text: {text: 'http://127.0.0.1:1'}
+  - tap_element: {label: Refresh, element_type: button}
+  - assert_element: {label: Could not reach the MCP server, timeout_ms: 15000}
+  - screenshot: {path: qc-desktop-connection-error.png}
+  - id: restore_url
+    tap_element: {label: MCP server URL, element_type: textField}
+  - call_tool:
+      name: mobile_type_keys
+      arguments: {deviceId: '<selected>', text: '', clear: true}
+  - type_text: {text: '${env:QC_TEST_URL}'}
+  - tap_element: {label: Refresh, element_type: button}
+  - assert_element: {label: MCP session connected., timeout_ms: 30000}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 60000}
+  - assert_absent: {label: Could not reach the MCP server}
+  - assert_element: {label: Import flow, element_type: button}
+  - screenshot: {path: qc-desktop-reconnected.png}

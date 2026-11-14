@@ -1,0 +1,12 @@
+version: 2
+name: qc_import_pass_payload
+steps:
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser'}
+  - select_device: {platform: chrome, state: available}
+  - call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/reports/'}
+  - assert_element: {label: Làm mới, element_type: button, timeout_ms: 15000}
+  - screenshot: {path: imported-pass.png}

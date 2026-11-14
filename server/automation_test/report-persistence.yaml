@@ -1,0 +1,8 @@
+version: 2
+name: report_history_after_restart
+description: Harness restarts backend and moves original fixture files before this case.
+steps:
+  - run: {recipe: open_report_fixture}
+  - assert_element: {resource_id: run-count, label: '2'}
+  - assert_element: {filter: QC fixture run, element_type: button}
+  - screenshot: {path: report-history-after-restart.png}

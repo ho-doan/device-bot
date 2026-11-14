@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const expression = readFileSync(`${__dirname}/../src/dom-elements.js`, 'utf8');
+const getComputedStyle = element => element.style || { display: 'block', visibility: 'visible' };
 async function snapshot(tag, attributes = {}, properties = {}) {
   const element = {
     tagName: tag.toUpperCase(),
@@ -14,6 +15,7 @@ async function snapshot(tag, attributes = {}, properties = {}) {
   return (await runInNewContext(expression, {
     document: { querySelector: () => null, querySelectorAll: () => [element], activeElement: null },
     setTimeout,
+    getComputedStyle,
   }))[0];
 }
 
@@ -49,7 +51,7 @@ test('query enables Flutter accessibility and waits for fields; a later query do
     activeElement: null,
   };
   for (let i = 0; i < 2; i++) {
-    const elements = await runInNewContext(expression, { document, setTimeout });
+    const elements = await runInNewContext(expression, { document, setTimeout, getComputedStyle });
     assert.equal(elements.length, 1);
     assert.equal(elements[0].elementType, 'textField');
     assert.equal(elements[0].contentDescription, 'Username');
@@ -63,7 +65,19 @@ test('a Flutter placeholder that never exposes semantics fails with a bounded se
     querySelectorAll: () => [],
   };
   await assert.rejects(
-    runInNewContext(expression, { document, setTimeout }),
+    runInNewContext(expression, { document, setTimeout, getComputedStyle }),
     /Flutter Web accessibility did not become ready within 1500 ms/,
   );
+});
+
+test('closed dialog controls and CSS-hidden elements are absent from snapshots', async () => {
+  assert.equal(await snapshot('button', {}, {
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0 }),
+  }), undefined);
+  assert.equal(await snapshot('button', {}, {
+    style: { display: 'block', visibility: 'hidden' },
+  }), undefined);
+  assert.equal(await snapshot('button', {}, {
+    style: { display: 'none', visibility: 'visible' },
+  }), undefined);
 });

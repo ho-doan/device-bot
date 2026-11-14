@@ -1,0 +1,21 @@
+version: 2
+name: qc_web_connection_recovery
+steps:
+  - run: {recipe: open_qc_web}
+  - tap_element: {label: MCP server URL, element_type: textField}
+  - call_tool:
+      name: mobile_type_keys
+      arguments: {deviceId: '<selected>', text: '', clear: true}
+  - type_text: {text: 'http://127.0.0.1:1'}
+  - tap_element: {label: Refresh, element_type: button}
+  - assert_element: {filter: Could not reach the MCP server, source: flutter, timeout_ms: 15000}
+  - screenshot: {path: qc-web-unreachable.png}
+  - tap_element: {label: MCP server URL, element_type: textField}
+  - call_tool:
+      name: mobile_type_keys
+      arguments: {deviceId: '<selected>', text: '', clear: true}
+  - type_text: {text: '${env:QC_TEST_URL}'}
+  - tap_element: {label: Refresh, element_type: button}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 60000}
+  - assert_absent: {filter: Could not reach the MCP server, class_contains: textarea}
+  - screenshot: {path: qc-web-recovered.png}

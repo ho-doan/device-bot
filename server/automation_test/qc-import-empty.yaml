@@ -1,0 +1,10 @@
+version: 2
+name: qc_web_import_empty
+steps:
+  - run: {recipe: open_qc_web}
+  - tap_element: {label: Import flow, element_type: button}
+  - assert_element: {filter: This file has no YAML to run., source: flutter, timeout_ms: 15000}
+  - assert_state: {filter: Run on device, element_type: button, source: flutter, property: enabled, expected: false}
+  - screenshot: {path: import-empty.png}
+  - tap_element: {label: Close, element_type: button}
+  - assert_element: {filter: 'Devices (', source: flutter}

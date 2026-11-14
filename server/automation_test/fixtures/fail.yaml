@@ -1,0 +1,13 @@
+version: 2
+name: qc_import_fail_payload
+steps:
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser'}
+  - select_device: {platform: chrome, state: available}
+  - call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/reports/'}
+  - screenshot: {path: imported-failure.png}
+  - id: expected_missing_control
+    assert_element: {label: intentionally-missing-self-test-control, timeout_ms: 500}

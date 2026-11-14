@@ -1,0 +1,13 @@
+version: 2
+name: qc_web_import_fail
+description: Import fail.yaml through the real QC UI and verify its result.
+steps:
+  - run: {recipe: open_qc_web}
+  - tap_element: {label: Import flow, element_type: button}
+  - assert_element: {filter: Run imported flow, source: flutter, timeout_ms: 15000}
+  - assert_element: {filter: fail.yaml, source: flutter}
+  - tap_element: {label: Run on device, element_type: button}
+  - assert_element: {filter: 'Run FAIL', source: flutter, timeout_ms: 60000}
+  - screenshot: {path: import-fail.png}
+  - tap_element: {label: Close, element_type: button}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 30000}

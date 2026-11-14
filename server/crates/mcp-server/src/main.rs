@@ -681,6 +681,7 @@ async fn main() -> std::io::Result<()> {
                 device_bot::http::lan_router(robot, Some(bearer_token), qc_root, reports)
                     .into_make_service_with_connect_info::<SocketAddr>(),
             )
+            .with_graceful_shutdown(shutdown_signal())
             .await;
             if let Some(mut child) = flutter_companion.take() {
                 let _ = child.kill();
@@ -689,4 +690,20 @@ async fn main() -> std::io::Result<()> {
             result
         }
     }
+}
+
+async fn shutdown_signal() {
+    // Embedded flow runs install Tokio's process-wide signal handlers. Keep a
+    // server listener alive too, otherwise SIGTERM is swallowed after a run.
+    #[cfg(unix)]
+    if let Ok(mut terminate) =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
+        tokio::select! {
+            _ = terminate.recv() => {},
+            _ = tokio::signal::ctrl_c() => {},
+        }
+        return;
+    }
+    let _ = tokio::signal::ctrl_c().await;
 }

@@ -1,0 +1,13 @@
+version: 2
+name: qc_desktop_import_cancel
+steps:
+  - select_device: '${device}'
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 60000}
+  - tap_element: {label: Import flow, element_type: button}
+  - assert_element: {label: Cancel, element_type: button, source: native, timeout_ms: 15000}
+  - screenshot: {path: import-file-picker.png}
+  - tap_element: {label: Cancel, element_type: button, source: native}
+  - assert_absent: {label: Cancel, element_type: button, source: native}
+  - assert_element: {filter: 'Devices (', source: flutter}
+  - screenshot: {path: import-cancelled.png}

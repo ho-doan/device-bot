@@ -148,11 +148,22 @@ impl Mcp for HttpMcp {
     async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
         let id = self.next_id;
         self.next_id += 1;
-        self.exchange(
-            Method::POST,
-            Some(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})),
-        )
-        .await
+        let response = self
+            .exchange(
+                Method::POST,
+                Some(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})),
+            )
+            .await?;
+        if response["id"] != json!(id) {
+            return Err("MCP HTTP response ID mismatch".into());
+        }
+        if let Some(error) = response.get("error") {
+            return Err(format!("MCP protocol error: {error}"));
+        }
+        response
+            .get("result")
+            .cloned()
+            .ok_or("MCP result missing".into())
     }
     async fn notify(&mut self, method: &str, params: Value) -> Result<()> {
         self.exchange(
@@ -168,5 +179,87 @@ impl Mcp for HttpMcp {
             self.session = None;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn client_with_response(body: Value) -> HttpMcp {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut received = Vec::new();
+            loop {
+                let mut buffer = [0; 4096];
+                let count = stream.read(&mut buffer).await.unwrap();
+                assert!(count > 0);
+                received.extend_from_slice(&buffer[..count]);
+                if let Some(end) = received.windows(4).position(|s| s == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&received[..end]);
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (key, value) = line.split_once(':')?;
+                            key.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse().unwrap())
+                        })
+                        .unwrap();
+                    if received.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            let body = body.to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        HttpMcp {
+            uri: format!("http://{address}/mcp").parse().unwrap(),
+            session: None,
+            token: None,
+            next_id: 1,
+            timeout: Duration::from_secs(2),
+        }
+    }
+
+    #[tokio::test]
+    async fn http_request_returns_initialize_result_without_rpc_envelope() {
+        let result = json!({"protocolVersion":"2025-11-25"});
+        let mut client =
+            client_with_response(json!({"jsonrpc":"2.0","id":1,"result":result})).await;
+        assert_eq!(
+            client.request("initialize", json!({})).await.unwrap(),
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn http_request_rejects_rpc_errors_and_mismatched_ids() {
+        let mut client = client_with_response(
+            json!({"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"bad params"}}),
+        )
+        .await;
+        assert!(
+            client
+                .request("initialize", json!({}))
+                .await
+                .unwrap_err()
+                .contains("bad params")
+        );
+        let mut client = client_with_response(json!({"jsonrpc":"2.0","id":99,"result":{}})).await;
+        assert!(
+            client
+                .request("initialize", json!({}))
+                .await
+                .unwrap_err()
+                .contains("ID mismatch")
+        );
     }
 }

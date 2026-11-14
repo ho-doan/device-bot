@@ -1,0 +1,16 @@
+version: 2
+name: report_empty_search
+steps:
+  - run: {recipe: open_report_fixture}
+  - call_tool:
+      name: mobile_scroll
+      arguments: {deviceId: '<selected>', x: 400, y: 600, deltaX: 0, deltaY: 450}
+  - tap_element: {resource_id: search, element_type: textField, stable_samples: 2}
+  - type_text: {text: no-such-self-test-case}
+  - assert_element: {filter: Không có case khớp bộ lọc., class_contains: p, timeout_ms: 10000}
+  - assert_absent: {filter: self-test passed, element_type: button}
+  - assert_absent: {filter: self-test failure, element_type: button}
+  - screenshot: {path: report-empty-search.png}
+  - run: {recipe: clear_search}
+  - assert_element: {filter: self-test passed, element_type: button, timeout_ms: 10000}
+  - assert_element: {filter: self-test failure, element_type: button}

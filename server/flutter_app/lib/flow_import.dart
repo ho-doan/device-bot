@@ -44,15 +44,16 @@ class _FlowYamlRunDialogState extends State<FlowYamlRunDialog> {
   String? _runSummary;
 
   Future<void> _run() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _runSummary = null;
+    });
     try {
       final summary = await widget.onRun();
       if (mounted) setState(() => _runSummary = summary);
     } on Object catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
+        setState(() => _runSummary = 'Run failed\n$error');
       }
     } finally {
       if (mounted) setState(() => _busy = false);

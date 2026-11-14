@@ -1,0 +1,37 @@
+version: 2
+name: qc_web_self_test
+description: Real browser input, rejected credentials, successful connection and refresh.
+steps:
+  - id: start_browser
+    call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser'}
+  - select_device: {platform: chrome, state: available}
+  - id: open_qc
+    call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/qc/'}
+  - assert_element: {label: MCP server URL, element_type: textField, timeout_ms: 30000}
+  - assert_element: {label: Bearer token, element_type: textField}
+  - id: wrong_token
+    tap_element: {label: Bearer token, element_type: textField}
+  - type_text: {text: invalid-self-test-token}
+  - tap_element: {label: Refresh, element_type: button}
+  - screenshot: {path: qc-web-invalid-token.png}
+  - assert_element: {label: Could not reach the MCP server, timeout_ms: 30000}
+  - id: replace_token
+    tap_element: {label: Bearer token, element_type: textField}
+  - call_tool:
+      name: mobile_type_keys
+      arguments: {deviceId: '<selected>', text: '', clear: true}
+  - type_text: {text: '${env:DEVICE_BOT_AUTH}', sensitive: true}
+  - tap_element: {label: Refresh, element_type: button}
+  - id: connected
+    assert_element: {label: MCP session connected., class_contains: span, timeout_ms: 30000}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 60000}
+  - assert_element: {label: Import flow, element_type: button}
+  - assert_absent: {label: Could not reach the MCP server}
+  - screenshot: {path: qc-web-connected.png}
+  - tap_element: {label: Refresh, element_type: button}
+  - assert_element: {label: MCP session connected., class_contains: span, timeout_ms: 30000}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 60000}

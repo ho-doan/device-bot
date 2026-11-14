@@ -70,6 +70,46 @@ hay truy cập từ máy LAN
 thứ hai. Token thật không được ghi trong YAML; thông tin xác thực được truyền
 qua môi trường và input token được đánh dấu sensitive.
 
+## Ghi manual rồi replay trên web report
+
+2026-11-14: ghi **22 thao tác thật trong QC macOS Live**: scroll xuống/lên,
+tap Làm mới, focus ô tìm case, nhập `self-test failure`, clear, nhập
+`self-test passed`, scroll, mở Evidence, phóng to và đóng ảnh. Bốn bước setup
+và ba bước focus bổ sung đưa YAML lên 29 bước thực thi.
+
+YAML cũ PASS khi report ít nhóm, nhưng thêm 8 nhóm project qua
+`robot-report project-add` thì FAIL tại `tap_element_22`:
+`query reached max_results; result may be truncated`. Nút Đóng ảnh có
+aria-label riêng nhưng bộ sinh chỉ xét tên hiển thị `×`, bị text của ancestor
+làm trùng và rơi về `class_contains: button`, `position: 9`. Truy vấn không có
+loại control hoặc nhãn nên chạm giới hạn 100 element khi report lớn lên.
+
+Bộ sinh nay ưu tiên ID, rồi nhãn accessibility hoặc dòng text duy nhất trong
+cùng source/context/loại control. Selector kèm `element_type` khi có metadata;
+vị trí chỉ dùng khi không có nhãn duy nhất. Selection của control có tên duy
+nhất được giữ khi scroll 50 px; text nhập qua inspector giữ nguyên newline và
+ký tự đặc biệt trong YAML.
+
+Sau khi build lại và mở QC mới, ghi lại 22 thao tác: replay trong QC PASS trên
+report 10 nhóm và PASS lần nữa sau khi tăng lên 18 nhóm. Đây là kiểm chứng
+macOS QC + Chrome trên fixture report riêng, chưa chứng minh mọi platform/app.
+Evidence tại `artifacts/qc-manual-replay/20261114-investigation/`:
+`before.yaml`, `after.yaml`, `runs/*/report.json`, trace và `summary.json`.
+Các recording cũ giữ selector đã lưu; cần ghi lại hoặc sửa selector theo mẫu
+`element_type: button`, `label: Đóng ảnh` để nhận cách định vị mới.
+
+Regression checks từ `server/flutter_app`:
+
+```sh
+flutter test test/inspector_yaml_test.dart test/android_live_test.dart
+flutter analyze
+flutter test
+```
+
+Kết quả: analyzer sạch; toàn bộ suite **107 PASS, 1 skipped**. QC macOS debug
+đã build thành công. Luồng ghi qua app ở trên được điều khiển tương tác; chưa
+được tự động hóa đầy đủ hoặc đăng ký thành case trong `run.py`.
+
 ## Kết quả xác minh local
 
 2026-11-14, macOS: **3/3 YAML PASS, 74 bước** (QC Web 22, report Web 31,

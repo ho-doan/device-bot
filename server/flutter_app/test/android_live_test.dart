@@ -684,6 +684,48 @@ void main() {
     },
   );
 
+  testWidgets('scrolling 50 px retains an unkeyed selected report control', (
+    tester,
+  ) async {
+    final updates = StreamController<AndroidLiveUpdate>();
+    addTearDown(updates.close);
+    AdminElement image(int top) => AdminElement(
+      className: 'button',
+      resourceId: null,
+      text: null,
+      contentDescription: 'Phóng to fixture.png',
+      elementType: 'button',
+      source: 'native',
+      bounds: AdminBounds(left: 10, top: top, right: 200, bottom: top + 100),
+      clickable: true,
+      enabled: true,
+    );
+    await tester.pumpWidget(
+      _app(
+        home: AndroidLiveDialog(
+          deviceName: 'Report',
+          connect: () => updates.stream,
+          onInput: (_) async {},
+        ),
+      ),
+    );
+    updates.add(AndroidLiveElements(source: 'native', elements: [image(200)]));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('android-live-element-0')));
+    await tester.pump();
+    updates.add(AndroidLiveElements(source: 'native', elements: [image(150)]));
+    await tester.pump();
+    expect(
+      tester
+          .widget<ListTile>(
+            find.byKey(const ValueKey('android-live-element-0')),
+          )
+          .selected,
+      isTrue,
+    );
+    expect(find.byKey(const Key('android-live-tap-selected')), findsOneWidget);
+  });
+
   testWidgets('moving device focus selects the newly focused element', (
     tester,
   ) async {

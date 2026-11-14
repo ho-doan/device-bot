@@ -167,7 +167,9 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     final candidates = elements.indexed.where(
       (entry) =>
           entry.$2.className == previous.className &&
-          entry.$2.source == previous.source,
+          entry.$2.source == previous.source &&
+          (entry.$2.webContext?.identity ?? '') ==
+              (previous.webContext?.identity ?? ''),
     );
     final id = previous.resourceId?.trim();
     if (id != null && id.isNotEmpty) {
@@ -176,11 +178,16 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
           .toList();
       if (matches.length == 1) return matches.single.$1;
     }
-    final described = candidates.where(
-      (entry) =>
-          entry.$2.text == previous.text &&
-          entry.$2.contentDescription == previous.contentDescription,
-    );
+    final described = candidates
+        .where(
+          (entry) =>
+              entry.$2.text == previous.text &&
+              entry.$2.contentDescription == previous.contentDescription,
+        )
+        .toList();
+    // Scroll moves controls farther than the jitter threshold. A unique named
+    // control keeps its identity even after its bounds have moved by 50+ px.
+    if (previous.hasLabel && described.length == 1) return described.single.$1;
     final exact = described
         .where((entry) => _boundsDelta(entry.$2.bounds, previous.bounds) == 0)
         .firstOrNull;

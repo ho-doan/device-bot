@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'models.dart';
 
 enum InspectorFlowAction { tap, typeText, assertVisible, scrollUp, scrollDown }
@@ -10,7 +12,13 @@ String buildInspectorFlowYaml({
   List<AdminElement> elements = const [],
 }) {
   final peers = elements
-      .where((candidate) => _sameWebContext(candidate, element))
+      .where(
+        (candidate) =>
+            _sameWebContext(candidate, element) &&
+            (element.source == null || candidate.source == element.source) &&
+            (element.elementType == null ||
+                candidate.elementType == element.elementType),
+      )
       .toList();
   final selectedIndex = peers.indexOf(element);
   final classPosition = selectedIndex < 0
@@ -21,55 +29,65 @@ String buildInspectorFlowYaml({
               (candidate) => candidate.className.contains(element.className),
             )
             .length;
-  final position = element.position ?? classPosition;
+  final position = selectedIndex >= 0 ? classPosition : element.position ?? 1;
   final String selector;
   final id = element.resourceId?.trim();
   final uniqueId =
       id != null &&
       id.isNotEmpty &&
       (peers.isEmpty || peers.where((e) => e.resourceId == id).length == 1);
-  final uniqueLabel =
-      element.hasLabel &&
-      (peers.isEmpty ||
-          peers
-                  .where(
-                    (e) => [e.text, e.contentDescription].any(
-                      (value) =>
-                          value
-                              ?.toLowerCase()
-                              .split('\n')
-                              .contains(element.name.toLowerCase()) ??
-                          false,
-                    ),
-                  )
-                  .length ==
-              1);
+  // Match robot-flow's exact, case-insensitive label lines. Accessible names
+  // beat glyphs such as ×; a case title beats its changing status/duration.
+  // Narrowing by type prevents ancestor text and child spans from making a
+  // unique button label appear ambiguous (and avoids unfiltered DOM queries).
+  final label = [element.contentDescription, element.text]
+      .whereType<String>()
+      .expand((value) => value.split('\n'))
+      .where((value) => value.trim().isNotEmpty)
+      .where(
+        (label) =>
+            peers.isEmpty ||
+            peers.where((candidate) => _hasLabel(candidate, label)).length == 1,
+      )
+      .firstOrNull;
   final context = element.webContext == null || element.webContext!.isEmpty
       ? ''
       : '${element.webContext!.toYaml('      ')}\n';
-  final source = element.source == null
-      ? ''
-      : '      source: ${element.source}\n';
+  final scope = [
+    if (context.isNotEmpty) context.trimRight(),
+    if (element.source != null) '      source: ${element.source}',
+    if (element.elementType != null)
+      '      element_type: ${_yamlQuoteValue(element.elementType!)}',
+  ];
   if (uniqueId) {
-    selector = '$context$source      resource_id: "${_yamlQuoteValue(id)}"';
-  } else if (uniqueLabel) {
-    selector = '$context$source      label: "${_yamlQuoteValue(element.name)}"';
+    selector = [
+      ...scope,
+      '      resource_id: ${_yamlQuoteValue(id)}',
+    ].join('\n');
+  } else if (label != null) {
+    selector = [...scope, '      label: ${_yamlQuoteValue(label)}'].join('\n');
   } else if (element.position != null || selectedIndex >= 0) {
     selector = [
-      if (context.isNotEmpty) context.trimRight(),
-      if (element.source != null) '      source: ${element.source}',
-      '      class_contains: "${_yamlQuoteValue(element.className)}"',
+      ...scope,
+      '      class_contains: ${_yamlQuoteValue(element.className)}',
       '      position: $position',
     ].join('\n');
   } else if (element.resourceId?.trim().isNotEmpty ?? false) {
-    selector =
-        '$context      resource_id: "${_yamlQuoteValue(element.resourceId!)}"';
+    selector = [
+      ...scope,
+      '      resource_id: ${_yamlQuoteValue(element.resourceId!)}',
+    ].join('\n');
   } else if (element.hasLabel) {
-    selector = '$context      label: "${_yamlQuoteValue(element.name)}"';
+    selector = [
+      ...scope,
+      '      label: ${_yamlQuoteValue(element.name)}',
+    ].join('\n');
   } else {
-    selector =
-        '$context      class_contains: "${_yamlQuoteValue(element.className)}"\n'
-        '      position: 1';
+    selector = [
+      ...scope,
+      '      class_contains: ${_yamlQuoteValue(element.className)}',
+      '      position: 1',
+    ].join('\n');
   }
   switch (action) {
     case InspectorFlowAction.tap:
@@ -77,7 +95,7 @@ String buildInspectorFlowYaml({
     case InspectorFlowAction.typeText:
       return '  - id: tap_element_$sequence\n    tap_element:\n$selector\n'
           '  - id: type_text_$sequence\n    type_text:\n'
-          '      text: "${_yamlQuoteValue(inputText)}"'
+          '      text: ${_yamlQuoteValue(inputText)}'
           '${context.isEmpty ? '' : '\n$context'}';
     case InspectorFlowAction.assertVisible:
       return '  - id: assert_element_$sequence\n    assert_element:\n$selector';
@@ -88,8 +106,12 @@ String buildInspectorFlowYaml({
   }
 }
 
-String _yamlQuoteValue(String value) =>
-    value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', ' ');
+String _yamlQuoteValue(String value) => jsonEncode(value);
+
+bool _hasLabel(AdminElement element, String label) =>
+    [element.text, element.contentDescription].whereType<String>().any(
+      (value) => value.toLowerCase().split('\n').contains(label.toLowerCase()),
+    );
 
 bool _sameWebContext(AdminElement left, AdminElement right) =>
     (left.webContext?.identity ?? '') == (right.webContext?.identity ?? '');

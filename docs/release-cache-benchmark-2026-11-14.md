@@ -18,13 +18,13 @@ completed on all four runner configurations before the benchmark started.
 | Cargo release build | 4:09 | 3:27 |
 | Flutter setup | 1:58 | 1:42 |
 | Flutter macOS build | 6:35 | 6:00 |
-| Final Flutter + Rust cache post steps | 2:23 | 0:00 |
+| Final Flutter + Rust post steps | 2:23 | 0:01 |
 | Entire Intel job | 18:07 | 14:02 |
 | Shared QC web job | 1:50 | 1:08 |
 | Entire workflow, including scheduling gaps | 20:23 | 15:20 |
 
-The Intel job shortened by 4:05. Removing final cache writes accounts for 2:23 of
-that difference. Flutter setup improved by 16 seconds; its native build still
+The Intel job shortened by 4:05. Final post steps dropped by 2:22, leaving one
+second of housekeeping and no cache saves. Flutter setup improved by 16 seconds; its native build still
 costs about six minutes. Rust build inputs/cache configuration were unchanged
 apart from disabling cache saves, so the shorter Rust compilation is not evidence
 of a new compiler-cache optimization.

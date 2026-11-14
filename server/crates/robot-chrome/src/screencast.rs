@@ -37,7 +37,7 @@ impl ChromeRobot {
             .as_u64()
             .filter(|v| *v > 0)
             .ok_or_else(|| failure("missing viewport height"))? as u32;
-        let mut encoder = Command::new(&self.ffmpeg_path)
+        let mut encoder = ffmpeg::command(&self.ffmpeg_path)
             .args([
                 "-hide_banner",
                 "-loglevel",

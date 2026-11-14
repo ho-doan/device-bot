@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yaml/yaml.dart';
 import 'package:mobile_mcp_companion/android_live.dart';
 import 'package:mobile_mcp_companion/dashboard.dart';
 import 'package:mobile_mcp_companion/mcp_client.dart';
@@ -371,6 +372,47 @@ void main() {
       expect(find.text('draft'), findsOneWidget);
     },
   );
+
+  testWidgets('typing preserves spaces in device input and recording', (
+    tester,
+  ) async {
+    final inputs = <Map<String, dynamic>>[];
+    final recording = LiveRecording(deviceId: 'phone', platform: 'android');
+    await tester.pumpWidget(
+      _app(
+        home: AndroidLiveDialog(
+          deviceName: 'Phone',
+          recording: recording,
+          connect: () => const Stream<AndroidLiveUpdate>.empty(),
+          onInput: (input) async => inputs.add(input),
+        ),
+      ),
+    );
+    final field = find.byKey(const Key('android-live-type'));
+    final send = find.byKey(const Key('android-live-send-text'));
+    await tester.enterText(field, '  exact input  ');
+    await tester.tap(send);
+    await tester.pump();
+    await tester.enterText(field, '   ');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    await tester.tap(send);
+    await tester.pump();
+
+    expect(inputs, [
+      {'action': 'type', 'text': '  exact input  '},
+      {'action': 'type', 'text': '   '},
+    ]);
+    expect(recording.count, 2);
+    final steps = (loadYaml(recording.toYaml())['steps'] as List).where(
+      (step) => step['call_tool'] != null,
+    );
+    expect(steps.map((step) => step['call_tool']['arguments']['text']), [
+      '  exact input  ',
+      '   ',
+    ]);
+    expect(tester.widget<TextField>(field).controller!.text, isEmpty);
+  });
 
   testWidgets('non-clickable nodes can be inspected but cannot be tapped', (
     tester,

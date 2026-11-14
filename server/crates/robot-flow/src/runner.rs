@@ -1257,7 +1257,12 @@ pub fn filter_elements(s: &Selector, raw: &[Value]) -> Vec<Value> {
 fn query_arguments(s: &Selector, device: &str) -> Value {
     let mut args =
         json!({"deviceId":device,"maxResults":s.max_results.unwrap_or(100),"timeoutMs":60000});
-    if let Some(filter) = s.filter.as_ref().or(s.label.as_ref()) {
+    if let Some(filter) = s
+        .filter
+        .as_ref()
+        .or(s.label.as_ref())
+        .or(s.resource_id.as_ref())
+    {
         args["filter"] = json!(filter);
     }
     if let Some(t) = &s.element_type {
@@ -1430,6 +1435,28 @@ fn route_tool_arguments(arguments: &mut Value, device_id: &str) -> Result<()> {
 mod web_context_tests {
     use super::*;
     use crate::schema::{FlowWebContext, FlowWebFrame, Selector};
+
+    #[test]
+    fn recorded_resource_id_narrows_the_server_query_before_result_limit() {
+        let selector = Selector {
+            resource_id: Some("tab-evidence".into()),
+            ..Selector::default()
+        };
+        assert_eq!(
+            query_arguments(&selector, "chrome:fixture")["filter"],
+            "tab-evidence"
+        );
+        // A preferred ID permits a label fallback and must not narrow that away.
+        let fallback = Selector {
+            prefer_resource_id: Some("old-id".into()),
+            label: Some("Evidence".into()),
+            ..Selector::default()
+        };
+        assert_eq!(
+            query_arguments(&fallback, "chrome:fixture")["filter"],
+            "Evidence"
+        );
+    }
 
     #[test]
     fn replay_input_retains_the_document_selected_by_focus() {

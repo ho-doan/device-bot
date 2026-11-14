@@ -36,6 +36,29 @@ pub use live::{prepare_window_capture, start_window_capture};
 const DEVICE_ID: &str = "macos-host";
 #[cfg(target_os = "macos")]
 const NATIVE_FILTER_BUDGET: Duration = Duration::from_secs(2);
+
+#[cfg(target_os = "macos")]
+async fn wait_for_activation<F, Fut>(mut check: F, timeout: Duration) -> Result<(), RobotError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<(), RobotError>>,
+{
+    tokio::time::timeout(timeout, async {
+        loop {
+            if check().await.is_ok() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        RobotError::CommandFailed(
+            "macOS did not activate the selected process; retry Activate".into(),
+        )
+    })
+}
+
 static SCREENSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1032,7 +1055,7 @@ impl MacosRobot {
             let mut pid = 0;
             if unsafe { AXUIElementGetPid(foreground.0, &mut pid) } != 0 || pid != target {
                 return Err(RobotError::InvalidInput(
-                    "Activate the selected macOS app before typing or dragging".into(),
+                    "Activate the selected macOS app before typing, scrolling or dragging".into(),
                 ));
             }
         }
@@ -1045,6 +1068,10 @@ impl MacosRobot {
             let application = *self.active_process_id.lock().await;
             if let Some(app) = self.active_application.lock().await.clone() {
                 self.focus_command("activate", &app).await?;
+                // AppKit may return before WindowServer publishes foreground
+                // focus. AXPress can succeed on a background editor, so wait
+                // before reporting the tap ready for a following keyboard step.
+                wait_for_activation(|| self.require_input_target(), Duration::from_secs(2)).await?;
             }
             if native_accessibility_tap(point, application).is_ok() {
                 return Ok(());
@@ -1212,7 +1239,11 @@ impl Robot for MacosRobot {
     async fn scroll(&self, id: &str, at: Point, dx: f64, dy: f64) -> Result<(), RobotError> {
         self.require_device(id)?;
         let _guard = self.capture_lock.lock().await;
-        self.live_guard(id, &[at]).await?;
+        if live::Target::parse(id)?.is_some() {
+            self.live_guard(id, &[at]).await?;
+        } else {
+            self.require_input_target().await?;
+        }
         live::scroll(at, dx, dy)
     }
     fn fork_session(&self) -> Option<Arc<dyn Robot>> {
@@ -1317,15 +1348,8 @@ impl Robot for MacosRobot {
         .await?;
         #[cfg(target_os = "macos")]
         {
-            for _ in 0..80 {
-                if self.require_input_target().await.is_ok() {
-                    return Ok(());
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            }
-            return Err(RobotError::CommandFailed(
-                "macOS did not activate the selected process; retry Activate".into(),
-            ));
+            return wait_for_activation(|| self.require_input_target(), Duration::from_secs(2))
+                .await;
         }
         #[cfg(not(target_os = "macos"))]
         Ok(())
@@ -1652,6 +1676,49 @@ impl Robot for MacosRobot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn activation_waits_until_foreground_is_observed_and_times_out_if_it_never_arrives() {
+        let mut observations = 0;
+        wait_for_activation(
+            || {
+                observations += 1;
+                std::future::ready(if observations < 3 {
+                    Err(RobotError::InvalidInput("not foreground yet".into()))
+                } else {
+                    Ok(())
+                })
+            },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        assert_eq!(observations, 3);
+
+        let error = wait_for_activation(
+            || std::future::ready(Err(RobotError::InvalidInput("still background".into()))),
+            Duration::from_millis(1),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, RobotError::CommandFailed(message) if message.contains("did not activate"))
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn host_scroll_reaches_delta_validation_without_a_live_window() {
+        let error = MacosRobot::new("artifacts")
+            .scroll("macos-host", Point { x: 0., y: 0. }, 0., f64::NAN)
+            .await
+            .unwrap_err();
+        // Reject before posting a Quartz event, so this regression needs no GUI input.
+        assert!(
+            matches!(error, RobotError::InvalidInput(message) if message == "Invalid scroll delta")
+        );
+    }
 
     #[cfg(target_os = "macos")]
     #[tokio::test]

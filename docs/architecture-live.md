@@ -68,3 +68,21 @@ encoder. Sau khi điều hướng hoặc đổi kích thước viewport, mở l�
 
 Chạy file đã xuất bằng `device-bot run /path/to/recording.yaml`. Thiết bị/app,
 trạng thái đăng nhập và dữ liệu cần cho kịch bản phải sẵn sàng trên platform đó.
+
+### Chọn app và focus trên desktop
+
+- macOS AX và Windows UIA đọc elements theo process/window đã chọn, kể cả khi
+  QC đang ở phía trước. Đọc elements không cần ẩn QC hay activate app đích.
+  Nội dung được đọc vẫn phụ thuộc accessibility mà app đích cung cấp.
+- Flutter widget bridge là nguồn riêng: hiện snapshot đợi frame mới tối đa
+  800 ms. Khi app bị che hoàn toàn/minimize và Flutter ngừng render frame,
+  truy vấn có thể trả rỗng dù PID vẫn đúng; không nên xem đây là yêu cầu focus
+  của AX/UIA. Cần kiểm chứng và xử lý snapshot khi app ở background.
+- Input native bằng bàn phím, wheel hoặc tọa độ cần focus đúng app/window.
+  Live macOS/Windows tự activate cửa sổ đã chọn và kiểm tra đích trước khi gửi.
+  Không cần tự động ẩn QC; cửa sổ che điểm thao tác hoặc geometry đã đổi có thể
+  khiến input bị từ chối, cần mở lại Live/chọn lại cửa sổ.
+- Với API `macos-host`, chọn app chỉ đổi phạm vi truy vấn. Cần gọi Activate
+  trước typing, clear, scroll hoặc drag nếu app đích chưa ở foreground.
+  Windows host tự activate target trước input. Chrome CDP điều khiển tab/context
+  riêng, không cần ẩn QC để đọc DOM hoặc gửi thao tác web.

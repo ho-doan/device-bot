@@ -13,6 +13,14 @@ use tokio::{
     time::{Instant, timeout},
 };
 
+fn media_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    command.kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    command
+}
+
 #[derive(Debug)]
 struct Cue {
     at: f64,
@@ -106,7 +114,7 @@ impl VideoOverlay {
         } else {
             "ffprobe"
         });
-        let mut command = Command::new(probe);
+        let mut command = media_command(probe);
         command
             .args([
                 "-v",
@@ -219,7 +227,7 @@ impl VideoOverlay {
         let rendered_absolute = fs::canonicalize(directory)
             .map_err(|e| e.to_string())?
             .join("video-captioned.mp4");
-        let mut help = Command::new(&ffmpeg);
+        let mut help = media_command(&ffmpeg);
         help.args(["-hide_banner", "-h", "full"]);
         let help = output(help, 15).await?;
         let filter_file_option =
@@ -228,7 +236,7 @@ impl VideoOverlay {
             } else {
                 "-/filter_complex"
             };
-        let mut command = Command::new(ffmpeg);
+        let mut command = media_command(ffmpeg);
         command
             .current_dir(&work)
             .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])

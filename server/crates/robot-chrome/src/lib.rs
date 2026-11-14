@@ -938,7 +938,7 @@ impl Robot for ChromeRobot {
             )));
         }
         recordings.remove(device_id);
-        let mut encoder = Command::new(&self.ffmpeg_path)
+        let mut encoder = ffmpeg::command(&self.ffmpeg_path)
             .args([
                 "-hide_banner",
                 "-loglevel",

@@ -1126,7 +1126,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   }
 
   void _submitText() {
-    final text = _text.text.trim();
+    final text = _text.text;
     if (text.isEmpty) return;
     _send({'action': 'type', 'text': text});
     setState(_text.clear);

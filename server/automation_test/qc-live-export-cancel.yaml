@@ -1,0 +1,20 @@
+version: 2
+name: qc_live_export_cancel
+description: Cancel the real desktop Save dialog and keep the reviewed recording available for replay.
+steps:
+  - run: {recipe: open_qc_live}
+  - run: {recipe: live_scroll_pair}
+  - tap_element: {label: Review YAML (2), element_type: button, source: flutter}
+  - tap_element: {label: Export YAML, element_type: button, source: flutter}
+  - assert_element: {label: Cancel, element_type: button, source: native, timeout_ms: 15000}
+  - screenshot: {path: export-save-dialog.png}
+  - tap_element: {label: Cancel, element_type: button, source: native}
+  - assert_absent: {label: Cancel, element_type: button, source: native}
+  - assert_element: {filter: '2 recorded actions.', source: flutter}
+  - tap_element: {label: Run on device, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: Run PASS, source: flutter, timeout_ms: 90000}
+  - launch_app: {app_id: '${app_id}'}
+  - screenshot: {path: export-cancel-replay.png}
+  - tap_element: {label: Back to Live, element_type: button, source: flutter}
+  - tap_element: {label: Close, element_type: button, source: flutter}

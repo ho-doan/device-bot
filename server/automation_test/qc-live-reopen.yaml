@@ -1,0 +1,28 @@
+version: 2
+name: qc_live_reopen
+description: Closing and reopening Live retains the recording for that device and continues its action IDs.
+steps:
+  - run: {recipe: open_qc_live}
+  - run: {recipe: live_scroll_pair}
+  - assert_element: {label: Review YAML (2), element_type: button, source: flutter}
+  - tap_element: {label: Close, element_type: button, source: flutter}
+  - assert_element: {filter: 'Devices (', source: flutter}
+  - tap_element: {label: Live control of QC Live fixture, element_type: button, source: flutter}
+  - wait: {ms: 2500}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {filter: 'elements from the native tree.', source: flutter, timeout_ms: 60000}
+  - assert_element: {label: Review YAML (2), element_type: button, source: flutter}
+  - tap_element: {label: Down 50 px, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - tap_element: {label: Review YAML (3), element_type: button, source: flutter}
+  - assert_element: {filter: '3 recorded actions.', source: flutter}
+  - tap_element: {label: YAML, source: flutter}
+  - assert_element: {resource_id: recording-yaml-preview, filter: scroll_1, source: flutter}
+  - assert_element: {resource_id: recording-yaml-preview, filter: scroll_3, source: flutter}
+  - screenshot: {path: reopened-recording.png}
+  - tap_element: {label: Run on device, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: Run PASS, source: flutter, timeout_ms: 90000}
+  - launch_app: {app_id: '${app_id}'}
+  - tap_element: {label: Back to Live, element_type: button, source: flutter}
+  - tap_element: {label: Close, element_type: button, source: flutter}

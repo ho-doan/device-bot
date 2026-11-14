@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>QC Live fixture</title>
+<style>
+  body { margin: 24px; font: 18px system-ui; }
+  input, button { display: block; box-sizing: border-box; width: 300px; height: 44px; margin: 8px 0; }
+  input { margin-top: 180px; }
+  dialog { width: 400px; }
+  dialog button { width: 120px; }
+</style></head><body>
+<input id="search" aria-label="Search cases" placeholder="Search cases">
+<button id="apply">Apply filter</button>
+<button aria-label="Open evidence">Evidence</button>
+<output id="result">Ready</output>
+<div style="height:1400px" aria-hidden="true"></div>
+<dialog aria-label="Evidence preview"><p>Fixture evidence</p><button aria-label="Close evidence">×</button></dialog>
+<script>
+  const field = document.querySelector('input');
+  const dialog = document.querySelector('dialog');
+  const session = `${Date.now()}-${Math.random()}`;
+  let sequence = 0;
+  const test = new URLSearchParams(location.search).get('case');
+  function observe(action) {
+    // Passive evidence only: the fixture never drives QC or manufactures a Run result.
+    fetch('/events', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({test, session, sequence:++sequence, action, value:field.value, dialog:dialog.open})});
+  }
+  field.addEventListener('input', () => observe('input'));
+  document.querySelector('#apply').onclick = () => {
+    document.querySelector('output').textContent = field.value || 'All cases';
+    observe('apply');
+  };
+  document.querySelector('[aria-label="Open evidence"]').onclick = () => {
+    dialog.showModal(); observe('open-evidence');
+  };
+  dialog.querySelector('button').onclick = () => {dialog.close(); observe('close-evidence');};
+  observe('page-open');
+</script></body></html>

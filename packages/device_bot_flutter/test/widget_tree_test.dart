@@ -9,6 +9,59 @@ List<Map<String, Object?>> snapshot({
 }) => WidgetTreeSnapshot.capture(screenOrigin: origin, pixelRatio: ratio);
 
 void main() {
+  testWidgets('review tabs expose their labels and usable tap bounds', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: DefaultTabController(
+          length: 2,
+          child: Scaffold(
+            body: Column(
+              children: [
+                TabBar(
+                  tabs: [
+                    Tab(text: 'Steps'),
+                    Tab(text: 'YAML'),
+                  ],
+                ),
+                Expanded(
+                  child: TabBarView(
+                    children: [Text('Recorded actions'), Text('version: 2')],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    final tabs = snapshot()
+        .where((node) => node['widgetType'] == 'Tab')
+        .toList();
+    expect(tabs.map((node) => node['text']), ['Steps', 'YAML']);
+    expect(
+      snapshot().where(
+        (node) =>
+            node['className'] == 'button' &&
+            ['Steps', 'YAML'].contains(node['text']),
+      ),
+      hasLength(2),
+    );
+    final yaml = tabs.last;
+    expect(yaml['className'], 'button');
+    expect(yaml['clickable'], true);
+    await tester.tapAt(
+      Offset(
+        ((yaml['left'] as int) + (yaml['right'] as int)) / 2,
+        ((yaml['top'] as int) + (yaml['bottom'] as int)) / 2,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('version: 2').hitTestable(), findsOneWidget);
+    expect(find.text('Recorded actions').hitTestable(), findsNothing);
+  });
+
   for (final kind in [
     'gesture',
     'unlabeledGesture',

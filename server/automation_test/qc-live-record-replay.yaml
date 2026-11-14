@@ -1,0 +1,50 @@
+version: 2
+name: qc_live_record_replay
+description: Record 20 real input/tap/clear/scroll/evidence actions in QC and replay its generated YAML twice.
+steps:
+  - run: {recipe: open_qc_live}
+  - run: {recipe: select_live_search} # 1
+  - run: {recipe: send_live_text, with: {text: '123 "QC" \ 456'}} # 2
+  - tap_element: {label: Clear web field, element_type: button, source: flutter} # 3
+  - launch_app: {app_id: '${app_id}'}
+  - run: {recipe: send_live_text, with: {text: '12345'}} # 4
+  - run: {recipe: live_scroll_pair} # 5, 6
+  - tap_element: {filter: "Apply filter, button, clickable", element_type: button, source: flutter}
+  - tap_element: {label: Tap selected, element_type: button, source: flutter} # 7
+  - launch_app: {app_id: '${app_id}'}
+  - tap_element: {label: Tap selected, element_type: button, source: flutter} # 8
+  - launch_app: {app_id: '${app_id}'}
+  - run: {recipe: select_live_search} # 9
+  - run: {recipe: send_live_text, with: {text: ' 678'}} # 10
+  - tap_element: {label: Clear web field, element_type: button, source: flutter} # 11
+  - launch_app: {app_id: '${app_id}'}
+  - run: {recipe: send_live_text, with: {text: '9012'}} # 12
+  - run: {recipe: live_scroll_pair} # 13, 14
+  - run: {recipe: live_scroll_pair} # 15, 16
+  - tap_element: {filter: "Evidence, button, clickable", element_type: button, source: flutter}
+  - tap_element: {label: Tap selected, element_type: button, source: flutter} # 17
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {filter: 'label: "Close evidence"', source: flutter, timeout_ms: 15000}
+  - tap_element: {label: Tap selected, element_type: button, source: flutter} # 18
+  - launch_app: {app_id: '${app_id}'}
+  - run: {recipe: live_scroll_pair} # 19, 20
+  - assert_element: {label: Review YAML (20), element_type: button, source: flutter}
+  - screenshot: {path: live-twenty-actions.png}
+  - tap_element: {label: Review YAML (20), element_type: button, source: flutter}
+  - assert_element: {filter: '20 recorded actions.', source: flutter}
+  - tap_element: {label: YAML, source: flutter}
+  - assert_element: {resource_id: recording-yaml-preview, filter: 'label: "Close evidence"', source: flutter}
+  - assert_element: {resource_id: recording-yaml-preview, filter: '9012', source: flutter}
+  - screenshot: {path: recording-yaml.png}
+  - tap_element: {label: Run on device, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: Run PASS, source: flutter, timeout_ms: 90000}
+  - launch_app: {app_id: '${app_id}'}
+  - screenshot: {path: replay-first-pass.png}
+  - tap_element: {label: Run on device, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: Run PASS, source: flutter, timeout_ms: 90000}
+  - launch_app: {app_id: '${app_id}'}
+  - tap_element: {label: Back to Live, element_type: button, source: flutter}
+  - tap_element: {label: Close, element_type: button, source: flutter}
+  - assert_element: {filter: 'Devices (', source: flutter}

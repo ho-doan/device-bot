@@ -1,0 +1,37 @@
+version: 2
+name: qc_live_review_edit
+description: Delete recorded actions through the review UI, handle empty review, and record again without reusing IDs.
+steps:
+  - run: {recipe: open_qc_live}
+  - run: {recipe: select_live_search}
+  - run: {recipe: send_live_text, with: {text: REMOVE_ME}}
+  - run: {recipe: live_scroll_pair}
+  - tap_element: {label: Review YAML (4), element_type: button, source: flutter}
+  - tap_element: {label: Delete step 2, element_type: button, source: flutter}
+  - assert_element: {filter: '3 recorded actions.', source: flutter}
+  - tap_element: {label: YAML, source: flutter}
+  - assert_element: {resource_id: recording-yaml-preview, filter: 'scroll_4', source: flutter}
+  - assert_absent: {resource_id: recording-yaml-preview, filter: REMOVE_ME, source: flutter}
+  - tap_element: {label: Steps, source: flutter}
+  - tap_element: {label: Delete step 1, element_type: button, source: flutter}
+  - tap_element: {label: Delete step 1, element_type: button, source: flutter}
+  - tap_element: {label: Delete step 1, element_type: button, source: flutter}
+  - assert_element: {label: No recorded actions., source: flutter}
+  - assert_state: {label: Run on device, element_type: button, source: flutter, property: enabled, expected: false}
+  - assert_state: {label: Export YAML, element_type: button, source: flutter, property: enabled, expected: false}
+  - screenshot: {path: review-empty.png}
+  - tap_element: {label: Back to Live, element_type: button, source: flutter}
+  - assert_state: {label: Review YAML (0), element_type: button, source: flutter, property: enabled, expected: false}
+  - tap_element: {label: Down 50 px, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - tap_element: {label: Review YAML (1), element_type: button, source: flutter}
+  - tap_element: {label: YAML, source: flutter}
+  - assert_element: {resource_id: recording-yaml-preview, filter: 'scroll_5', source: flutter}
+  - assert_absent: {resource_id: recording-yaml-preview, filter: REMOVE_ME, source: flutter}
+  - tap_element: {label: Run on device, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: Run PASS, source: flutter, timeout_ms: 90000}
+  - launch_app: {app_id: '${app_id}'}
+  - screenshot: {path: edited-replay-pass.png}
+  - tap_element: {label: Back to Live, element_type: button, source: flutter}
+  - tap_element: {label: Close, element_type: button, source: flutter}

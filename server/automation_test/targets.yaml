@@ -1,5 +1,54 @@
 version: 1
 recipes:
+  open_qc_desktop:
+    - select_device: '${device}'
+    - launch_app: {app_id: '${app_id}'}
+    - assert_element: {label: MCP server URL, element_type: textField, source: flutter, timeout_ms: 30000}
+    - tap_element: {label: MCP server URL, element_type: textField, source: flutter}
+    - call_tool:
+        name: mobile_type_keys
+        arguments: {deviceId: '<selected>', text: '', clear: true}
+    - type_text: {text: '${env:QC_TEST_URL}'}
+    - tap_element: {label: Refresh, element_type: button, source: flutter}
+    - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 60000}
+  start_qc_chrome:
+    - run: {recipe: open_qc_desktop}
+    - tap_element: {resource_id: 'device-chrome:browser', label: Start, element_type: button, source: flutter}
+    - launch_app: {app_id: '${app_id}'}
+    - assert_element: {label: 'Open URL on about:blank', element_type: button, source: flutter, timeout_ms: 60000}
+    - tap_element: {label: 'Open URL on about:blank', element_type: button, source: flutter}
+    - assert_element: {resource_id: web-url-input, element_type: textField, source: flutter}
+  open_qc_live:
+    - run: {recipe: start_qc_chrome}
+    - type_text: {text: '${env:QC_LIVE_URL}'}
+    - tap_element: {resource_id: web-url-open, element_type: button, source: flutter}
+    - launch_app: {app_id: '${app_id}'}
+    - assert_element: {label: Live control of QC Live fixture, element_type: button, source: flutter, timeout_ms: 30000}
+    - tap_element: {label: Live control of QC Live fixture, element_type: button, source: flutter}
+    # Chrome's asynchronous capture startup brings its window to the front.
+    # Let signaling start before activating the desktop QC window again.
+    - wait: {ms: 2500}
+    - launch_app: {app_id: '${app_id}'}
+    - assert_element: {filter: 'elements from the native tree.', source: flutter, timeout_ms: 60000}
+    - assert_element: {filter: "Search cases, input, clickable", element_type: button, source: flutter, timeout_ms: 30000}
+    - assert_element: {label: Review YAML (0), element_type: button, source: flutter}
+  select_live_search:
+    - tap_element: {filter: "Search cases, input, clickable", element_type: button, source: flutter}
+    - assert_element: {filter: 'Selector: search', class_contains: text, source: flutter}
+    - tap_element: {label: Tap selected, element_type: button, source: flutter}
+    - launch_app: {app_id: '${app_id}'}
+  send_live_text:
+    - tap_element: {resource_id: android-live-type, element_type: textField, source: flutter}
+    - type_text: {text: '${text}'}
+    - assert_value: {resource_id: android-live-type, element_type: textField, source: flutter, expected: '${text}'}
+    - tap_element: {label: Send text, element_type: button, source: flutter}
+    - launch_app: {app_id: '${app_id}'}
+    - assert_value: {resource_id: android-live-type, element_type: textField, source: flutter, expected: ''}
+  live_scroll_pair:
+    - tap_element: {label: Down 50 px, element_type: button, source: flutter}
+    - launch_app: {app_id: '${app_id}'}
+    - tap_element: {label: Up 50 px, element_type: button, source: flutter}
+    - launch_app: {app_id: '${app_id}'}
   open_qc_web:
     - call_tool:
         name: mobile_boot_device

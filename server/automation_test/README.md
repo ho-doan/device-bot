@@ -16,6 +16,16 @@ thật. Không dùng Computer Use để thay cho các bước của bot.
   với file rỗng; vẫn đóng dialog và quay về dashboard được.
 - `qc-import-cancel.yaml`: mở/hủy hộp chọn file thật của app desktop.
 - `qc-web-recovery.yaml`: đổi endpoint web sang địa chỉ không kết nối được rồi phục hồi.
+- `qc-url-validation.yaml`: từ chối URL rỗng/`javascript:`, giữ giá trị để sửa,
+  mở URL hợp lệ và kiểm tra Review bị khóa khi chưa ghi thao tác.
+- `qc-live-record-replay.yaml`: ghi 20 thao tác input/tap/clear/scroll/mở-đóng
+  evidence trong QC desktop, xem YAML và chạy lại hai lần.
+- `qc-live-review-edit.yaml`: xóa step, kiểm tra preview đã bỏ text bị xóa,
+  xóa hết để khóa Run/Export, ghi tiếp và kiểm tra ID không bị tái sử dụng.
+- `qc-live-selection.yaml`: chọn chỉ inspect, giữ control có nhãn khi scroll
+  50 px và giữ text draft trong QC khi xóa field của trang đích.
+- `qc-live-reopen.yaml`: đóng/mở Live giữ recording và tiếp tục số thứ tự step.
+- `qc-live-export-cancel.yaml`: mở/hủy hộp Save thật rồi replay recording.
 - `report-empty-search.yaml`: tìm không có kết quả, xóa bộ lọc và thấy lại các case.
 - `report-download.yaml`: tải JSON bằng link UI, kiểm tra nội dung file đã tải.
 - `report-persistence.yaml`: restart backend, di chuyển thư mục nguồn fixture,
@@ -50,7 +60,39 @@ Chạy một bài:
 python3 server/automation_test/run.py --only qc-web
 python3 server/automation_test/run.py --only report-web
 python3 server/automation_test/run.py --only qc-desktop --app /path/to/mobile_mcp_companion_dev.app
+
+# Chỉ chạy sáu bài desktop URL/Live mới (macOS).
+python3 server/automation_test/run.py --suite live
+
+# Dùng port khác nếu một backend dev đang chạy ở 3338.
+python3 server/automation_test/run.py --suite live --port 3339
 ```
+
+Live suite dùng trang fixture HTTP nhỏ có input, button và dialog evidence để
+kiểm tra recording có thể lặp lại. Trang được phục vụ ở địa chỉ LAN của máy
+trên port tạm, chỉ chứa dữ liệu test. Cần LAN hoạt động và FFmpeg có libx264.
+HTTP LAN đi qua CDP fallback để không có hộp chọn chia sẻ màn hình chặn test.
+Khi chọn Live suite, Chrome thật chạy với `--headless=new` và profile riêng;
+QC vẫn chạy desktop thật, nhận input thật và hiển thị video Live. Cách chạy này
+giữ foreground cho QC khi Chrome khởi động hoặc nhận lệnh scroll. Các bài cũ
+chạy riêng bằng `--only` giữ cách khởi động Chrome hiện có.
+Backend MCP và kho report vẫn ở loopback/port thử riêng. Mỗi bài Live khởi
+động lại process QC do harness quản lý để không nhận recording của bài trước.
+
+Các thao tác nghiệp vụ nằm trong YAML; Python chỉ chuẩn bị fixture/process,
+đọc autosave thật và kiểm chứng kết quả. `launch_app` trong YAML kích hoạt
+cửa sổ QC cho input/assertion native, không tạo thao tác trong recording.
+Các bài desktop dùng dữ liệu số, dấu nháy và backslash để không phụ thuộc bộ
+gõ Telex/keyboard layout đang chọn trên host; chưa kiểm chứng nhập Unicode qua
+đường `macos-host`. Bridge Flutter xuất Tab thành control có nhãn để các bài
+có thể chọn Steps/YAML bằng selector, không phụ thuộc tọa độ cửa sổ.
+Sau lượt chạy, harness copy đúng autosave mới sang `<case>/recorded.yaml`,
+kiểm tra số thao tác/ID, validate bằng robot-flow, rồi đối chiếu toàn bộ step
+với các lượt history độc lập. Trang fixture ghi nhận thụ động input và trạng
+thái dialog vào `<case>-events.json`; bài 20 thao tác còn kiểm tra text cuối và
+việc mở/đóng evidence thực sự ở cả hai replay. Không dùng callback giả hoặc chỉ
+dựa vào thông báo Run PASS cũ trên UI. Autosave mới của app vẫn nằm trong thư
+mục recordings của profile QC; harness không xóa recording có sẵn.
 
 Windows: build `flutter build windows --debug`, rồi truyền `--app` tới executable
 QC trong build Windows khi chạy Python. Cần Chrome và các quyền automation của
@@ -64,8 +106,8 @@ và [DOM.setFileInputFiles](https://chromedevtools.github.io/devtools-protocol/t
 không giả lập callback Run hay thay kết quả backend. Trạng thái PASS/FAIL của
 flow con, số lượt history và PNG đều được kiểm tra từ report API thật.
 
-Đây là smoke/regression suite cho các luồng trên; chưa bao phủ Live video,
-toàn bộ thao tác thiết bị, import file thành công trên desktop/export recording,
+Đây là smoke/regression suite cho các luồng trên; chưa bao phủ mọi backend Live,
+toàn bộ thao tác thiết bị, import file thành công trên desktop/lưu export thành công,
 hay truy cập từ máy LAN
 thứ hai. Token thật không được ghi trong YAML; thông tin xác thực được truyền
 qua môi trường và input token được đánh dấu sensitive.

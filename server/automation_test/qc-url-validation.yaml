@@ -1,0 +1,30 @@
+version: 2
+name: qc_desktop_url_validation
+description: Reject empty and non-HTTP URLs, keep input for correction, then open Live.
+steps:
+  - run: {recipe: start_qc_chrome}
+  - tap_element: {resource_id: web-url-open, element_type: button, source: flutter}
+  - assert_element: {filter: Enter a complete HTTP or HTTPS URL, source: flutter}
+  - tap_element: {resource_id: web-url-input, element_type: textField, source: flutter}
+  - type_text: {text: 'javascript:alert(1)'}
+  - tap_element: {resource_id: web-url-open, element_type: button, source: flutter}
+  - assert_value: {resource_id: web-url-input, element_type: textField, source: flutter, expected: 'javascript:alert(1)'}
+  - assert_element: {filter: Enter a complete HTTP or HTTPS URL, source: flutter}
+  - screenshot: {path: url-rejected.png}
+  - tap_element: {resource_id: web-url-input, element_type: textField, source: flutter}
+  - call_tool:
+      name: mobile_type_keys
+      arguments: {deviceId: '<selected>', text: '', clear: true}
+  - type_text: {text: '${env:QC_LIVE_URL}'}
+  - tap_element: {resource_id: web-url-open, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_absent: {resource_id: web-url-input, element_type: textField, source: flutter}
+  - tap_element: {label: Live control of QC Live fixture, element_type: button, source: flutter, timeout_ms: 30000}
+  - wait: {ms: 2500}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {filter: 'elements from the native tree.', source: flutter, timeout_ms: 60000}
+  - assert_element: {label: Review YAML (0), element_type: button, source: flutter, timeout_ms: 60000}
+  - assert_state: {label: Review YAML (0), element_type: button, source: flutter, property: enabled, expected: false}
+  - screenshot: {path: valid-url-live.png}
+  - tap_element: {label: Close, element_type: button, source: flutter}
+  - assert_element: {filter: 'Devices (', source: flutter}

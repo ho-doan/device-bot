@@ -3,15 +3,20 @@
 
 import argparse
 import base64
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
 import platform
+import re
 import secrets
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
+
+from live_fixture import LiveFixture, lan_host
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,6 +31,18 @@ CASES = {
     "qc-web-recovery": {},
     "report-empty-search": {}, "report-download": {"download": True},
     "report-persistence": {"restart": True},
+    "qc-url-validation": {"desktop": True, "live": True, "fresh_desktop": True},
+    "qc-live-record-replay": {"desktop": True, "live": True, "fresh_desktop": True,
+                              "recorded_actions": 20, "replays": 2,
+                              "final_text": "9012", "evidence_dialog": True},
+    "qc-live-review-edit": {"desktop": True, "live": True, "fresh_desktop": True,
+                            "recorded_actions": 1, "replays": 1, "final_text": ""},
+    "qc-live-selection": {"desktop": True, "live": True, "fresh_desktop": True,
+                           "recorded_actions": 5, "replays": 0},
+    "qc-live-reopen": {"desktop": True, "live": True, "fresh_desktop": True,
+                        "recorded_actions": 3, "replays": 1},
+    "qc-live-export-cancel": {"desktop": True, "live": True, "fresh_desktop": True,
+                               "recorded_actions": 2, "replays": 1},
 }
 
 
@@ -126,18 +143,128 @@ def seed_report(binary, directory, env):
          "--name", "QC fixture run 2", "--data-dir", store], env=env)
 
 
+def stop_process(process):
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def recording_files():
+    return {p for flavor in ('.device-bot-dev', '.device-bot')
+            for p in (Path.home() / flavor / 'recordings').glob('live_*.yaml')}
+
+
+def headless_chrome(output, env):
+    """Keep the real QC window in front while its isolated Chrome target runs."""
+    configured = env.get('DEVICE_BOT_CHROME_PATH')
+    candidates = [Path(configured)] if configured else [
+        Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'),
+        Path.home() / 'Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    ]
+    binary = next((path.resolve() for path in candidates if path.is_file()), None)
+    if binary is None:
+        raise RuntimeError('Live tests require Chrome; set DEVICE_BOT_CHROME_PATH to its executable')
+    launcher = output / 'chrome-headless.py'
+    launcher.write_text(f'#!{sys.executable}\nimport os, sys\n'
+                        f'os.execv({str(binary)!r}, [{str(binary)!r}, "--headless=new", *sys.argv[1:]])\n')
+    launcher.chmod(0o700)
+    env['DEVICE_BOT_CHROME_PATH'] = str(launcher)
+    env.pop('DEVICE_BOT_CHROME_DEBUG_ADDRESS', None)
+    env.pop('DEVICE_BOT_CHROME_ACTIVE_PORT_FILE', None)
+
+
+def verify_live_recording(name, config, output, before, fixture, base_url, runner, env):
+    events = fixture.observations(name)
+    (output / f'{name}-events.json').write_text(json.dumps(events, ensure_ascii=False, indent=2))
+    if 'recorded_actions' not in config:
+        return {'fixtureEvents': len(events)}
+    created = recording_files() - before
+    if len(created) != 1:
+        raise RuntimeError(f'Expected one real QC autosave, found {len(created)}')
+    yaml = created.pop().read_text()
+    destination = output / name / 'recorded.yaml'
+    destination.write_text(yaml)
+    ids = re.findall(r'^  - id: (\w+)$', yaml, re.M)
+    actions = [step for step in ids if re.fullmatch(r'(tap_element|type|clear|scroll|swipe)_\d+', step)]
+    if len(ids) != len(set(ids)) or len(actions) != config['recorded_actions']:
+        raise RuntimeError('Recorded YAML has duplicate IDs or the wrong action count')
+    if fixture.url not in yaml or 'chrome:browser' not in yaml:
+        raise RuntimeError('Recorded YAML is missing its real entry URL or Chrome setup')
+    validation = subprocess.run([str(runner), '--dry-run', '--artifacts',
+                                 str(output / name / 'generated-validation'), str(destination)],
+                                cwd=ROOT,
+                                env=env | {'DEVICE_BOT_REPORT_DATA_DIR': str(output / name / 'validation-history')},
+                                capture_output=True, text=True, timeout=30)
+    if validation.returncode:
+        raise RuntimeError('QC autosave failed robot-flow validation: ' + validation.stderr[-1000:])
+    recording_name = json.loads(re.search(r'^name: (.+)$', yaml, re.M).group(1))
+
+    def get(path):
+        with urllib.request.urlopen(base_url + path, timeout=5) as response:
+            return json.load(response)
+
+    nested = []
+    for project in get('/reports/api/projects'):
+        prefix = f"/reports/api/projects/{project['id']}/runs"
+        for run in get(prefix):
+            if run['name'] != recording_name:
+                continue
+            for case in get(prefix + '/' + run['id'])['cases']:
+                report = case['report']
+                if report['name'] != recording_name:
+                    continue
+                if report['status'] != 'PASS' or report.get('dry_run'):
+                    raise RuntimeError(f"Recorded replay failed: {report.get('error')}")
+                if [step['id'] for step in report['steps']] != ids:
+                    raise RuntimeError('Replay did not execute exactly the reviewed YAML')
+                if any(step['status'] != 'passed' for step in report['steps']):
+                    raise RuntimeError('Replay contains an unpassed action')
+                nested.append(run['id'])
+    if len(set(nested)) != config['replays']:
+        raise RuntimeError(f"Expected {config['replays']} independent replay histories, got {len(set(nested))}")
+    sessions = {}
+    for event in events:
+        sessions.setdefault(event['session'], []).append(event)
+    if len(sessions) != 1 + config['replays']:
+        raise RuntimeError('Fixture did not observe the manual session plus every replay')
+    # A replay opens a new document; page-open is sent before any UI input.
+    ordered = sorted(sessions.values(), key=lambda group: events.index(group[0]))
+    for group in ordered[1:]:
+        group.sort(key=lambda event: event['sequence'])
+        if 'final_text' in config and group[-1]['value'] != config['final_text']:
+            raise RuntimeError('Replay final text differs from the expected device input')
+        if config.get('evidence_dialog'):
+            names = [event['action'] for event in group]
+            if names.count('open-evidence') != 1 or names.count('close-evidence') != 1 or group[-1]['dialog']:
+                raise RuntimeError('Replay did not really open and close evidence')
+    return {'recordedYaml': str(destination), 'recordedActions': len(actions),
+            'replayHistories': sorted(set(nested)), 'fixtureSessions': len(sessions)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--only", choices=CASES)
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--only", choices=CASES)
+    selection.add_argument("--suite", choices=['all', 'live'], default='all')
     parser.add_argument("--port", type=int, default=3338)
     parser.add_argument("--app", type=Path, help="Built QC app bundle/executable")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     host = {"Darwin": "macos", "Windows": "windows"}.get(platform.system())
-    names = [args.only] if args.only else list(CASES)
+    names = [args.only] if args.only else [name for name, config in CASES.items()
+                                         if args.suite == 'all' or config.get('live')]
+    if host == 'windows' and not args.only and args.suite == 'all':
+        names = [name for name in names if not CASES[name].get('live')]
+        print('Skipping the six macOS-only Live cases on Windows.', flush=True)
     has_desktop = any(CASES[name].get("desktop") for name in names)
+    has_live = any(CASES[name].get('live') for name in names)
     if has_desktop and host is None:
         parser.error("desktop driver self-test requires macOS or Windows; use --only on Linux")
+    if has_live and host != 'macos':
+        parser.error('The Live YAML suite currently requires macOS desktop QC')
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", args.port))  # Refuse to reuse an unrelated backend.
     output = (args.output or ROOT / "artifacts" / "qc-self-test" /
@@ -170,19 +297,25 @@ def main():
         "DEVICE_BOT_IOS_AGENT_BIND": "127.0.0.1:0",
         "DEVICE_BOT_IOS_SIM_AGENT_BIND": "127.0.0.1:0",
     })
+    if has_live:
+        headless_chrome(output, env)
     seed_report(report, output, env)
     results = []
     desktop = None
     desktop_log = None
     worker = None
     worker_log = None
-    with (output / "backend.log").open("w") as log:
+    with ExitStack() as stack, (output / "backend.log").open("w") as log:
+        live = stack.enter_context(LiveFixture(lan_host())) if has_live else None
         server = subprocess.Popen([str(bot), "mcp", "--listen", f"127.0.0.1:{args.port}"],
                                   cwd=ROOT, env=env, stdout=log, stderr=log)
         try:
             wait_backend(server, env["QC_TEST_URL"])
             for name in names:
                 config = CASES[name]
+                before_recordings = recording_files() if config.get('live') else set()
+                if config.get('live'):
+                    env['QC_LIVE_URL'] = live.url + '?case=' + name
                 if config.get("restart"):
                     arm_embedded_flow_shutdown_probe(env["QC_TEST_URL"], env["DEVICE_BOT_AUTH"])
                     server.terminate()
@@ -193,9 +326,14 @@ def main():
                     server = subprocess.Popen([str(bot), "mcp", "--listen", f"127.0.0.1:{args.port}"],
                                               cwd=ROOT, env=env, stdout=log, stderr=log)
                     wait_backend(server, env["QC_TEST_URL"])
+                if config.get('fresh_desktop') and desktop is not None:
+                    stop_process(desktop)
+                    desktop = None
+                    desktop_log.close()
+                    desktop_log = None
                 if config.get("desktop") and host == "macos" and desktop is None:
                     executable = app / "Contents" / "MacOS" / app.stem
-                    desktop_log = (output / "qc-app.log").open("w")
+                    desktop_log = (output / (name + "-app.log")).open("w")
                     desktop = subprocess.Popen([str(executable)], env=env,
                                                stdout=desktop_log, stderr=desktop_log)
                 if config.get("fixture") or config.get("download"):
@@ -207,13 +345,14 @@ def main():
                                                str(output / "backend-artifacts/chrome-profile"),
                                                str(fixture), str(downloads)], stdout=worker_log, stderr=worker_log)
                 command = [str(runner), "--mcp-url", env["QC_TEST_URL"] + "/mcp",
-                           "--artifacts", str(output / name), "--case-timeout", "180"]
+                           "--artifacts", str(output / name), "--case-timeout",
+                           "360" if config.get('live') else "180"]
                 command += ["--profiles", str(SUITE / "targets.yaml"),
                             "--target", host if config.get("desktop") else "web"]
                 command.append(str(SUITE / (name + ".yaml")))
                 with (output / (name + ".log")).open("w") as run_log:
                     completed = subprocess.run(command, cwd=ROOT, env=env, stdout=run_log,
-                                               stderr=run_log, timeout=240)
+                                               stderr=run_log, timeout=420 if config.get('live') else 240)
                 reports = sorted((output / name).glob("case-*/report.json"))
                 data = json.loads(reports[-1].read_text()) if reports else {}
                 ok = completed.returncode == 0 and data.get("status") == "PASS"
@@ -238,6 +377,12 @@ def main():
                     files = list(downloads.glob("*.json"))
                     if not files or len(json.loads(files[0].read_text())["cases"]) != 2:
                         result.update(status="FAIL", error="Expected downloaded report JSON with two fixture cases")
+                if ok and config.get('live'):
+                    try:
+                        result.update(verify_live_recording(name, config, output, before_recordings,
+                                                           live, env['QC_TEST_URL'], runner, env))
+                    except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
+                        result.update(status='FAIL', error=str(error))
                 if worker is not None:
                     worker.terminate()
                     worker.wait(timeout=10)

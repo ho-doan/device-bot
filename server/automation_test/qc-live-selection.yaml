@@ -1,0 +1,27 @@
+version: 2
+name: qc_live_selection_scroll
+description: Inspect without recording, keep an unkeyed named control selected across 50px scrolls, and preserve the QC text draft on clear.
+steps:
+  - run: {recipe: open_qc_live}
+  - tap_element: {filter: "Evidence, button, clickable", element_type: button, source: flutter}
+  - assert_element: {filter: 'label: "Open evidence"', source: flutter}
+  - assert_state: {label: Review YAML (0), element_type: button, source: flutter, property: enabled, expected: false}
+  - tap_element: {label: Down 50 px, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {label: Tap selected, element_type: button, source: flutter}
+  - assert_element: {filter: 'label: "Open evidence"', source: flutter}
+  - tap_element: {label: Up 50 px, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {filter: 'label: "Open evidence"', source: flutter}
+  - assert_element: {label: Review YAML (2), element_type: button, source: flutter}
+  - run: {recipe: select_live_search}
+  - run: {recipe: send_live_text, with: {text: device-value}}
+  - tap_element: {resource_id: android-live-type, element_type: textField, source: flutter}
+  - type_text: {text: QC-draft-123}
+  - tap_element: {label: Clear web field, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_value: {resource_id: android-live-type, element_type: textField, source: flutter, expected: QC-draft-123}
+  - assert_element: {label: Review YAML (5), element_type: button, source: flutter}
+  - screenshot: {path: selection-and-draft.png}
+  - tap_element: {label: Close, element_type: button, source: flutter}
+  - assert_element: {filter: 'Devices (', source: flutter}

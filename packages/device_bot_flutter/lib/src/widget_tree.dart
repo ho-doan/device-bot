@@ -151,6 +151,12 @@ class WidgetTreeSnapshot {
       label = widget.label;
       enabled = widget.onChanged != null;
       focused = widget.focusNode?.hasFocus;
+    } else if (widget is Tab && _hasAncestor<TabBar>(element)) {
+      // TabBar wraps Tab in internal gesture/semantic widgets. Export the
+      // public tab itself so its label and hit area survive that control scope.
+      role = 'button';
+      label = widget.text ?? _widgetText(widget.child);
+      clickable = true;
     } else if (widget is ListTile && !insideControl) {
       role = widget.onTap != null ? 'button' : 'listItem';
       label = _widgetText(widget.title);

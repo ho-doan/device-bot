@@ -1,0 +1,71 @@
+name: Verify Windows Live candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server -> target
+          shared-key: release-x86_64-pc-windows-msvc
+          save-if: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify capture and console regressions on Windows
+        run: cargo test --manifest-path server/Cargo.toml --release --locked --target x86_64-pc-windows-msvc -p robot-chrome -p robot-windows
+      - name: Build candidate CLI tools
+        run: cargo build --manifest-path server/Cargo.toml --release --locked --target x86_64-pc-windows-msvc -p device-bot -p robot-flow -p robot-report
+      - uses: ./.github/actions/setup-release-flutter
+        with:
+          platform: windows
+      - name: Analyze Live viewer changes
+        working-directory: server/flutter_app
+        run: flutter analyze lib/android_video.dart test/android_video_test.dart
+      - name: Verify Live viewer regressions
+        working-directory: server/flutter_app
+        run: flutter test test/android_video_test.dart test/windows_live_test.dart
+      - name: Build candidate QC apps
+        working-directory: server/flutter_app
+        run: |
+          flutter config --enable-windows-desktop
+          flutter build windows --release
+          flutter build web --release --base-href /qc/
+      - name: Package candidate without publishing
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tomllib
+          version = tomllib.loads(Path('server/crates/mcp-server/Cargo.toml').read_text())['package']['version']
+          subprocess.run([
+              sys.executable, 'scripts/package_release.py',
+              '--binary', 'server/target/x86_64-pc-windows-msvc/release/device-bot.exe',
+              '--target', 'x86_64-pc-windows-msvc', '--version', version,
+              '--output', 'dist', '--qc', 'server/flutter_app/build/windows/x64/runner/Release',
+              '--qc-web', 'server/flutter_app/build/web',
+          ], check=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-live-candidate-${{ github.sha }}
+          path: dist/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

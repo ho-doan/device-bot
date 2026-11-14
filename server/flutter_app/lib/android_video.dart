@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'mcp_client.dart';
@@ -9,6 +10,8 @@ class AndroidVideoSession extends ChangeNotifier {
   final McpClient _client;
   final RTCVideoRenderer renderer = RTCVideoRenderer();
   RTCPeerConnection? _peer;
+  MediaStream? _remoteVideo;
+  Future<void> _trackBinding = Future<void>.value();
   String? _streamId;
   Size _deviceSize = Size.zero;
   bool _closed = false;
@@ -41,10 +44,42 @@ class AndroidVideoSession extends ChangeNotifier {
       session.renderer.onFirstFrameRendered = frameChanged;
       final peer = await createPeerConnection({'iceServers': <dynamic>[]});
       session._peer = peer;
-      peer.onTrack = (event) {
-        if (session._closed || event.streams.isEmpty) return;
-        session.renderer.srcObject = event.streams.first;
+      Future<void> attachVideo(RTCTrackEvent event) async {
+        if (session._closed || event.track.kind != 'video') return;
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+          // The Windows Unified Plan callback registers a remote track even
+          // when the legacy remote-stream registry is empty. Populate a native
+          // stream explicitly so the renderer can find that track by ID.
+          final stream = session._remoteVideo ??= await createLocalMediaStream(
+            'local',
+          );
+          if (session._closed) return;
+          if (!stream.getVideoTracks().any(
+            (track) => track.id == event.track.id,
+          )) {
+            for (final track in stream.getVideoTracks().toList()) {
+              await stream.removeTrack(track);
+            }
+            await stream.addTrack(event.track);
+          }
+          if (session._closed) return;
+          session.renderer.srcObject = stream;
+        } else {
+          if (event.streams.isEmpty) return;
+          session.renderer.srcObject = event.streams.first;
+        }
         session.notifyListeners();
+      }
+
+      peer.onTrack = (event) {
+        session._trackBinding = session._trackBinding
+            .then((_) => attachVideo(event))
+            .catchError((Object error) {
+              if (session._closed) return;
+              session.status = 'Could not attach the Live video track: $error';
+              if (!firstFrame.isCompleted) firstFrame.complete();
+              session.notifyListeners();
+            });
       };
       peer.onConnectionState = (state) {
         if (session._closed) return;
@@ -126,10 +161,12 @@ class AndroidVideoSession extends ChangeNotifier {
       }
     }
 
+    await release(() => _trackBinding);
     await release(() async => _peer?.close());
     await release(() async => _peer?.dispose());
     await release(() => renderer.srcObject = null);
     await release(renderer.dispose);
+    await release(() async => _remoteVideo?.dispose());
     await release(() async {
       if (_streamId != null) await _client.stopAndroidStream(_streamId!);
     });

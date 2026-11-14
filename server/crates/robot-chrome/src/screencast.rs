@@ -79,7 +79,7 @@ impl ChromeRobot {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| {
@@ -89,6 +89,24 @@ impl ChromeRobot {
             })?;
         let mut stdin = encoder.stdin.take().unwrap();
         let mut stdout = encoder.stdout.take().unwrap();
+        let mut stderr = encoder.stderr.take().unwrap();
+        // Desktop launches have no terminal. Drain stderr independently and keep
+        // a bounded tail so startup failures reach the viewer instead of hiding
+        // behind an apparently successful SDP and repeated reconnect attempts.
+        let diagnostics = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            let mut chunk = [0; 1024];
+            while let Ok(size) = stderr.read(&mut chunk).await {
+                if size == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&chunk[..size]);
+                if bytes.len() > 8192 {
+                    bytes.drain(..bytes.len() - 8192);
+                }
+            }
+            String::from_utf8_lossy(&bytes).into_owned()
+        });
         // libx264/yuv420p requires even dimensions; advertise the encoded size.
         let width = width.max(2) & !1;
         let height = height.max(2) & !1;
@@ -105,7 +123,7 @@ impl ChromeRobot {
             .send(Message::Text(start.to_string().into()))
             .await
             .map_err(failure)?;
-        let (sender, frames) = mpsc::channel(2);
+        let (sender, mut frames) = mpsc::channel(2);
         let output = sender.clone();
         let mut reader = tokio::spawn(async move {
             let mut buffer = Vec::new();
@@ -182,20 +200,43 @@ impl ChromeRobot {
                     }
                 }
             }.await;
+            drop(stdin);
+            let _ = encoder.kill().await;
+            reader.abort();
+            let log = diagnostics.await.unwrap_or_default();
             if let Err(error) = result {
-                let _ = sender.try_send(Err(error));
+                let _ = sender.send(Err(failure(format!("{error}; {log}")))).await;
             }
             let _ = connection
                 .request("Page.stopScreencast", json!({}), Some(session))
                 .await;
-            drop(stdin);
-            let _ = encoder.kill().await;
-            reader.abort();
+        });
+        let first = tokio::time::timeout(Duration::from_secs(10), frames.recv())
+            .await
+            .map_err(|_| {
+                failure("capture did not produce its first encoded frame within 10 seconds")
+            })?
+            .ok_or_else(|| failure("capture stopped before its first frame"))??;
+        let (ready, frames_ready) = mpsc::channel(2);
+        tokio::spawn(async move {
+            if ready.send(Ok(first)).await.is_err() {
+                return;
+            }
+            loop {
+                let next =
+                    tokio::select! { _ = ready.closed() => break, next = frames.recv() => next };
+                let Some(frame) = next else {
+                    break;
+                };
+                if ready.send(frame).await.is_err() {
+                    break;
+                }
+            }
         });
         Ok(VideoStream {
             width,
             height,
-            frames,
+            frames: frames_ready,
         })
     }
 }
@@ -226,6 +267,100 @@ mod tests {
         assert!(nal_types(&frame).any(|n| n == 5));
         assert_eq!(data, vec![0, 0, 0, 1, 9, 240]);
         assert!(take_access_unit(&mut data).is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn encoder_failure_is_reported_during_setup_with_diagnostics() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut bytes = [0; 4096];
+                    let n = stream.peek(&mut bytes).await.unwrap();
+                    if String::from_utf8_lossy(&bytes[..n]).contains("/json/version") {
+                        let _ = stream.read(&mut bytes).await.unwrap();
+                        let body = json!({"webSocketDebuggerUrl":format!("ws://{address}/devtools/browser/test")}).to_string();
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        stream.write_all(response.as_bytes()).await.unwrap();
+                        return;
+                    }
+                    let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(frame)) = socket.next().await {
+                        if !frame.is_text() {
+                            continue;
+                        }
+                        let request: Value =
+                            serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                        let result = match request["method"].as_str().unwrap() {
+                            "Target.createBrowserContext" => json!({"browserContextId":"case"}),
+                            "Target.createTarget" => json!({"targetId":"page"}),
+                            "Target.getTargets" => {
+                                json!({"targetInfos":[{"targetId":"page","type":"page","browserContextId":"case"}]})
+                            }
+                            "Target.attachToTarget" => json!({"sessionId":"capture"}),
+                            "Runtime.evaluate" => {
+                                json!({"result":{"value":{"width":640,"height":480}}})
+                            }
+                            _ => json!({}),
+                        };
+                        if socket
+                            .send(Message::Text(
+                                json!({"id":request["id"],"result":result})
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        let directory = std::env::temp_dir().join(format!(
+            "chrome-live-encoder-{}-{}",
+            std::process::id(),
+            REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        tokio::fs::create_dir_all(&directory).await.unwrap();
+        let executable = directory.join("ffmpeg");
+        tokio::fs::write(
+            &executable,
+            "#!/bin/sh\nprintf 'encoder-fixture-missing-libx264' >&2\nexit 3\n",
+        )
+        .await
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut robot = ChromeRobot::new(address.to_string());
+        robot.ffmpeg_path = executable.to_string_lossy().into_owned();
+        robot.boot_device("chrome:browser").await.unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            robot.start_screencast("chrome:page"),
+        )
+        .await
+        .unwrap();
+        let error = result
+            .err()
+            .expect("an encoder that exits before its first frame must fail setup");
+        assert!(
+            error
+                .to_string()
+                .contains("encoder-fixture-missing-libx264"),
+            "{error}"
+        );
+        robot.close_session().await.unwrap();
+        server.abort();
+        tokio::fs::remove_dir_all(directory).await.unwrap();
     }
 }
 

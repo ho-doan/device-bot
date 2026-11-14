@@ -420,7 +420,9 @@ async fn spawn_capture(
         let _ = child.kill().await;
         let log = diagnostics.await.unwrap_or_default();
         if let Err(error) = result {
-            let _ = tx.try_send(Err(failure(format!("{error}; {log}"))));
+            // Preserve the terminal error even when frames filled the queue
+            // while the viewer was still negotiating its connection.
+            let _ = tx.send(Err(failure(format!("{error}; {log}")))).await;
         }
     });
     // Fail setup on missing/old FFmpeg or inaccessible desktop instead of
@@ -667,6 +669,42 @@ exec tail -f /dev/null"#,
         })
         .await
         .expect("capture child should be killed and reaped when viewer closes");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn encoder_failure_survives_a_full_frame_queue() {
+        let (dir, ffmpeg) = fixture(
+            "for n in 1 2 3 4 5 6 7 8; do printf '\\000\\000\\000\\001\\011\\360\\000\\000\\001\\145\\002'; done\nprintf 'windows-encoder-fixture-failed' >&2\nexit 3",
+        ).await;
+        let mut stream = spawn_capture(
+            ffmpeg.to_str().unwrap(),
+            Target { pid: 42, hwnd: 123 },
+            Geometry {
+                x: 0,
+                y: 0,
+                width: 500,
+                height: 400,
+            },
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let error = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match stream.frames.recv().await {
+                    Some(Ok(_)) => tokio::time::sleep(Duration::from_millis(10)).await,
+                    Some(Err(error)) => break error,
+                    None => panic!("Windows encoder diagnostic was lost behind queued frames"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            error.to_string().contains("windows-encoder-fixture-failed"),
+            "{error}"
+        );
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 }

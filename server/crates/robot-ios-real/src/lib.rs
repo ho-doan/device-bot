@@ -5,6 +5,8 @@
 //! a signed XCTest runner kept in this crate.
 
 mod live;
+mod wifi_video;
+mod wifi_app;
 mod quicktime_recording;
 pub mod webview;
 pub mod xctest_agent;

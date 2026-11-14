@@ -460,6 +460,13 @@ try {{ & '{quoted}' }} finally {{ [Environment]::SetEnvironmentVariable("Path", 
         self.assertTrue((self.install_dir / 'ffmpeg/LICENSE').is_file())
 
     @unittest.skipUnless(PWSH, 'PowerShell installer')
+    def test_windows_installer_preserves_the_callers_script(self):
+        result = self.install_windows()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.root / 'install.ps1').is_file(),
+                        'the bootstrap/upgrade caller owns its installer source')
+
+    @unittest.skipUnless(PWSH, 'PowerShell installer')
     def test_windows_installer_rejects_bad_ffmpeg_before_stopping_old_server(self):
         result = self.install_windows(bad_ffmpeg_checksum=True, running_processes=True)
         self.assertNotEqual(result.returncode, 0)
@@ -536,6 +543,58 @@ try {{ & '{quoted}' }} finally {{ [Environment]::SetEnvironmentVariable("Path", 
         result = self.install(archive)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.install_dir / 'device-bot').is_file())
+
+
+@unittest.skipUnless(PWSH, 'PowerShell installer bootstrap')
+class WindowsInstallerBootstrap(unittest.TestCase):
+    def run_bootstrap(self, *, self_delete=False, exit_code=0):
+        # Execute the documented cleanup/exit handling, with only download and
+        # the Windows launcher replaced by local fixtures on other platforms.
+        readme = (SCRIPTS.parent / 'server/README.md').read_text()
+        snippet = re.search(r'```powershell\n(\$installerPath = .*?)\n```',
+                            readme, re.DOTALL)[1]
+        quoted_pwsh = str(PWSH).replace("'", "''")
+        snippet = snippet.replace('powershell -NoProfile -ExecutionPolicy Bypass -File',
+                                  f"& '{quoted_pwsh}' -NoProfile -File")
+        temporary = tempfile.TemporaryDirectory(prefix='device-bot-bootstrap-')
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / '[literal temp]'
+        root.mkdir()
+        fixture = root / 'download-fixture.ps1'
+        fixture.write_text(('Remove-Item -LiteralPath $PSCommandPath -Force\n'
+                            if self_delete else '') + f'exit {exit_code}\n')
+        env = os.environ.copy()
+        env.update(TEMP=str(root), DEVICE_BOT_BOOTSTRAP_FIXTURE=str(fixture))
+        bootstrap = '''$ErrorActionPreference = 'Stop'
+function Invoke-WebRequest {
+    [CmdletBinding()]
+    param([switch]$UseBasicParsing, [string]$Uri, [string]$OutFile)
+    Copy-Item -LiteralPath $env:DEVICE_BOT_BOOTSTRAP_FIXTURE -Destination $OutFile
+}
+''' + snippet
+        result = subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-Command', bootstrap],
+                                env=env, capture_output=True, text=True)
+        return result, root / 'device-bot-install.ps1'
+
+    def test_success_cleans_up_the_downloaded_script(self):
+        result, script = self.run_bootstrap()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(script.exists())
+
+    def test_success_accepts_an_older_installer_that_deleted_itself(self):
+        result, script = self.run_bootstrap(self_delete=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(script.exists())
+        self.assertNotIn('Cannot find path', result.stderr)
+
+    def test_real_installer_failure_is_reported_after_cleanup(self):
+        for self_delete in (False, True):
+            with self.subTest(self_delete=self_delete):
+                result, script = self.run_bootstrap(self_delete=self_delete, exit_code=7)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Device Bot installer exited with status 7.', result.stderr)
+                self.assertFalse(script.exists())
+                self.assertNotIn('Cannot find path', result.stderr)
 
 
 if __name__ == '__main__':

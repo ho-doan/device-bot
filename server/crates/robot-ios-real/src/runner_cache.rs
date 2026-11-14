@@ -110,7 +110,15 @@ fn source_files(root: &Path, directory: &Path, files: &mut Vec<PathBuf>) -> std:
         if entry.file_type()?.is_dir() {
             if !matches!(
                 name.to_str(),
-                Some("build" | ".build" | ".git" | "DerivedData" | "xcuserdata")
+                Some(
+                    "build"
+                        | ".build"
+                        | ".git"
+                        | "DerivedData"
+                        | "xcuserdata"
+                        | "WifiBroadcast"
+                        | "WifiBroadcast.xcodeproj"
+                )
             ) {
                 source_files(root, &path, files)?;
             }
@@ -233,6 +241,21 @@ mod tests {
         cache.mark_current(&version).unwrap();
         assert!(cache.is_current(&version));
         fs::write(derived.join("test.log"), "run log").unwrap();
+        assert_eq!(version, cache.version().unwrap());
+        // ReplayKit is an independently signed app. Editing or rebuilding it
+        // must not restart the device-control XCTest session.
+        fs::create_dir_all(root.join("WifiBroadcast/Upload")).unwrap();
+        fs::write(
+            root.join("WifiBroadcast/Upload/SampleHandler.swift"),
+            "broadcast source",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("WifiBroadcast.xcodeproj")).unwrap();
+        fs::write(
+            root.join("WifiBroadcast.xcodeproj/project.pbxproj"),
+            "broadcast project",
+        )
+        .unwrap();
         assert_eq!(version, cache.version().unwrap());
         fs::write(root.join("Runner.swift"), "version two").unwrap();
         assert_ne!(version, cache.version().unwrap());

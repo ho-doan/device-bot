@@ -22,7 +22,6 @@ $FfmpegVersion = "9.0.2"
 $FfmpegSha256 = "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"
 $RetryAttempts = 4
 $WaitPid = $env:DEVICE_BOT_WAIT_PID
-$InstallerScriptPath = $MyInvocation.MyCommand.Path
 $UpgradeBackup = $null
 $UpgradeTranscript = $false
 if ($env:DEVICE_BOT_UPGRADE_LOG) {
@@ -343,8 +342,7 @@ try {
     throw
 } finally {
     if ($UpgradeTranscript) { Stop-Transcript | Out-Null }
-    if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
-    if ($InstallerScriptPath -and (Test-Path $InstallerScriptPath)) {
-        Remove-Item -Force $InstallerScriptPath -ErrorAction SilentlyContinue
-    }
+    if (Test-Path -LiteralPath $TempDir) { Remove-Item -LiteralPath $TempDir -Recurse -Force }
+    # The caller owns the installer source (a checkout or downloaded script).
+    # Bootstrap/upgrade launchers clean up only the temporary scripts they own.
 }

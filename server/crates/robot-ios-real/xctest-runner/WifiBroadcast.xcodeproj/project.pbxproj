@@ -1,0 +1,531 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		10BD8EF71592A414C7B54E0C /* DeviceBotBroadcastUpload.appex in Embed Broadcast Extension */ = {isa = PBXBuildFile; fileRef = 290F80E3E9D917940724EA14 /* DeviceBotBroadcastUpload.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		21F496E10BCBE709773FEA5A /* SampleHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E242F3B08951E44DAF269CF /* SampleHandler.swift */; };
+		47EEB03967F4E2FF1E23A4DC /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 94AF68BD46758C60A4BA8990 /* Foundation.framework */; };
+		94A6D50CCC9D2F6B6D7F6273 /* DeviceBotBroadcastApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E232E6A9037996F1D9540787 /* DeviceBotBroadcastApp.swift */; };
+		A4F5AA28CE8C8DDEEF0D7560 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 94AF68BD46758C60A4BA8990 /* Foundation.framework */; };
+		AE4F981803E4F23671044B00 /* BroadcastConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B52C7AE58EC98C9C668938 /* BroadcastConfiguration.swift */; };
+		B0DEB3B4AF37289C29326F00 /* BroadcastConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B52C7AE58EC98C9C668938 /* BroadcastConfiguration.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C3A3A3DFBF583FC31860828F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 014D7782A2EFEF318831B2F6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F7AE410680C1C2E22CC7EE8D;
+			remoteInfo = DeviceBotBroadcastUpload;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		E66A76F0D15C6D629FB8BD79 /* Embed Broadcast Extension */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				10BD8EF71592A414C7B54E0C /* DeviceBotBroadcastUpload.appex in Embed Broadcast Extension */,
+			);
+			name = "Embed Broadcast Extension";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		02469BAA7CA7E0CB35374A7A /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		195CC5302C3A17156F2253F3 /* Broadcast.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = Broadcast.entitlements; sourceTree = "<group>"; };
+		290F80E3E9D917940724EA14 /* DeviceBotBroadcastUpload.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DeviceBotBroadcastUpload.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		5E242F3B08951E44DAF269CF /* SampleHandler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SampleHandler.swift; sourceTree = "<group>"; };
+		94AF68BD46758C60A4BA8990 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS14.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		BE4415DDB0AF2A024C6C34D8 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		E232E6A9037996F1D9540787 /* DeviceBotBroadcastApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DeviceBotBroadcastApp.swift; sourceTree = "<group>"; };
+		F0B52C7AE58EC98C9C668938 /* BroadcastConfiguration.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BroadcastConfiguration.swift; sourceTree = "<group>"; };
+		FA4E30BF8A6308EF71EC6625 /* DeviceBotBroadcast.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeviceBotBroadcast.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2F9A4ADE37E56D02D92DB703 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				47EEB03967F4E2FF1E23A4DC /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8DE5146C403E598C521C0923 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A4F5AA28CE8C8DDEEF0D7560 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		05BF63739387BC1716BC92D4 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				94AF68BD46758C60A4BA8990 /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		3508B880CAF1BCCB87FC6358 /* Upload */ = {
+			isa = PBXGroup;
+			children = (
+				5E242F3B08951E44DAF269CF /* SampleHandler.swift */,
+				02469BAA7CA7E0CB35374A7A /* Info.plist */,
+			);
+			name = Upload;
+			path = Upload;
+			sourceTree = "<group>";
+		};
+		3A5CD3762C4CABCE0067BD7A /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FA4E30BF8A6308EF71EC6625 /* DeviceBotBroadcast.app */,
+				290F80E3E9D917940724EA14 /* DeviceBotBroadcastUpload.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		63BBCEEED57F042921DBFFD2 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				F0B52C7AE58EC98C9C668938 /* BroadcastConfiguration.swift */,
+				195CC5302C3A17156F2253F3 /* Broadcast.entitlements */,
+			);
+			name = Shared;
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		A33F3CF5038E21B037E63FD7 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				05BF63739387BC1716BC92D4 /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		AB8E94C3D8F47D8E4ACE416E = {
+			isa = PBXGroup;
+			children = (
+				3A5CD3762C4CABCE0067BD7A /* Products */,
+				A33F3CF5038E21B037E63FD7 /* Frameworks */,
+				D83CF2E1D13B1A39AFF1DFC4 /* WifiBroadcast */,
+			);
+			sourceTree = "<group>";
+		};
+		AD3BA9A8ECDBB951B981642D /* App */ = {
+			isa = PBXGroup;
+			children = (
+				E232E6A9037996F1D9540787 /* DeviceBotBroadcastApp.swift */,
+				BE4415DDB0AF2A024C6C34D8 /* Info.plist */,
+			);
+			name = App;
+			path = App;
+			sourceTree = "<group>";
+		};
+		D83CF2E1D13B1A39AFF1DFC4 /* WifiBroadcast */ = {
+			isa = PBXGroup;
+			children = (
+				63BBCEEED57F042921DBFFD2 /* Shared */,
+				AD3BA9A8ECDBB951B981642D /* App */,
+				3508B880CAF1BCCB87FC6358 /* Upload */,
+			);
+			name = WifiBroadcast;
+			path = WifiBroadcast;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AD9F861C6E2C9E746F25703C /* DeviceBotBroadcast */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F8FD584030767CE9176FB2AA /* Build configuration list for PBXNativeTarget "DeviceBotBroadcast" */;
+			buildPhases = (
+				FF73FF3BE72E8ED1B166770A /* Sources */,
+				2F9A4ADE37E56D02D92DB703 /* Frameworks */,
+				53AB3C511B73D22BDFCA1331 /* Resources */,
+				E66A76F0D15C6D629FB8BD79 /* Embed Broadcast Extension */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				8A0C9619B253EDB7536FC4D1 /* PBXTargetDependency */,
+			);
+			name = DeviceBotBroadcast;
+			productName = DeviceBotBroadcast;
+			productReference = FA4E30BF8A6308EF71EC6625 /* DeviceBotBroadcast.app */;
+			productType = "com.apple.product-type.application";
+		};
+		F7AE410680C1C2E22CC7EE8D /* DeviceBotBroadcastUpload */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D3FE01F4B6882BBCAACB8231 /* Build configuration list for PBXNativeTarget "DeviceBotBroadcastUpload" */;
+			buildPhases = (
+				3FBD52205C8971DABCBD52A7 /* Sources */,
+				8DE5146C403E598C521C0923 /* Frameworks */,
+				B345761F91A9ADEE164B710C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DeviceBotBroadcastUpload;
+			productName = DeviceBotBroadcastUpload;
+			productReference = 290F80E3E9D917940724EA14 /* DeviceBotBroadcastUpload.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		014D7782A2EFEF318831B2F6 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1630;
+				TargetAttributes = {
+					AD9F861C6E2C9E746F25703C = {
+						DevelopmentTeam = B7289UDFM4;
+						ProvisioningStyle = Automatic;
+						SystemCapabilities = {
+							com.apple.Keychain = {
+								enabled = 1;
+							};
+						};
+					};
+					F7AE410680C1C2E22CC7EE8D = {
+						DevelopmentTeam = B7289UDFM4;
+						ProvisioningStyle = Automatic;
+						SystemCapabilities = {
+							com.apple.Keychain = {
+								enabled = 1;
+							};
+						};
+					};
+				};
+			};
+			buildConfigurationList = BCD5AB827D65300DF989DD09 /* Build configuration list for PBXProject "WifiBroadcast" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AB8E94C3D8F47D8E4ACE416E;
+			productRefGroup = 3A5CD3762C4CABCE0067BD7A /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AD9F861C6E2C9E746F25703C /* DeviceBotBroadcast */,
+				F7AE410680C1C2E22CC7EE8D /* DeviceBotBroadcastUpload */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		53AB3C511B73D22BDFCA1331 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B345761F91A9ADEE164B710C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3FBD52205C8971DABCBD52A7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				21F496E10BCBE709773FEA5A /* SampleHandler.swift in Sources */,
+				B0DEB3B4AF37289C29326F00 /* BroadcastConfiguration.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FF73FF3BE72E8ED1B166770A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				94A6D50CCC9D2F6B6D7F6273 /* DeviceBotBroadcastApp.swift in Sources */,
+				AE4F981803E4F23671044B00 /* BroadcastConfiguration.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		8A0C9619B253EDB7536FC4D1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = DeviceBotBroadcastUpload;
+			target = F7AE410680C1C2E22CC7EE8D /* DeviceBotBroadcastUpload */;
+			targetProxy = C3A3A3DFBF583FC31860828F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		32E2A6673ECCCC055033D5CE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		558F96753E2CC688D7313085 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		8E4F70316F92FB1624EE8561 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = WifiBroadcast/Shared/Broadcast.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = B7289UDFM4;
+				DEVICE_BOT_WIFI_BUNDLE_ID = "com.devicebot.wifi.$(DEVELOPMENT_TEAM)";
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WifiBroadcast/App/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(DEVICE_BOT_WIFI_BUNDLE_ID)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		983F911B1C3FC3412DAAF11E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = WifiBroadcast/Shared/Broadcast.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = B7289UDFM4;
+				DEVICE_BOT_WIFI_BUNDLE_ID = "com.devicebot.wifi.$(DEVELOPMENT_TEAM)";
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WifiBroadcast/Upload/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(DEVICE_BOT_WIFI_BUNDLE_ID).upload";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C51D45F5688D979772D215D3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = WifiBroadcast/Shared/Broadcast.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = B7289UDFM4;
+				DEVICE_BOT_WIFI_BUNDLE_ID = "com.devicebot.wifi.$(DEVELOPMENT_TEAM)";
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WifiBroadcast/App/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(DEVICE_BOT_WIFI_BUNDLE_ID)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		E928545768E9FE1159C868FE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = WifiBroadcast/Shared/Broadcast.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = B7289UDFM4;
+				DEVICE_BOT_WIFI_BUNDLE_ID = "com.devicebot.wifi.$(DEVELOPMENT_TEAM)";
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WifiBroadcast/Upload/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(DEVICE_BOT_WIFI_BUNDLE_ID).upload";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		BCD5AB827D65300DF989DD09 /* Build configuration list for PBXProject "WifiBroadcast" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				32E2A6673ECCCC055033D5CE /* Debug */,
+				558F96753E2CC688D7313085 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D3FE01F4B6882BBCAACB8231 /* Build configuration list for PBXNativeTarget "DeviceBotBroadcastUpload" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E928545768E9FE1159C868FE /* Release */,
+				983F911B1C3FC3412DAAF11E /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F8FD584030767CE9176FB2AA /* Build configuration list for PBXNativeTarget "DeviceBotBroadcast" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C51D45F5688D979772D215D3 /* Release */,
+				8E4F70316F92FB1624EE8561 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 014D7782A2EFEF318831B2F6 /* Project object */;
+}

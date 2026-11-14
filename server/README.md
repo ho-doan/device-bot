@@ -253,12 +253,19 @@ curl --fail --silent --show-error --location \
 Windows PowerShell:
 
 ```powershell
-$script = Join-Path $env:TEMP "device-bot-install.ps1"
-Invoke-WebRequest -UseBasicParsing `
-  https://raw.githubusercontent.com/ho-doan/device-bot/master/scripts/install.ps1 `
-  -OutFile $script
-powershell -ExecutionPolicy Bypass -File $script
-Remove-Item $script
+$installerPath = Join-Path $env:TEMP "device-bot-install.ps1"
+try {
+  Invoke-WebRequest -UseBasicParsing -ErrorAction Stop `
+    https://raw.githubusercontent.com/ho-doan/device-bot/master/scripts/install.ps1 `
+    -OutFile $installerPath
+  powershell -NoProfile -ExecutionPolicy Bypass -File $installerPath
+  if ($LASTEXITCODE -ne 0) { throw "Device Bot installer exited with status $LASTEXITCODE." }
+} finally {
+  # Older installers may have already deleted their downloaded source.
+  if (Test-Path -LiteralPath $installerPath -PathType Leaf) {
+    Remove-Item -LiteralPath $installerPath -Force -ErrorAction Stop
+  }
+}
 ```
 
 Both installers also install the official portable **scrcpy 5.0.1** bundle,
@@ -647,6 +654,55 @@ real-device XCTest driver's native filtered accessibility queries for Safari
 controls. Set `RECORD_SCREEN=0` to disable recording, or set
 `DEVICE_BOT_IOS_AGENT_HOSTS` if the agent cannot discover a LAN address
 automatically.
+
+### Live video over Wi-Fi on a real iPhone
+
+Live supports a paired iPhone over Wi-Fi through the bundled **Device Bot
+Broadcast** app and its ReplayKit upload extension. It captures actual screen
+video, encodes H.264 on the iPhone with VideoToolbox, and feeds the existing
+WebRTC viewer. It does not poll screenshots. Screen recording through the
+separate QuickTime tool described above is unchanged.
+
+Use a Mac with Xcode, a valid Apple Development signing identity, and an iPhone
+with Developer Mode enabled and paired to Xcode. The phone and Mac must be on
+the same reachable LAN. Bind the XCTest bridge to a LAN interface and choose
+the Mac LAN address the iPhone can reach:
+
+```sh
+export DEVICE_BOT_IOS_AGENT_BIND=0.0.0.0:18787
+export DEVICE_BOT_IOS_AGENT_HOSTS=192.168.1.159  # replace with this Mac's LAN IP
+export DEVICE_BOT_IOS_AGENT_TOKEN="$(openssl rand -hex 32)"
+export DEVICE_BOT_IOS_LIVE_TRANSPORT=wifi
+device-bot mcp --listen 127.0.0.1:3337
+```
+
+Opening Live automatically builds, signs, installs and opens Device Bot
+Broadcast. On the iPhone, allow **Local Network**, tap its record button and
+select **Start Broadcast**. After the countdown, switch to the app to control.
+If the initial request timed out while granting permission, retry Live within
+the pairing window; if the pairing expired, reopen Live to get a new session.
+
+Only screen video is sent; audio is excluded. Capture scales to a maximum long
+edge of 1280 pixels and targets up to 30 fps; actual frame rate depends on
+ReplayKit events, device load and LAN upload/encode time. No FPS/latency SLA is
+claimed. Closing Live revokes the upload session, and the extension's two-second
+control heartbeat stops screen sharing. Opening it again requires a new
+**Start Broadcast** confirmation. Stop from the iPhone screen recording control
+at any time. After rotation or a lost connection, reopen Live.
+
+`DEVICE_BOT_IOS_LIVE_TRANSPORT` accepts `auto` (default), `wifi`, or `usb`.
+Auto uses the selected iPhone's USB source if present and prepares Wi-Fi if no
+such source exists. It preserves USB permission/encoder/explicit-map errors.
+Wi-Fi needs no USB video source; initial Xcode pairing/signing requirements
+still apply. With several callback hosts configured, put a LAN address that
+the iPhone can reach first.
+
+The app and extension use the same Keychain access group to share only the
+short-lived upload configuration. No App Group portal setup is needed. Each
+broadcast has a distinct upload token; neither the token nor video data is
+written to build/launch diagnostics. ReplayKit assets are bundled under the
+real-iOS XCTest asset tree. A free Apple development profile may hit Apple's
+installed-app limit; use an available slot or a paid development team.
 
 ### Known issue — Codex MCP on a real iPhone (deferred)
 

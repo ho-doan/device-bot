@@ -1,3 +1,25 @@
+## 0.1.18 — 2026-11-14
+
+* Fix the Windows installer reporting `Remove-Item` errors after a successful
+  install when the temporary bootstrap script was already deleted. Leave
+  caller-owned scripts to the launcher, guard cleanup with a literal-path
+  existence check, and preserve installer failure exit codes.
+* Stream a real iPhone over Wi-Fi with the bundled Device Bot Broadcast app:
+  ReplayKit captures screen video, VideoToolbox encodes H.264 on the phone,
+  and the existing WebRTC viewer receives it without a USB video source.
+  Allow Local Network and choose **Start Broadcast** on the iPhone for each
+  sharing session; audio is not streamed.
+* Select iPhone Live transport with `DEVICE_BOT_IOS_LIVE_TRANSPORT` (`auto`,
+  `wifi`, or `usb`). Scope Wi-Fi upload credentials to each device session,
+  validate capture geometry before input, and stop sharing when Live closes.
+* Keep QC Live input edits intact, refresh device discovery after opening
+  Chrome, and show the current imported flow's run result and report evidence.
+* Preserve Windows window titles through UTF-8 PowerShell output, reject stale
+  desktop input targets, and exclude hidden DOM controls from web selectors.
+* Fix iOS Simulator XCTest gesture compilation and screen-region discovery,
+  and add opt-in Live checks for H.264 decode, native input, and stream reopen
+  across macOS, Chrome, Android, iOS Simulator, and physical iPhone Wi-Fi.
+
 ## 0.1.17 — 2026-11-13
 
 * Keep Windows Live app/window discovery usable when a window title contains

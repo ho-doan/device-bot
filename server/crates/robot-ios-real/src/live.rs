@@ -156,6 +156,18 @@ pub(crate) async fn prepare(
     xcrun: &str,
     device_id: &str,
 ) -> Result<Source, RobotError> {
+    try_prepare(artifact_dir, xcrun, device_id).await?.ok_or_else(|| failure(
+        "No unique USB screen source matches the selected iPhone UDID. Connect and trust the exact phone over USB, or use DEVICE_BOT_IOS_LIVE_TRANSPORT=wifi."
+    ))
+}
+
+/// Auto may fall back only when this phone has no USB source. Encoder,
+/// permission, explicit mapping and ambiguous-source failures stay errors.
+pub(crate) async fn try_prepare(
+    artifact_dir: &Path,
+    xcrun: &str,
+    device_id: &str,
+) -> Result<Option<Source>, RobotError> {
     if !cfg!(target_os = "macos") {
         return Err(RobotError::Unsupported(
             "Real-iOS Live requires a Mac with a USB-connected iPhone".into(),
@@ -170,6 +182,13 @@ pub(crate) async fn prepare(
         .transpose()
         .map_err(failure)?
         .unwrap_or_default();
+    if !mappings.contains_key(device_id)
+        && !devices
+            .iter()
+            .any(|device| normalized(&device.id) == normalized(device_id))
+    {
+        return Ok(None);
+    }
     let capture_id = select_source(device_id, &devices, &mappings)?;
     #[derive(Deserialize)]
     struct Dimensions {
@@ -186,12 +205,12 @@ pub(crate) async fn prepare(
     {
         return Err(failure("Invalid native screen dimensions"));
     }
-    Ok(Source {
+    Ok(Some(Source {
         helper,
         capture_id,
         width: dimensions.width,
         height: dimensions.height,
-    })
+    }))
 }
 
 pub(crate) async fn start(source: Source) -> Result<VideoStream, RobotError> {

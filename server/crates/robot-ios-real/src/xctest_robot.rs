@@ -226,6 +226,12 @@ fn callback_host_is_advertisable(host: &str) -> bool {
     }
 }
 
+#[derive(Clone)]
+enum PreparedLiveSource {
+    Usb(crate::live::Source),
+    Wifi(Arc<crate::wifi_video::WifiSource>),
+}
+
 pub struct IosXCTestRobot {
     xcrun_path: String,
     agent: XCTestAgentBridge,
@@ -234,7 +240,7 @@ pub struct IosXCTestRobot {
     agent_launcher: Option<XCTestAgentLauncher>,
     persistent_agents: Arc<Mutex<HashMap<String, Child>>>,
     runner_project: PathBuf,
-    live_sources: Arc<Mutex<HashMap<String, crate::live::Source>>>,
+    live_sources: Arc<Mutex<HashMap<String, PreparedLiveSource>>>,
 }
 
 impl IosXCTestRobot {
@@ -264,6 +270,42 @@ impl IosXCTestRobot {
         self.runner_project = launcher.project.clone();
         self.agent_launcher = Some(launcher);
         self
+    }
+
+    async fn prepare_wifi_source(
+        &self,
+        device_id: &str,
+        logical: (f64, f64),
+    ) -> Result<Arc<crate::wifi_video::WifiSource>, RobotError> {
+        let launcher = self.agent_launcher.as_ref().ok_or_else(|| RobotError::Unsupported(
+            "iOS Wi-Fi Live requires a LAN-reachable agent bridge; configure DEVICE_BOT_IOS_AGENT_BIND, DEVICE_BOT_IOS_AGENT_HOSTS and DEVICE_BOT_IOS_AGENT_TOKEN".into()
+        ))?;
+        let (source, created) = self.agent.wifi_video.prepare(device_id, logical).await;
+        if created {
+            let host = launcher
+                .hosts
+                .split(',')
+                .next()
+                .expect("validated callback host");
+            if let Err(error) = crate::wifi_app::launch(
+                &launcher.project,
+                &launcher.xcodebuild_path,
+                &self.xcrun_path,
+                &self.artifact_dir,
+                device_id,
+                || source.configuration(host, launcher.port),
+            )
+            .await
+            {
+                source.stop();
+                return Err(error);
+            }
+            eprintln!(
+                "iOS Wi-Fi Live: Device Bot Broadcast is open on the iPhone. Allow Local Network, tap the record button, then Start Broadcast."
+            );
+        }
+        source.ready(Duration::from_secs(60)).await?;
+        Ok(source)
     }
 
     pub fn with_runner_project(mut self, project: PathBuf) -> Self {
@@ -763,11 +805,45 @@ impl Robot for IosXCTestRobot {
                     "Rebuild/reinstall the iOS XCTest runner for Live screenInfo support".into(),
                 )
             })?;
-        let source = crate::live::prepare(&self.artifact_dir, &self.xcrun_path, device_id).await?;
-        crate::live::validate_geometry(width, height, source.width, source.height)?;
+        let transport =
+            std::env::var("DEVICE_BOT_IOS_LIVE_TRANSPORT").unwrap_or_else(|_| "auto".into());
+        let usb = match transport.as_str() {
+            "usb" => {
+                Some(crate::live::prepare(&self.artifact_dir, &self.xcrun_path, device_id).await?)
+            }
+            "auto" => {
+                crate::live::try_prepare(&self.artifact_dir, &self.xcrun_path, device_id).await?
+            }
+            "wifi" => None,
+            _ => {
+                return Err(RobotError::InvalidInput(
+                    "DEVICE_BOT_IOS_LIVE_TRANSPORT must be auto, usb or wifi".into(),
+                ));
+            }
+        };
+        let (source, physical_width, physical_height, backend) = if let Some(source) = usb {
+            crate::live::validate_geometry(width, height, source.width, source.height)?;
+            let (w, h) = (source.width, source.height);
+            (
+                PreparedLiveSource::Usb(source),
+                w,
+                h,
+                "avfoundation-usb-videotoolbox",
+            )
+        } else {
+            let source = self.prepare_wifi_source(device_id, (width, height)).await?;
+            let (w, h) = source.ready(Duration::from_secs(1)).await?;
+            crate::live::validate_geometry(width, height, w, h)?;
+            (
+                PreparedLiveSource::Wifi(source),
+                w,
+                h,
+                "replaykit-wifi-videotoolbox",
+            )
+        };
         let context = json!({"deviceId":device_id, "logicalWidth":width, "logicalHeight":height,
-            "physicalWidth":source.width, "physicalHeight":source.height, "originX":0, "originY":0,
-            "captureBackend":"avfoundation-usb-videotoolbox"});
+            "physicalWidth":physical_width, "physicalHeight":physical_height, "originX":0, "originY":0,
+            "captureBackend":backend});
         self.live_sources
             .lock()
             .await
@@ -790,7 +866,10 @@ impl Robot for IosXCTestRobot {
             .ok_or_else(|| {
                 RobotError::InvalidInput("Prepare iOS stream context before starting Live".into())
             })?;
-        crate::live::start(source).await
+        match source {
+            PreparedLiveSource::Usb(source) => crate::live::start(source).await,
+            PreparedLiveSource::Wifi(source) => source.start().await,
+        }
     }
 
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {

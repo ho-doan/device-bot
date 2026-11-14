@@ -131,7 +131,12 @@ async fn real_platform_live_decodes_controls_reopens_and_stops() {
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
     let streams = StreamManager::default();
-    for round in 1..=3 {
+    let rounds: u32 = std::env::var("DEVICE_BOT_LIVE_ROUNDS")
+        .unwrap_or_else(|_| "3".into())
+        .parse()
+        .unwrap();
+    assert!((1..=3).contains(&rounds));
+    for round in 1..=rounds {
         let mut media = MediaEngine::default();
         media
             .register_codec(
@@ -167,8 +172,10 @@ async fn real_platform_live_decodes_controls_reopens_and_stops() {
             .await
             .unwrap();
         let (tx, mut received) = tokio::sync::mpsc::channel(1);
+        let (keyframe_tx, mut keyframes) = tokio::sync::watch::channel(None::<Vec<u8>>);
         viewer.on_track(Box::new(move |track, _, _| {
             let tx = tx.clone();
+            let keyframe_tx = keyframe_tx.clone();
             Box::pin(async move {
                 assert_eq!(
                     track.codec().capability.mime_type.to_lowercase(),
@@ -179,15 +186,22 @@ async fn real_platform_live_decodes_controls_reopens_and_stops() {
                 let mut frames = 0;
                 while let Ok((packet, _)) = track.read_rtp().await {
                     annex_b.extend_from_slice(&decoder.depacketize(&packet.payload).unwrap());
-                    if packet.header.marker {
-                        frames += 1;
+                    if !packet.header.marker {
+                        continue;
                     }
+                    frames += 1;
                     // A static native window need not emit five frames. One
                     // complete decodable frame is the connection contract.
-                    if frames >= 1 {
-                        let _ = tx.send(annex_b).await;
-                        break;
+                    if frames == 1 {
+                        let _ = tx.send(annex_b.clone()).await;
                     }
+                    if annex_b
+                        .windows(4)
+                        .any(|v| v[..3] == [0, 0, 1] && v[3] & 31 == 5)
+                    {
+                        keyframe_tx.send_replace(Some(annex_b.clone()));
+                    }
+                    annex_b.clear();
                 }
             })
         }));
@@ -229,6 +243,14 @@ async fn real_platform_live_decodes_controls_reopens_and_stops() {
             .unwrap()
         };
         assert!(answer.width > 0 && answer.height > 0);
+        if std::env::var("DEVICE_BOT_IOS_LIVE_TRANSPORT").as_deref() == Ok("wifi")
+            && platform == "ios-real"
+        {
+            assert_eq!(
+                answer.context["captureBackend"], "replaykit-wifi-videotoolbox",
+                "USB cannot pass a Wi-Fi test"
+            );
+        }
         println!(
             "{platform} round {round}: negotiated {}x{} in {:?}; context={}",
             answer.width,
@@ -270,6 +292,17 @@ async fn real_platform_live_decodes_controls_reopens_and_stops() {
             String::from_utf8_lossy(&decoded.stderr)
         );
         assert!(tokio::fs::metadata(&image_path).await.unwrap().len() > 100);
+
+        let wifi = answer.context["captureBackend"] == "replaykit-wifi-videotoolbox";
+        if wifi {
+            keyframes.borrow_and_update();
+            // Pairing opened the broadcast app. Return to the disposable fixture
+            // after consent and verify ReplayKit continues across that app switch.
+            robot
+                .launch_app(&device, &std::env::var("DEVICE_BOT_LIVE_APP").unwrap())
+                .await
+                .unwrap();
+        }
 
         let elements = robot.list_elements(&device).await.unwrap();
         tokio::fs::write(
@@ -321,6 +354,45 @@ async fn real_platform_live_decodes_controls_reopens_and_stops() {
                 || element.text.as_deref().is_some_and(|v| v.contains(&probe))),
             "input did not reach fixture editor: {after:?}"
         );
+        if wifi {
+            tokio::time::timeout(Duration::from_secs(15), keyframes.changed())
+                .await
+                .expect("fresh keyframe after switching apps and typing")
+                .unwrap();
+            let frame = keyframes
+                .borrow_and_update()
+                .clone()
+                .expect("fresh Wi-Fi frame");
+            let video_path = artifacts.join(format!("round-{round}-after.h264"));
+            let png_path = artifacts.join(format!("round-{round}-after.png"));
+            tokio::fs::write(&video_path, frame).await.unwrap();
+            let decode = tokio::process::Command::new("ffmpeg")
+                .args([
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-f",
+                    "h264",
+                    "-i",
+                ])
+                .arg(video_path)
+                .args(["-frames:v", "1"])
+                .arg(&png_path)
+                .output()
+                .await
+                .unwrap();
+            assert!(
+                decode.status.success(),
+                "post-input H.264 decode: {}",
+                String::from_utf8_lossy(&decode.stderr)
+            );
+            assert_ne!(
+                tokio::fs::read(&image_path).await.unwrap(),
+                tokio::fs::read(png_path).await.unwrap(),
+                "Wi-Fi video froze across the fixture app switch"
+            );
+        }
         if let Some(native) = native {
             native.stop.send(true).unwrap();
             tokio::time::timeout(Duration::from_secs(15), native.done)

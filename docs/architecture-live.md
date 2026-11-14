@@ -6,7 +6,8 @@
 | Web      | getDisplayMedia                           | Browser WebRTC   | WebRTC     |
 | Web fallback | CDP Page.startScreencast (events)     | FFmpeg H.264     | Rust → WebRTC |
 | Windows  | Windows Graphics Capture                  | Media Foundation | WebRTC     |
-| iOS      | ScreenCaptureKit (nếu hỗ trợ) / ReplayKit | VideoToolbox     | WebRTC     |
+| iOS thật, USB | AVFoundation screen source trên Mac | VideoToolbox | Rust → WebRTC |
+| iOS thật, Wi-Fi | ReplayKit Broadcast Upload Extension trên iPhone | VideoToolbox H.264 | HTTP LAN → Rust → WebRTC |
 | macOS    | ScreenCaptureKit                          | VideoToolbox     | WebRTC     |
 
 ### Kiến trúc
@@ -34,6 +35,34 @@ Nguyên tắc:
 - WebRTC truyền video realtime.
 - Ưu tiên hardware encode/decode.
 - Mỗi platform có adapter riêng, dùng chung Rust Core.
+
+### iPhone qua Wi-Fi
+
+`robot-ios-real` dùng app **Device Bot Broadcast** và broadcast extension có
+sẵn trong `xctest-runner/WifiBroadcast.xcodeproj`. App và extension chia sẻ
+cấu hình phiên qua Keychain Sharing; không cần đăng ký App Group. Khi chuẩn
+bị Live, driver build/sign/install app bằng development identity hiện có,
+truyền cấu hình qua launch environment, rồi đợi frame H.264 đầu tiên.
+Người dùng cho phép Local Network và chọn **Start Broadcast** trên iPhone.
+
+ReplayKit đẩy screen sample buffer theo event. Extension scale cạnh dài tối
+đa 1280 px, encode H.264 bằng VideoToolbox, gửi từng access unit hoàn chỉnh qua
+HTTP đến bridge đang dùng cho XCTest. Audio không được gửi. Chỉ một upload
+encode đang chạy; khi mạng chậm, bỏ input frame trước encode thay vì bỏ delta
+frame đã encode. Không có screenshot polling hoặc encode lại trên Mac.
+
+Mỗi phiên có upload token ngẫu nhiên, gắn với đúng thiết bị và không dùng lại
+token của phiên cũ. Rust kiểm tra Annex-B, SPS/PPS/IDR đầu tiên, timestamp tăng
+dần và geometry khớp tọa độ XCTest. Các frame đi vào `VideoStream` và WebRTC
+hiện có; không có kênh ảnh riêng cho viewer. Đóng viewer thu hồi phiên; control
+heartbeat trên extension dừng capture. Mất mạng hoặc xoay màn hình làm phiên
+kết thúc, cần mở Live và xác nhận broadcast lại. Mỗi iPhone hỗ trợ một viewer
+cho một phiên broadcast.
+
+`DEVICE_BOT_IOS_LIVE_TRANSPORT=auto` (mặc định) ưu tiên đúng nguồn USB nếu có,
+chuyển Wi-Fi khi không có nguồn USB cho điện thoại đã chọn. Lỗi quyền,
+encoder, mapping tường minh hoặc nguồn mơ hồ không bị che bằng fallback.
+`wifi` và `usb` ép backend để kiểm thử/triển khai rõ ràng.
 
 ### Web fallback cho HTTP LAN
 

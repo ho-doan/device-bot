@@ -23,6 +23,7 @@ const TOKEN_HEADER: &str = "x-mobilemcp-token";
 #[derive(Clone)]
 pub struct XCTestAgentBridge {
     state: Arc<StateData>,
+    pub(crate) wifi_video: crate::wifi_video::WifiVideoHub,
 }
 
 struct StateData {
@@ -56,6 +57,7 @@ struct AgentResult {
 impl XCTestAgentBridge {
     pub fn new(token: Option<String>) -> Self {
         Self {
+            wifi_video: crate::wifi_video::WifiVideoHub::default(),
             state: Arc::new(StateData {
                 token: token.filter(|value| !value.is_empty()),
                 commands: Mutex::new(VecDeque::new()),
@@ -71,6 +73,7 @@ impl XCTestAgentBridge {
             .route("/next", get(next))
             .route("/result", post(result))
             .with_state(Arc::clone(&self.state))
+            .merge(self.wifi_video.router())
     }
 
     pub async fn dispatch(
@@ -156,7 +159,10 @@ async fn health(
     if !authorized(&headers, &state) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let bridge = XCTestAgentBridge { state };
+    let bridge = XCTestAgentBridge {
+        state,
+        wifi_video: Default::default(),
+    };
     let result = if let Some(device) = identity.device_id.as_deref() {
         bridge
             .dispatch_for(

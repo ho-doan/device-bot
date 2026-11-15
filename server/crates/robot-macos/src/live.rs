@@ -1,5 +1,22 @@
 //! Window-bound ScreenCaptureKit/VideoToolbox live source.
+#[cfg(target_os = "macos")]
+use super::accessibility::{
+    NativeAxAttributes, native_cf_string, native_collect_elements, native_copy_attribute,
+    native_frontmost_application, native_i32, native_point_attribute, native_required_attribute,
+    native_size_attribute,
+};
+#[cfg(target_os = "macos")]
+use super::ffi::{
+    AXUIElementGetPid, AXUIElementPerformAction, AXUIElementSetAttributeValue, CFArrayGetCount,
+    CFArrayGetValueAtIndex, CFDictionaryGetValue, CFRetain, CFTypeRef, CGPoint, CGSize,
+    CGWindowListCopyWindowInfo, CfOwned, K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS,
+    K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY, kCFBooleanTrue,
+};
+#[cfg(all(test, target_os = "macos"))]
+use super::windows::native_listed_windows;
 use super::*;
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Target {

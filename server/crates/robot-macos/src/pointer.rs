@@ -68,7 +68,7 @@ async fn drag_with<F: FnMut(u32, Point) -> Result<(), RobotError>>(
 }
 
 #[cfg(target_os = "macos")]
-struct PointerSource(super::CfOwned);
+struct PointerSource(super::ffi::CfOwned);
 // CGEventSource has no UI-thread affinity. The drag owns it exclusively and
 // posts one event at a time; it is never shared between concurrent tasks.
 #[cfg(target_os = "macos")]
@@ -82,7 +82,7 @@ impl PointerSource {
 
 #[cfg(target_os = "macos")]
 pub(super) async fn drag(start: Point, end: Point, duration_ms: u64) -> Result<(), RobotError> {
-    use super::{AXIsProcessTrusted, CFTypeRef, CfOwned};
+    use super::ffi::{AXIsProcessTrusted, CFTypeRef, CfOwned};
     #[link(name = "CoreGraphics", kind = "framework")]
     unsafe extern "C" {
         fn CGEventSourceCreate(state: i32) -> CFTypeRef;
@@ -109,8 +109,8 @@ pub(super) async fn drag(start: Point, end: Point, duration_ms: u64) -> Result<(
 }
 
 #[cfg(target_os = "macos")]
-fn post(kind: u32, at: Point, source: super::CFTypeRef) -> Result<(), RobotError> {
-    use super::{CFTypeRef, CGPoint, CfOwned};
+fn post(kind: u32, at: Point, source: super::ffi::CFTypeRef) -> Result<(), RobotError> {
+    use super::ffi::{CFTypeRef, CGPoint, CfOwned};
     #[link(name = "CoreGraphics", kind = "framework")]
     unsafe extern "C" {
         fn CGEventCreateMouseEvent(

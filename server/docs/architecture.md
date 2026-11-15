@@ -109,3 +109,20 @@ Temporary platform capability gaps are tracked in
 [platform-parity.md](platform-parity.md). The final parity pass owns alignment
 of shared MCP behavior rather than making a phase-specific handler a
 cross-platform policy container.
+
+Inside `robot-macos`, `lib.rs` owns the driver, process commands and session
+state. Native implementation details live behind private modules:
+
+- `ffi.rs` declares framework bindings and `CfOwned` reference cleanup.
+- `accessibility.rs` owns AX attribute reads, traversal, focus and hit testing.
+- `windows.rs` owns native window discovery and portable app/window projections.
+- `live.rs`, `screenshot.rs` and `pointer.rs` own their respective capture/input
+  lifecycles and import native dependencies explicitly.
+- `tests.rs` exercises driver behavior; `screenshot_tests.rs` retains the real
+  desktop checks, which require an interactive session and OS permissions.
+
+The `ffi` and `accessibility` modules compile only on macOS. Window projection
+helpers also compile under tests on other hosts. Keep this distinction when
+moving native code so Linux/Windows builds remain useful for portable tests.
+Run `cargo test -p robot-macos --lib` for automated regressions and use a Linux
+target check to verify the non-macOS configuration.

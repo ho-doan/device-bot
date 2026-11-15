@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:mobile_mcp_companion/models.dart';
 import 'package:mobile_mcp_companion/dashboard.dart';
 import 'package:mobile_mcp_companion/android_live.dart';
@@ -34,7 +36,118 @@ class _TestVideo extends Fake implements AndroidVideoSession {
   Future<void> close() async {}
 }
 
+class _RenderedTestVideo extends _TestVideo {
+  _RenderedTestVideo(super.recordingContext);
+  @override
+  bool get hasVideo => true;
+  final RTCVideoRenderer _renderer = RTCVideoRenderer();
+  @override
+  RTCVideoRenderer get renderer => _renderer;
+  @override
+  Future<void> close() => renderer.dispose();
+}
+
 void main() {
+  testWidgets('Windows inspection boxes cannot paint outside the fitted video', (
+    tester,
+  ) async {
+    final video = _RenderedTestVideo({'originX': 100, 'originY': 200});
+    final updates = StreamController<AndroidLiveUpdate>.broadcast();
+    addTearDown(updates.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AndroidLiveDialog(
+          deviceName: 'Explorer',
+          platform: 'windows',
+          connect: () => updates.stream,
+          openVideo: () async => video,
+          onInput: (_) async {},
+        ),
+      ),
+    );
+    await tester.pump();
+    AdminElement element(String text, AdminBounds bounds) => AdminElement(
+      className: 'Button',
+      resourceId: text,
+      text: text,
+      contentDescription: null,
+      bounds: bounds,
+      clickable: true,
+      enabled: true,
+    );
+    updates.add(
+      AndroidLiveElements(
+        source: 'native',
+        elements: [
+          // UIA can report ancestors and offscreen descendants outside the captured
+          // client area. Include both partial and entirely out-of-frame bounds.
+          element(
+            'Partial',
+            const AdminBounds(left: 80, top: 190, right: 150, bottom: 240),
+          ),
+          element(
+            'Outside',
+            const AdminBounds(left: 325, top: 200, right: 340, bottom: 400),
+          ),
+          element(
+            'Inside',
+            const AdminBounds(left: 120, top: 220, right: 180, bottom: 280),
+          ),
+        ],
+      ),
+    );
+    await tester.pump();
+    final frame = find.byKey(const Key('android-live-frame'));
+    final viewport = tester.getSize(frame);
+    final fitted = fittedScreenshotRect(
+      viewport: viewport,
+      image: video.deviceSize,
+    );
+    final paint = tester.widget<CustomPaint>(
+      find.descendant(of: frame, matching: find.byType(CustomPaint)).last,
+    );
+    const margin = 80.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder)..translate(margin, margin);
+    paint.painter!.paint(canvas, viewport);
+    final picture = recorder.endRecording();
+    final pixels = await tester.runAsync(() async {
+      final image = await picture.toImage(
+        (viewport.width + margin * 2).ceil(),
+        (viewport.height + margin * 2).ceil(),
+      );
+      final bytes = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final width = image.width;
+      final height = image.height;
+      image.dispose();
+      return (bytes!, width, height);
+    });
+    picture.dispose();
+    var insidePixels = 0;
+    var outsidePixels = 0;
+    final clip = fitted.shift(const Offset(margin, margin));
+    for (var y = 0; y < pixels!.$3; y++) {
+      for (var x = 0; x < pixels.$2; x++) {
+        if (pixels.$1.getUint8((y * pixels.$2 + x) * 4 + 3) == 0) continue;
+        if (clip.contains(Offset(x + .5, y + .5))) {
+          insidePixels++;
+        } else {
+          outsidePixels++;
+        }
+      }
+    }
+    expect(
+      insidePixels,
+      greaterThan(0),
+      reason: 'Visible inspection bounds remain drawn.',
+    );
+    expect(
+      outsidePixels,
+      0,
+      reason: 'Bounds must not paint over the header, letterbox or sidebar.',
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
   for (final platform in ['chrome', 'windows', 'android', 'macos', 'ios']) {
     testWidgets('$platform reconnects automatically and cancels on close', (
       tester,

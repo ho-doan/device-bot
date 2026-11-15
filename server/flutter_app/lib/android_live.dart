@@ -1162,6 +1162,13 @@ class _LiveBoxPainter extends CustomPainter {
     }
     final scaleX = fitted.width / imageSize.width;
     final scaleY = fitted.height / imageSize.height;
+    // UIA ancestors and offscreen descendants can extend outside the captured
+    // client area. CustomPaint is not clipped by Stack when its layout fits,
+    // so constrain strokes to the fitted video and leave letterbox margins clear.
+    final clip = fitted.intersect(Offset.zero & size);
+    if (clip.isEmpty) return;
+    canvas.save();
+    canvas.clipRect(clip, doAntiAlias: false);
     for (var index = 0; index < elements.length; index++) {
       // WebView CSS rectangles have no verified native screen mapping yet.
       if (elements[index].webContext?.appId != null) continue;
@@ -1183,6 +1190,7 @@ class _LiveBoxPainter extends CustomPainter {
               : const Color(0xFFFFB300),
       );
     }
+    canvas.restore();
   }
 
   @override

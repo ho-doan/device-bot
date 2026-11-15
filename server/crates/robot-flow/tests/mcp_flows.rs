@@ -493,6 +493,93 @@ fn malformed_actions_and_unresolved_variables_fail() {
 }
 
 #[tokio::test]
+async fn invalid_documents_and_nested_actions_never_execute_device_tools() {
+    for source in [
+        "version: 2\nname: broken\nsteps: [",
+        "version: 99\nname: unknown\nsteps: [{wait: {ms: 1}}]",
+        "version: 2\nname: missing steps",
+        "version: 2\nname: empty\nsteps: []",
+        "version: 2\nname: scalar\nsteps: [42]",
+        "version: 2\nname: no action\nsteps: [{}]",
+        "version: 2\nname: missing coordinates\nsteps: [{tap: {x: 1}}]",
+        "version: 2\nname: bad branch\nsteps: [{if_element: {target: unknown, then: 42}}]",
+    ] {
+        if let Ok(document) = FlowDocument::from_yaml(source) {
+            let state = Arc::new(Mutex::new(State::default()));
+            let report = run(&document, &Profile::default(), state.clone()).await;
+            assert_eq!(report.status, "FAIL", "{source}");
+            assert_eq!(report.error_kind.as_deref(), Some("setup"), "{source}");
+            assert!(
+                !state
+                    .lock()
+                    .unwrap()
+                    .calls
+                    .iter()
+                    .any(|c| c["method"] == "tools/call"),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn text_boundaries_survive_yaml_export_import_and_mcp_forwarding_without_leaking_to_evidence()
+{
+    let inputs = [
+        "  spacing  ".into(),
+        "Tiếng Việt: Đặng Thị Ánh".into(),
+        "emoji 👩🏽‍💻 🧪".into(),
+        "line one\nline two\r\n\tend".into(),
+        "'quotes' \"double\" \\path\\end $cash".into(),
+        "e\u{301}".into(),
+        "x".repeat(96_000),
+    ];
+    for text in inputs {
+        let source = serde_yaml::to_string(&json!({"version":2,"name":"text round trip","steps":[
+            {"select_device":{"platform":"android"}}, {"type_text":{"text":text}}
+        ]}))
+        .unwrap();
+        let document = FlowDocument::from_yaml(&source).unwrap();
+        let state = Arc::new(Mutex::new(State::default()));
+        let temp = Temp::new();
+        let report = FlowRunner::new(Some(Box::new(Fake(state.clone()))), temp.0.clone())
+            .run(&document, &Profile::default(), &[], Duration::from_secs(3))
+            .await;
+        assert_eq!(report.status, "PASS", "{:?}", report.error);
+        let state = state.lock().unwrap();
+        let typed = state
+            .calls
+            .iter()
+            .find(|c| c["params"]["name"] == "mobile_type_keys")
+            .unwrap();
+        assert_eq!(typed["params"]["arguments"]["text"], text);
+        for name in ["mcp-calls.jsonl", "expanded-flow.yaml"] {
+            assert!(
+                !std::fs::read_to_string(temp.0.join(name))
+                    .unwrap()
+                    .contains(&text)
+            );
+        }
+    }
+    let state = Arc::new(Mutex::new(State::default()));
+    let report = run(
+        &flow("  - type_text: {text: ''}"),
+        &Profile::default(),
+        state.clone(),
+    )
+    .await;
+    assert_eq!(report.error_kind.as_deref(), Some("setup"));
+    assert!(
+        !state
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .any(|c| c["method"] == "tools/call")
+    );
+}
+
+#[tokio::test]
 async fn typed_text_preserves_case_and_spaces_and_query_evidence_is_redacted() {
     let tmp = Temp::new();
     let state = Arc::new(Mutex::new(State {

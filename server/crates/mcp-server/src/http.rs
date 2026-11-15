@@ -544,6 +544,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_session_id_never_replaces_bearer_authentication_on_later_requests() {
+        let app = router(Arc::new(NoopRobot::default()), Some("secret".into()));
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header(header::AUTHORIZATION, "Bearer secret")
+                    .body(Body::from(initialize_body()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let session = response.headers()[SESSION_HEADER]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        for method in ["POST", "DELETE"] {
+            for authorization in [None, Some("Bearer revoked-or-wrong")] {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri("/mcp")
+                    .header(SESSION_HEADER, &session);
+                if let Some(token) = authorization {
+                    request = request.header(header::AUTHORIZATION, token);
+                }
+                let response = app
+                    .clone()
+                    .oneshot(
+                        request
+                            .body(Body::from(
+                                r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+                            ))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::UNAUTHORIZED,
+                    "{method} {authorization:?}"
+                );
+            }
+        }
+        // The rejected DELETE did not destroy the legitimate client's session.
+        let valid = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header(header::AUTHORIZATION, "Bearer secret")
+                    .header(SESSION_HEADER, session)
+                    .body(Body::from(
+                        r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(valid.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn returns_an_sse_message_when_the_client_requests_it() {
         let response = router(Arc::new(NoopRobot::default()), None)
             .oneshot(

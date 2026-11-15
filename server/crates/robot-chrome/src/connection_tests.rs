@@ -349,6 +349,27 @@ async fn clients_share_browser_connection_but_own_and_dispose_only_their_context
 }
 
 #[tokio::test]
+async fn concurrent_clients_boot_distinct_contexts_on_one_shared_browser_connection() {
+    let f = fixture().await;
+    let second = f.robot.fork_session().unwrap();
+    let (first_boot, second_boot) = tokio::join!(
+        f.robot.boot_device("chrome:browser"),
+        second.boot_device("chrome:browser")
+    );
+    first_boot.unwrap();
+    second_boot.unwrap();
+    let first = f.robot.list_devices().await.unwrap()[0].id.clone();
+    let other = second.list_devices().await.unwrap()[0].id.clone();
+    assert_ne!(first, other);
+    assert_eq!(f.state.lock().unwrap().connections, 1);
+    assert_eq!(f.state.lock().unwrap().contexts.len(), 2);
+    f.robot.close_session().await.unwrap();
+    assert_eq!(second.take_screenshot(&other).await.unwrap(), b"png");
+    second.close_session().await.unwrap();
+    assert!(f.state.lock().unwrap().contexts.is_empty());
+}
+
+#[tokio::test]
 async fn closing_after_failed_action_leaves_other_client_usable_and_next_case_gets_new_context() {
     let f = fixture().await;
     let next = f.robot.fork_session().unwrap();

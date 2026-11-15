@@ -142,6 +142,70 @@ fn multiple_projects_import_concurrently_without_mixing_history() {
 }
 
 #[test]
+fn concurrent_runs_in_one_project_survive_restart_without_losing_evidence() {
+    let f = Fixture::new();
+    let source = f.case("run", "PASS");
+    let project = f.store.create_project("Concurrent", &f.source).unwrap();
+    let gate = std::sync::Arc::new(std::sync::Barrier::new(8));
+    let tasks: Vec<_> = (0..8)
+        .map(|i| {
+            let (store, source, id, gate) = (
+                f.store.clone(),
+                source.clone(),
+                project.id.clone(),
+                gate.clone(),
+            );
+            std::thread::spawn(move || {
+                gate.wait();
+                store
+                    .import_run(&id, &format!("run {i}"), &source)
+                    .unwrap()
+                    .id
+            })
+        })
+        .collect();
+    let ids: std::collections::BTreeSet<_> = tasks.into_iter().map(|t| t.join().unwrap()).collect();
+    assert_eq!(ids.len(), 8);
+    fs::remove_dir_all(&f.source).unwrap();
+    let restarted = Store::open(f.store.root()).unwrap();
+    assert_eq!(restarted.runs(&project.id).unwrap().len(), 8);
+    for id in ids {
+        let run = restarted.run(&project.id, &id).unwrap();
+        let png = run.cases[0]
+            .files
+            .iter()
+            .find(|e| e.kind == "image")
+            .unwrap();
+        let (path, _) = restarted.evidence(&project.id, &id, 0, png.id).unwrap();
+        assert!(fs::read(path).unwrap().starts_with(b"\x89PNG"));
+    }
+}
+
+#[test]
+fn a_missing_published_png_does_not_destroy_the_report_or_other_evidence() {
+    let f = Fixture::new();
+    let source = f.case("run", "FAIL");
+    let project = f.store.create_project("Missing image", &f.source).unwrap();
+    let run = f.store.import_run(&project.id, "run", &source).unwrap();
+    let run = f.store.run(&project.id, &run.id).unwrap();
+    let image = run.cases[0]
+        .files
+        .iter()
+        .find(|e| e.kind == "image")
+        .unwrap();
+    let video = run.cases[0]
+        .files
+        .iter()
+        .find(|e| e.kind == "video")
+        .unwrap();
+    let (path, _) = f.store.evidence(&project.id, &run.id, 0, image.id).unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(f.store.evidence(&project.id, &run.id, 0, image.id).is_err());
+    assert_eq!(f.store.run(&project.id, &run.id).unwrap().counts.failed, 1);
+    assert!(f.store.evidence(&project.id, &run.id, 0, video.id).is_ok());
+}
+
+#[test]
 fn bad_import_is_atomic_and_cannot_escape_the_project_or_read_history_as_source() {
     let f = Fixture::new();
     let source = f.case("run", "PASS");

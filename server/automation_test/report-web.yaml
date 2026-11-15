@@ -33,6 +33,10 @@ steps:
   - call_tool:
       name: mobile_type_keys
       arguments: {deviceId: '<selected>', text: '', clear: true}
+  # Bring case rows and detail tabs into view on short browser windows.
+  - call_tool:
+      name: mobile_scroll
+      arguments: {deviceId: '<selected>', x: 400, y: 400, deltaX: 0, deltaY: 300}
   - tap_element: {filter: self-test passed, element_type: button}
   - tap_element: {resource_id: tab-evidence, filter: Evidence, element_type: button}
   - call_tool:

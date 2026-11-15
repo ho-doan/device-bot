@@ -112,6 +112,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qc-web-evidence-${{ matrix.runner }}
-          path: artifacts/ci-qc-web
+          # Browser profiles contain locked databases on Windows.
+          path: |
+            artifacts/ci-qc-web
+            !artifacts/ci-qc-web/backend-artifacts/chrome-profile/**
           if-no-files-found: warn
           retention-days: 7

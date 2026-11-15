@@ -39,7 +39,7 @@ fn app() -> io::Result<PathBuf> {
             );
         }
     }
-    if let Some(source) = super::flutter_app_directory() {
+    if let Some(source) = super::companion::flutter_app_directory() {
         for mode in flavor.qc_build_modes() {
             for name in flavor.qc_bundle_names() {
                 let relative = if cfg!(target_os = "macos") {

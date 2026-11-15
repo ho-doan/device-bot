@@ -31,6 +31,11 @@ device. It owns JSON-RPC/MCP serde types and protocol constants.
 - `lifecycle.rs`: valid state transitions only.
 - `response.rs`: JSON-RPC response construction only.
 - `main.rs`: process entrypoint only.
+- `cli.rs`: pure command parsing and argument validation; no environment or I/O.
+- `commands.rs`: CLI operations such as health, signing and upgrades.
+- `config.rs`: resolve paths and validate bridge configuration before startup.
+- `bootstrap.rs`: bridge listeners, driver assembly, serving and shutdown.
+- `companion.rs`: optional Flutter companion process lifecycle.
 - `http.rs`: Streamable HTTP session ownership, bearer-token validation, and
   JSON/SSE response encoding; it delegates every protocol request to `Server`.
 

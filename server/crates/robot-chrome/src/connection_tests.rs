@@ -237,6 +237,49 @@ async fn click_releases_a_native_popup_before_waiting_for_press_acknowledgement(
 }
 
 #[tokio::test]
+async fn rapid_taps_release_each_popup_press_without_timeout() {
+    let f = fixture().await;
+    f.state.lock().unwrap().hold_mouse_press_until_release = true;
+    f.robot.boot_device("chrome:browser").await.unwrap();
+    let id = f.robot.list_devices().await.unwrap()[0].id.clone();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::try_join!(
+            f.robot.tap(&id, Point { x: 10., y: 20. }),
+            f.robot.tap(&id, Point { x: 10., y: 20. }),
+        )
+    })
+    .await
+    .expect("rapid taps must release both presses before their acknowledgements")
+    .unwrap();
+    let events = f.state.lock().unwrap().mouse_events.clone();
+    let buttons: Vec<_> = events
+        .iter()
+        .filter(|event| event["type"] != "mouseMoved")
+        .collect();
+    assert_eq!(
+        buttons
+            .iter()
+            .map(|event| event["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "mousePressed",
+            "mouseReleased",
+            "mousePressed",
+            "mouseReleased"
+        ]
+    );
+    assert_eq!(
+        buttons
+            .iter()
+            .map(|event| event["buttons"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [1, 0, 1, 0]
+    );
+    assert_eq!(f.robot.take_screenshot(&id).await.unwrap(), b"png");
+    f.robot.close_session().await.unwrap();
+}
+
+#[tokio::test]
 async fn pipelined_click_still_reports_mouse_release_errors() {
     let f = fixture().await;
     {

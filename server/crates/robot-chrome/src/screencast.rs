@@ -154,6 +154,7 @@ impl ChromeRobot {
         });
         tokio::spawn(async move {
             let mut last = None::<Vec<u8>>;
+            let mut viewport = None::<[f64; 3]>;
             let mut ticks = interval(Duration::from_micros(33_333));
             ticks.set_missed_tick_behavior(MissedTickBehavior::Skip);
             let result = async {
@@ -176,6 +177,23 @@ impl ChromeRobot {
                             if event["sessionId"] != session || event["method"] != "Page.screencastFrame" {
                                 continue;
                             }
+                            let metadata = &event["params"]["metadata"];
+                            let geometry = [
+                                metadata["deviceWidth"].as_f64().unwrap_or(0.),
+                                metadata["deviceHeight"].as_f64().unwrap_or(0.),
+                                metadata["pageScaleFactor"].as_f64().unwrap_or(0.),
+                            ];
+                            if geometry.iter().any(|value| !value.is_finite() || *value <= 0.) {
+                                return Err(failure("capture did not report valid viewport geometry"));
+                            }
+                            if viewport.is_some_and(|previous| {
+                                (previous[0] - geometry[0]).abs() > 0.5
+                                    || (previous[1] - geometry[1]).abs() > 0.5
+                                    || (previous[2] - geometry[2]).abs() > 0.0001
+                            }) {
+                                return Err(failure("Chrome viewport changed while Live was open; reconnect Live to refresh element coordinates"));
+                            }
+                            viewport = Some(geometry);
                             let encoded = event["params"]["data"].as_str()
                                 .ok_or_else(|| failure("missing frame data"))?;
                             if encoded.len() > 20 * 1024 * 1024 {
@@ -386,7 +404,7 @@ mod physical_tests {
                 });
             }
         });
-        let mut robot = ChromeRobot::new("127.0.0.1:9222");
+        let mut robot = ChromeRobot::from_env();
         robot.ffmpeg_path =
             std::env::var("DEVICE_BOT_FFMPEG_PATH").unwrap_or("/opt/homebrew/bin/ffmpeg".into());
         robot.artifact_dir = std::env::temp_dir().join("device-bot-live-fallback-test");
@@ -426,7 +444,40 @@ mod physical_tests {
                 stream.height,
                 frame.data.len()
             );
+            // Moving the target from fullscreen to a half-screen window changes
+            // DOM coordinates. A capture must not keep advertising the old size.
+            robot
+                .cdp(
+                    &target,
+                    "Emulation.setDeviceMetricsOverride",
+                    json!({
+                        "width":640, "height":900, "deviceScaleFactor":1, "mobile":false
+                    }),
+                )
+                .await?;
+            let ended = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    match stream.frames.recv().await {
+                        Some(Ok(_)) => {}
+                        Some(Err(error)) => break error.to_string(),
+                        None => break "capture ended without a resize diagnostic".into(),
+                    }
+                }
+            })
+            .await
+            .map_err(|_| failure("capture kept stale coordinates after viewport resize"))?;
+            assert!(ended.contains("viewport changed"), "{ended}");
             drop(stream);
+            let mut reopened = robot.start_video_stream(&id).await?;
+            assert_eq!((reopened.width, reopened.height), (640, 900));
+            assert!(
+                tokio::time::timeout(Duration::from_secs(5), reopened.frames.recv())
+                    .await
+                    .map_err(failure)?
+                    .ok_or_else(|| failure("no frame after resize"))??
+                    .keyframe
+            );
+            drop(reopened);
             tokio::time::sleep(Duration::from_millis(400)).await;
             Ok::<(), RobotError>(())
         }

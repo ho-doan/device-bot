@@ -36,13 +36,19 @@ Rect fittedScreenshotRect({required Size viewport, required Size image}) {
   );
 }
 
-/// Maps a pointer in the mirror viewport to screenshot pixels.
+/// Maps a pointer in the mirror viewport to input coordinates. The decoded
+/// frame can have a different size/aspect from the driver's coordinate space.
 Offset? devicePointForLocal({
   required Offset local,
   required Size viewport,
   required Size image,
+  Size? frameSize,
 }) {
-  final fitted = fittedScreenshotRect(viewport: viewport, image: image);
+  if (image.isEmpty) return null;
+  final fitted = fittedScreenshotRect(
+    viewport: viewport,
+    image: frameSize ?? image,
+  );
   if (fitted.isEmpty || !fitted.contains(local)) return null;
   return Offset(
     (local.dx - fitted.left) / fitted.width * image.width,
@@ -111,6 +117,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   AndroidVideoSession? _video;
   String? _videoError;
   bool _terminatingApps = false;
+  bool _tappingSelected = false;
   List<AdminElement> _elements = const [];
   String? _source;
   String? _status;
@@ -482,7 +489,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     });
   }
 
-  void _send(Map<String, dynamic> input) {
+  Future<void> _send(Map<String, dynamic> input) {
     final queuedVideo = _video;
     final snapshot = List<AdminElement>.of(_elements);
     final selected = _selectedIndex == null ? null : snapshot[_selectedIndex!];
@@ -535,6 +542,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         .catchError((Object error) {
           if (mounted) setState(() => _status = error.toString());
         });
+    return _inputs;
   }
 
   void _scroll50(double delta) {
@@ -621,19 +629,28 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     if (mounted) setState(() {});
   }
 
-  void _tapSelected() {
+  Future<void> _tapSelected() async {
+    if (_tappingSelected) return;
     final index = _selectedIndex;
     if (index == null || index >= _elements.length) return;
     final element = _elements[index];
     if (!element.enabled || !element.clickable) return;
     final bounds = element.bounds;
-    _send({
-      'action': 'tap',
-      if (element.webContext != null)
-        'webContext': element.webContext!.toJson(),
-      'x': ((bounds.left + bounds.right) / 2).round(),
-      'y': ((bounds.top + bounds.bottom) / 2).round(),
+    setState(() {
+      _tappingSelected = true;
+      _status = null;
     });
+    try {
+      await _send({
+        'action': 'tap',
+        if (element.webContext != null)
+          'webContext': element.webContext!.toJson(),
+        'x': ((bounds.left + bounds.right) / 2).round(),
+        'y': ((bounds.top + bounds.bottom) / 2).round(),
+      });
+    } finally {
+      if (mounted) setState(() => _tappingSelected = false);
+    }
   }
 
   String _yamlFor(AdminElement element) => buildInspectorFlowYaml(
@@ -823,9 +840,21 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                 constraints.maxHeight,
                               );
                               final imageSize = video.deviceSize;
+                              final decodedSize = Size(
+                                video.renderer.videoWidth.toDouble(),
+                                video.renderer.videoHeight.toDouble(),
+                              );
+                              final rotation = video.renderer.value.rotation;
+                              final displaySize =
+                                  rotation == 90 || rotation == 270
+                                  ? Size(decodedSize.height, decodedSize.width)
+                                  : decodedSize;
+                              final frameSize = displaySize.isEmpty
+                                  ? imageSize
+                                  : displaySize;
                               final fitted = fittedScreenshotRect(
                                 viewport: viewport,
-                                image: imageSize,
+                                image: frameSize,
                               );
                               return GestureDetector(
                                 key: const Key('android-live-frame'),
@@ -834,6 +863,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                     local: details.localPosition,
                                     viewport: viewport,
                                     image: imageSize,
+                                    frameSize: frameSize,
                                   );
                                   if (point != null) _select(point);
                                 },
@@ -854,12 +884,14 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                     local: origin,
                                     viewport: viewport,
                                     image: imageSize,
+                                    frameSize: frameSize,
                                   );
                                   if (start == null) return;
                                   final end = devicePointForLocal(
                                     local: latest,
                                     viewport: viewport,
                                     image: imageSize,
+                                    frameSize: frameSize,
                                   );
                                   if (end == null ||
                                       (latest - origin).distance < 12) {
@@ -933,12 +965,22 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                               ),
                                               onPressed:
                                                   selected.clickable &&
-                                                      selected.enabled
+                                                      selected.enabled &&
+                                                      !_tappingSelected
                                                   ? _tapSelected
                                                   : null,
-                                              icon: const Icon(
-                                                Icons.touch_app_outlined,
-                                              ),
+                                              icon: _tappingSelected
+                                                  ? const SizedBox(
+                                                      width: 18,
+                                                      height: 18,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                          ),
+                                                    )
+                                                  : const Icon(
+                                                      Icons.touch_app_outlined,
+                                                    ),
                                               label: const Text('Tap selected'),
                                             ),
                                             SelectableText(

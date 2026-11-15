@@ -69,29 +69,86 @@ def wait_backend(server, base_url):
     raise RuntimeError("Backend did not become ready")
 
 
-def arm_embedded_flow_shutdown_probe(base_url, token):
+def fixture_tool(base_url, token, name, arguments):
+    """Use and close an isolated MCP session for fixture setup, without a history run."""
     headers = {"Content-Type": "application/json", "Authorization": "Bearer " + token}
 
     def post(body):
         request = urllib.request.Request(base_url + "/mcp", data=json.dumps(body).encode(), headers=headers)
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:
             if response.headers.get("mcp-session-id"):
                 headers["mcp-session-id"] = response.headers["mcp-session-id"]
             data = response.read()
-            return json.loads(data) if data else None
+            reply = json.loads(data) if data else None
+            if reply and "error" in reply:
+                raise RuntimeError(f"Fixture MCP request failed: {reply['error']}")
+            return reply
 
-    post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-        "protocolVersion": "2025-11-25", "capabilities": {},
-        "clientInfo": {"name": "shutdown-probe", "version": "1"}}})
-    post({"jsonrpc": "2.0", "method": "notifications/initialized"})
-    response = post({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-        "name": "mobile_run_flow", "arguments": {
-            "yaml": "version: 2\nname: shutdown-probe\nsteps:\n  - wait: {ms: 1}\n"}}})
-    if response.get("result", {}).get("structuredContent", {}).get("status") != "PASS":
+    try:
+        post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": {"name": "automation-fixture", "version": "1"}}})
+        post({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        response = post({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": name, "arguments": arguments}})
+        result = response.get("result", {})
+        if result.get("isError"):
+            raise RuntimeError(f"Fixture tool {name} failed: {result.get('content')}")
+        return result
+    finally:
+        if "mcp-session-id" in headers:
+            request = urllib.request.Request(base_url + "/mcp", headers=headers, method="DELETE")
+            with urllib.request.urlopen(request, timeout=5):
+                pass
+
+
+def arm_embedded_flow_shutdown_probe(base_url, token):
+    result = fixture_tool(base_url, token, "mobile_run_flow", {
+        "yaml": "version: 2\nname: shutdown-probe\nsteps:\n  - wait: {ms: 1}\n"})
+    if result.get("structuredContent", {}).get("status") != "PASS":
         raise RuntimeError("Embedded shutdown probe did not run")
-    request = urllib.request.Request(base_url + "/mcp", headers=headers, method="DELETE")
-    with urllib.request.urlopen(request, timeout=5):
-        pass
+
+
+def wait_fixture_worker(worker, log_path, timeout=30):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+        if worker.poll() is not None:
+            raise RuntimeError(f"Browser fixture exited before readiness: {text[-2000:]}")
+        for line in text.splitlines():
+            try:
+                if json.loads(line).get("event") == "browser-ready":
+                    return
+            except (ValueError, AttributeError):
+                pass
+        time.sleep(.05)
+    raise RuntimeError(f"Browser fixture did not become ready; inspect {log_path.name}")
+
+
+def verify_report_download(downloads, timeout=10):
+    """Wait for a complete fixture export, retaining evidence for missing/partial files."""
+    deadline = time.monotonic() + timeout
+    problem = "no completed JSON file"
+    while time.monotonic() < deadline:
+        for path in sorted(downloads.glob("*.json")):
+            try:
+                report = json.loads(path.read_text(encoding="utf-8"))
+                cases = report.get("cases", [])
+                names = {case["report"]["name"] for case in cases}
+                if len(cases) == 2 and names == {"self-test passed", "self-test failure"}:
+                    return {"file": path.name, "caseCount": len(cases)}
+                problem = f"{path.name}: unexpected fixture cases {sorted(names)}"
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+                problem = f"{path.name}: {error}"
+        time.sleep(.1)
+    files = []
+    for path in downloads.iterdir():
+        try:
+            if path.is_file():
+                files.append({"name": path.name, "bytes": path.stat().st_size})
+        except OSError:
+            pass  # Chrome may rename a partial download while diagnostics are collected.
+    raise RuntimeError(f"Expected downloaded report JSON with two fixture cases; {problem}; files={files}")
 
 
 def verify_history(base_url, name, expected_status=None, expected_runs=1):
@@ -346,11 +403,17 @@ def main():
                 if config.get("fixture") or config.get("download"):
                     downloads = output / (name + "-downloads")
                     downloads.mkdir()
-                    worker_log = (output / (name + "-chooser.log")).open("w")
+                    # Boot in a short-lived setup session. Wait for the browser-level
+                    # interceptor before the runner creates its disposable case page.
+                    fixture_tool(env["QC_TEST_URL"], env["DEVICE_BOT_AUTH"],
+                                 "mobile_boot_device", {"deviceId": "chrome:browser"})
+                    worker_log_path = output / (name + "-chooser.log")
+                    worker_log = worker_log_path.open("w")
                     fixture = SUITE / "fixtures" / config["fixture"] if config.get("fixture") else ""
                     worker = subprocess.Popen(["node", str(SUITE / "file_chooser.cjs"),
                                                str(output / "backend-artifacts/chrome-profile"),
                                                str(fixture), str(downloads)], stdout=worker_log, stderr=worker_log)
+                    wait_fixture_worker(worker, worker_log_path)
                 command = [str(runner), "--mcp-url", env["QC_TEST_URL"] + "/mcp",
                            "--artifacts", str(output / name), "--case-timeout",
                            "360" if config.get('live') else "180"]
@@ -389,12 +452,10 @@ def main():
                     except (OSError, ValueError, KeyError, RuntimeError) as error:
                         result.update(status="FAIL", error=str(error))
                 if ok and config.get("download"):
-                    deadline = time.monotonic() + 5
-                    while time.monotonic() < deadline and not list(downloads.glob("*.json")):
-                        time.sleep(.1)
-                    files = list(downloads.glob("*.json"))
-                    if not files or len(json.loads(files[0].read_text())["cases"]) != 2:
-                        result.update(status="FAIL", error="Expected downloaded report JSON with two fixture cases")
+                    try:
+                        result["downloadEvidence"] = verify_report_download(downloads)
+                    except RuntimeError as error:
+                        result.update(status="FAIL", error=str(error))
                 if ok and config.get('live'):
                     try:
                         result.update(verify_live_recording(name, config, output, before_recordings,

@@ -166,6 +166,23 @@ và [DOM.setFileInputFiles](https://chromedevtools.github.io/devtools-protocol/t
 không giả lập callback Run hay thay kết quả backend. Trạng thái PASS/FAIL của
 flow con, số lượt history và PNG đều được kiểm tra từ report API thật.
 
+Harness khởi động Chrome trong một MCP session setup riêng rồi đóng session đó.
+Trước khi chạy YAML import/download, nó đợi helper xác nhận `browser-ready`.
+Helper dùng CDP auto-attach để tạm dừng từng page mới, cấu hình download đúng
+browser context và file chooser, rồi mới cho page chạy. Không dùng polling
+`/json/list` để quyết định thời điểm cấu hình: trên runner chậm, YAML có thể đã
+bấm link tải trước khi polling tìm thấy page. Log chooser giữ các sự kiện
+download để phân biệt file thiếu, bị hủy và hoàn tất. Việc xác nhận export đợi
+JSON hoàn chỉnh và kiểm tra tên của cả hai fixture cases, không chỉ đếm file.
+
+Regression checks cho đồng bộ helper và download:
+
+```sh
+python3 -m unittest discover -s server/automation_test -p 'test_*.py' -v
+node --test server/automation_test/file_chooser.test.cjs
+python3 server/automation_test/run.py --only report-download
+```
+
 Đây là smoke/regression suite cho các luồng trên; chưa bao phủ mọi backend Live,
 toàn bộ thao tác thiết bị, import file thành công trên desktop/lưu export thành công,
 hay truy cập từ máy LAN

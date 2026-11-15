@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'models.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 String deviceStatusLabel(AdminDevice device, {required bool busy}) {
   if (busy) return 'Working';

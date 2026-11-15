@@ -1,3 +1,7 @@
+import 'package:json_annotation/json_annotation.dart';
+
+part 'admin_models.g.dart';
+
 class DashboardSnapshot {
   const DashboardSnapshot({
     required this.devices,
@@ -10,6 +14,7 @@ class DashboardSnapshot {
   final List<AdminEvent> events;
 }
 
+@JsonSerializable(explicitToJson: true)
 class AdminDevice {
   const AdminDevice({
     required this.id,
@@ -19,18 +24,18 @@ class AdminDevice {
     this.readiness,
   });
 
-  factory AdminDevice.fromJson(Map<String, dynamic> json) => AdminDevice(
-    id: json['id'] as String,
-    name: json['name'] as String,
-    platform: json['platform'] as String,
-    state: json['state'] as String,
-  );
+  Map<String, dynamic> toJson() => _$AdminDeviceToJson(this);
+
+  factory AdminDevice.fromJson(Map<String, dynamic> json) =>
+      _$AdminDeviceFromJson(json);
 
   final String id;
   final String name;
   final String platform;
   final String state;
+  @JsonKey(includeFromJson: false)
   final DeviceReadiness? readiness;
+  @JsonKey(includeFromJson: false, includeToJson: false)
   bool get canStart =>
       (platform == 'android' && id.startsWith('avd:')) ||
       (platform == 'chrome' && id == 'chrome:browser') ||
@@ -52,6 +57,7 @@ class AdminDevice {
   );
 }
 
+@JsonSerializable(explicitToJson: true)
 class DesktopDisplay {
   const DesktopDisplay({
     required this.id,
@@ -59,16 +65,15 @@ class DesktopDisplay {
     required this.isPrimary,
     required this.bounds,
   });
-  factory DesktopDisplay.fromJson(Map<String, dynamic> json) => DesktopDisplay(
-    id: json['id'] as String,
-    name: json['name'] as String,
-    isPrimary: json['isPrimary'] as bool,
-    bounds: AdminBounds.fromJson(json['bounds'] as Map<String, dynamic>),
-  );
+  Map<String, dynamic> toJson() => _$DesktopDisplayToJson(this);
+
+  factory DesktopDisplay.fromJson(Map<String, dynamic> json) =>
+      _$DesktopDisplayFromJson(json);
   final String id;
   final String name;
   final bool isPrimary;
   final AdminBounds bounds;
+  @JsonKey(includeFromJson: false, includeToJson: false)
   String get label =>
       '$name${isPrimary ? ' (main)' : ''} · ${bounds.width} × ${bounds.height}';
   bool containsElement(AdminElement element) =>
@@ -80,6 +85,7 @@ class DesktopDisplay {
 
 enum RunnerAction { health, prepare, reboot }
 
+@JsonSerializable(explicitToJson: true)
 class DeviceReadiness {
   const DeviceReadiness({
     required this.ready,
@@ -93,26 +99,25 @@ class DeviceReadiness {
     this.checkedAt,
     this.diagnostics,
   });
+  Map<String, dynamic> toJson() => _$DeviceReadinessToJson(this);
+
   factory DeviceReadiness.fromJson(Map<String, dynamic> json) =>
-      DeviceReadiness(
-        ready:
+      _$DeviceReadinessFromJson({
+        ...json,
+        'ready':
             json['ready'] == true &&
             json['state'] == 'ready' &&
             json['expectedVersion'] is String &&
             json['expectedVersion'] == json['agentVersion'] &&
             (json['targetAppId'] as String?)?.isNotEmpty == true,
-        state: json['state'] as String? ?? 'unverified',
-        detail: json['detail'] as String? ?? '',
-        expectedVersion: json['expectedVersion'] as String?,
-        agentVersion: json['agentVersion'] as String?,
-        serverVersion: json['serverVersion'] as String?,
-        targetAppId: json['targetAppId'] as String?,
-        cacheReady: json['cacheReady'] == true,
-        checkedAt: DateTime.now(),
-        diagnostics: json['diagnostics'] is Map
+        'state': json['state'] ?? 'unverified',
+        'detail': json['detail'] ?? '',
+        'cacheReady': json['cacheReady'] == true,
+        'checkedAt': DateTime.now().toIso8601String(),
+        'diagnostics': json['diagnostics'] is Map
             ? Map<String, dynamic>.from(json['diagnostics'] as Map)
             : null,
-      );
+      });
   final bool ready;
   final String state;
   final String detail;
@@ -120,6 +125,7 @@ class DeviceReadiness {
   final bool cacheReady;
   final DateTime? checkedAt;
   final Map<String, dynamic>? diagnostics;
+  @JsonKey(includeFromJson: false, includeToJson: false)
   String get label => ready
       ? 'Ready'
       : switch (state) {
@@ -133,6 +139,7 @@ class DeviceReadiness {
           'error' => 'Check failed',
           _ => 'Not ready',
         };
+  @JsonKey(includeFromJson: false, includeToJson: false)
   String get report =>
       'MCP server: ${serverVersion ?? 'unknown'}\n'
       'Expected helper: ${expectedVersion ?? 'unknown'}\n'
@@ -143,6 +150,7 @@ class DeviceReadiness {
       '${diagnostics == null ? '' : '\n\n${((diagnostics!['checks'] as List?) ?? []).map((check) => '${check['name']}: ${check['status']} — ${check['detail']}').join('\n')}'}';
 }
 
+@JsonSerializable(explicitToJson: true)
 class RunningApp {
   const RunningApp({
     required this.processId,
@@ -150,19 +158,20 @@ class RunningApp {
     this.bundleId,
   });
 
-  factory RunningApp.fromJson(Map<String, dynamic> json) => RunningApp(
-    processId: json['processId'] as int,
-    name: json['name'] as String,
-    bundleId: json['bundleId'] as String?,
-  );
+  Map<String, dynamic> toJson() => _$RunningAppToJson(this);
+
+  factory RunningApp.fromJson(Map<String, dynamic> json) =>
+      _$RunningAppFromJson(json);
 
   final int processId;
   final String name;
   final String? bundleId;
 
+  @JsonKey(includeFromJson: false, includeToJson: false)
   String get label => '$name · pid $processId';
 }
 
+@JsonSerializable(explicitToJson: true)
 class AppWindow {
   const AppWindow({
     required this.windowId,
@@ -171,21 +180,23 @@ class AppWindow {
     this.focused = false,
   });
 
-  factory AppWindow.fromJson(Map<String, dynamic> json) => AppWindow(
-    windowId: json['windowId'] as String,
-    processId: json['processId'] as int,
-    title: json['title'] as String? ?? '',
-    focused: json['focused'] == true,
-  );
+  Map<String, dynamic> toJson() => _$AppWindowToJson(this);
+
+  factory AppWindow.fromJson(Map<String, dynamic> json) =>
+      _$AppWindowFromJson(json);
 
   final String windowId;
   final int processId;
+  @JsonKey(defaultValue: '')
   final String title;
+  @JsonKey(fromJson: _isTrue)
   final bool focused;
 
+  @JsonKey(includeFromJson: false, includeToJson: false)
   String get label => title.trim().isEmpty ? 'Window $windowId' : title;
 }
 
+@JsonSerializable(explicitToJson: true)
 class InstalledApp {
   const InstalledApp({
     required this.name,
@@ -194,8 +205,11 @@ class InstalledApp {
     this.publisher,
   });
 
+  Map<String, dynamic> toJson() => _$InstalledAppToJson(this);
+
   factory InstalledApp.fromJson(Map<String, dynamic> json) {
     final identifier = _firstString(json, [
+      'identifier',
       'bundleIdentifier',
       'bundleId',
       'CFBundleIdentifier',
@@ -220,16 +234,16 @@ class InstalledApp {
         identifier ??
         'Unnamed app';
 
-    return InstalledApp(
-      name: name,
-      identifier: identifier ?? name,
-      version: _firstString(json, [
+    return _$InstalledAppFromJson({
+      'name': name,
+      'identifier': identifier ?? name,
+      'version': _firstString(json, [
         'version',
         'CFBundleShortVersionString',
         'CFBundleVersion',
       ]),
-      publisher: _firstString(json, ['publisher', 'vendor']),
-    );
+      'publisher': _firstString(json, ['publisher', 'vendor']),
+    });
   }
 
   final String name;
@@ -246,6 +260,7 @@ class InstalledApp {
   }
 }
 
+@JsonSerializable(explicitToJson: true)
 class AdminBounds {
   const AdminBounds({
     required this.left,
@@ -254,32 +269,28 @@ class AdminBounds {
     required this.bottom,
   });
 
-  factory AdminBounds.fromJson(Map<String, dynamic> json) => AdminBounds(
-    left: json['left'] as int,
-    top: json['top'] as int,
-    right: json['right'] as int,
-    bottom: json['bottom'] as int,
-  );
+  Map<String, dynamic> toJson() => _$AdminBoundsToJson(this);
+
+  factory AdminBounds.fromJson(Map<String, dynamic> json) =>
+      _$AdminBoundsFromJson(json);
 
   final int left;
   final int top;
   final int right;
   final int bottom;
 
+  @JsonKey(includeFromJson: false, includeToJson: false)
   int get width => right - left;
+  @JsonKey(includeFromJson: false, includeToJson: false)
   int get height => bottom - top;
 }
 
+@JsonSerializable(createToJson: false)
 class WebFrameSelector {
   const WebFrameSelector({this.css, this.name, this.url, this.position});
 
   factory WebFrameSelector.fromJson(Map<String, dynamic> json) =>
-      WebFrameSelector(
-        css: json['css'] as String?,
-        name: json['name'] as String?,
-        url: json['url'] as String?,
-        position: json['position'] as int?,
-      );
+      _$WebFrameSelectorFromJson(json);
 
   final String? css;
   final String? name;
@@ -294,6 +305,7 @@ class WebFrameSelector {
   };
 }
 
+@JsonSerializable(createToJson: false)
 class WebContext {
   const WebContext({
     this.elementRef,
@@ -306,19 +318,18 @@ class WebContext {
   factory WebContext.fromJson(Map<String, dynamic> json) {
     final page = json['page'];
     final frames = json['framePath'];
-    return WebContext(
-      elementRef: json['elementRef'] as String?,
-      appId: json['appId'] as String?,
-      pageUrl: page is Map ? page['url'] as String? : null,
-      pageTitle: page is Map ? page['title'] as String? : null,
-      framePath: frames is List
-          ? [
-              for (final frame in frames)
-                if (frame is Map)
-                  WebFrameSelector.fromJson(Map<String, dynamic>.from(frame)),
-            ]
-          : const [],
-    );
+    return _$WebContextFromJson({
+      'elementRef': json['elementRef'],
+      'appId': json['appId'],
+      'pageUrl': page is Map ? page['url'] : null,
+      'pageTitle': page is Map ? page['title'] : null,
+      'framePath': frames is List
+          ? frames
+                .whereType<Map>()
+                .map((frame) => Map<String, dynamic>.from(frame))
+                .toList()
+          : <dynamic>[],
+    });
   }
 
   final String? elementRef;
@@ -327,12 +338,14 @@ class WebContext {
   final String? pageTitle;
   final List<WebFrameSelector> framePath;
 
+  @JsonKey(includeFromJson: false, includeToJson: false)
   bool get isEmpty =>
       (appId == null || appId!.isEmpty) &&
       (pageUrl == null || pageUrl!.isEmpty) &&
       (pageTitle == null || pageTitle!.isEmpty) &&
       framePath.isEmpty;
 
+  @JsonKey(includeFromJson: false, includeToJson: false)
   String get identity => [
     appId ?? '',
     pageUrl ?? '',
@@ -387,6 +400,7 @@ class WebContext {
 String _yaml(String value) =>
     value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', ' ');
 
+@JsonSerializable(explicitToJson: true)
 class AdminElement {
   const AdminElement({
     required this.className,
@@ -404,25 +418,10 @@ class AdminElement {
     this.webContext,
   });
 
-  factory AdminElement.fromJson(Map<String, dynamic> json) => AdminElement(
-    className: json['className'] as String,
-    resourceId: json['resourceId'] as String?,
-    text: json['text'] as String?,
-    contentDescription: json['contentDescription'] as String?,
-    bounds: AdminBounds.fromJson(json['bounds'] as Map<String, dynamic>),
-    clickable: json['clickable'] as bool,
-    enabled: json['enabled'] as bool,
-    source: json['source'] as String?,
-    index: json['index'] as int?,
-    position: json['position'] as int?,
-    focused: json['focused'] as bool?,
-    elementType: json['elementType'] as String?,
-    webContext: json['webContext'] is Map
-        ? WebContext.fromJson(
-            Map<String, dynamic>.from(json['webContext'] as Map),
-          )
-        : null,
-  );
+  Map<String, dynamic> toJson() => _$AdminElementToJson(this);
+
+  factory AdminElement.fromJson(Map<String, dynamic> json) =>
+      _$AdminElementFromJson(json);
 
   final String className;
   final String? resourceId;
@@ -433,7 +432,9 @@ class AdminElement {
   final bool enabled;
   final bool? focused;
   final String? elementType;
+  @JsonKey(fromJson: _webContextOrNull)
   final WebContext? webContext;
+  @JsonKey(includeFromJson: false, includeToJson: false)
   bool get isEditable =>
       elementType == 'textField' ||
       className.toLowerCase().contains('edittext');
@@ -443,6 +444,7 @@ class AdminElement {
   /// One-based position among elements matching className in the same tree.
   final int? position;
 
+  @JsonKey(includeFromJson: false, includeToJson: false)
   bool get hasLabel => [
     text,
     contentDescription,
@@ -461,6 +463,7 @@ class AdminElement {
     ].join(', ');
   }
 
+  @JsonKey(includeFromJson: false, includeToJson: false)
   String get name {
     for (final value in [text, contentDescription, resourceId]) {
       if (value != null && value.trim().isNotEmpty) return value.trim();
@@ -472,24 +475,27 @@ class AdminElement {
   ///
   /// A resource id is more reliable than visible text when the driver exposes
   /// one. Text remains the fallback for platforms that do not provide ids.
+  @JsonKey(includeFromJson: false, includeToJson: false)
   String get selector {
     final id = resourceId?.trim();
     return id != null && id.isNotEmpty ? id : name;
   }
 }
 
+@JsonSerializable(explicitToJson: true)
 class AdminConfig {
   const AdminConfig({required this.authEnabled, required this.logCapacity});
 
-  factory AdminConfig.fromJson(Map<String, dynamic> json) => AdminConfig(
-    authEnabled: json['authEnabled'] as bool,
-    logCapacity: json['logCapacity'] as int,
-  );
+  Map<String, dynamic> toJson() => _$AdminConfigToJson(this);
+
+  factory AdminConfig.fromJson(Map<String, dynamic> json) =>
+      _$AdminConfigFromJson(json);
 
   final bool authEnabled;
   final int logCapacity;
 }
 
+@JsonSerializable(explicitToJson: true)
 class AdminEvent {
   const AdminEvent({
     required this.sequence,
@@ -497,13 +503,16 @@ class AdminEvent {
     required this.detail,
   });
 
-  factory AdminEvent.fromJson(Map<String, dynamic> json) => AdminEvent(
-    sequence: json['sequence'] as int,
-    kind: json['kind'] as String,
-    detail: json['detail'] as String,
-  );
+  Map<String, dynamic> toJson() => _$AdminEventToJson(this);
+
+  factory AdminEvent.fromJson(Map<String, dynamic> json) =>
+      _$AdminEventFromJson(json);
 
   final int sequence;
   final String kind;
   final String detail;
 }
+
+bool _isTrue(Object? value) => value == true;
+WebContext? _webContextOrNull(Object? value) =>
+    value is Map ? WebContext.fromJson(Map<String, dynamic>.from(value)) : null;

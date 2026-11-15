@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobile_mcp_companion/android_video.dart';
-import 'package:mobile_mcp_companion/mcp_client.dart';
+import 'package:mobile_mcp_companion/features/live/data/video_session.dart';
+import 'package:mobile_mcp_companion/core/network/mcp_client.dart';
 
 class _Client extends McpClient {
   _Client() : super(baseUrl: 'http://localhost', bearerToken: '');

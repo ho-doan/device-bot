@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import 'live_recording.dart';
+import 'package:mobile_mcp_companion/features/live/data/live_recording.dart';
 
 class LiveRecordingReview extends StatefulWidget {
   const LiveRecordingReview({

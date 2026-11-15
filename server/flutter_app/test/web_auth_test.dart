@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobile_mcp_companion/main.dart';
+import 'package:mobile_mcp_companion/app/qc_app.dart';
 
 // Run against an isolated authenticated MCP fixture, never a user's session:
 // flutter test --platform chrome --dart-define=QC_AUTH_SMOKE_SERVER=http://127.0.0.1:3349 test/web_auth_test.dart

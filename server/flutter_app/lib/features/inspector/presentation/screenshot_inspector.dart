@@ -1,40 +1,18 @@
-import 'live_recording.dart';
-import 'web_navigation.dart';
-import 'inspector_yaml.dart';
-export 'inspector_yaml.dart' show InspectorFlowAction, buildInspectorFlowYaml;
-import 'android_video.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:mobile_mcp_companion/features/inspector/domain/inspector_yaml.dart';
+
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'android_live.dart';
-import 'flow_import.dart';
-import 'dashboard.dart';
-import 'desktop_capture.dart';
-import 'windows_live.dart';
-import 'mcp_client.dart';
-import 'models.dart';
-import 'launch_app.dart';
-export 'launch_app.dart' show installedAppsErrorMessage;
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
-const _configuredMcpUrl = String.fromEnvironment('DEVICE_BOT_URL');
-
-/// Debug QC talks to the dev MCP. Release QC talks to the installed prod MCP.
-/// A browser session uses this page's origin so a LAN host is not replaced by localhost.
-String get defaultMcpUrl {
-  if (_configuredMcpUrl.isNotEmpty) return _configuredMcpUrl;
-  if (kIsWeb) return Uri.base.origin;
-  return kDebugMode ? 'http://127.0.0.1:3338' : 'http://127.0.0.1:3337';
-}
-
-String get companionTitle =>
-    kDebugMode ? 'Device Bot Dev' : 'Device Bot Companion';
-const _defaultAuthToken = String.fromEnvironment('DEVICE_BOT_AUTH');
+import '../cubit/inspector_cubit.dart';
+import '../data/inspection_data.dart';
 
 String elementInspectionErrorMessage(Object error) {
   final message = error.toString();
@@ -77,718 +55,38 @@ double inspectorCoordinateScale({
 String _yamlQuoteValue(String value) =>
     value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', ' ');
 
-class CompanionHome extends StatefulWidget {
-  const CompanionHome({super.key});
-
-  @override
-  State<CompanionHome> createState() => _CompanionHomeState();
-}
-
-class _CompanionHomeState extends State<CompanionHome> {
-  final Map<String, LiveRecording> _recordings = {};
-  final Map<String, DesktopCaptureSettings> _desktopCaptures = {};
-  final _baseUrlController = TextEditingController(text: defaultMcpUrl);
-  final _tokenController = TextEditingController(text: _defaultAuthToken);
-  late Future<DashboardSnapshot> _snapshot;
-  McpClient? _mcpClient;
-  String? _sessionBaseUrl;
-  String? _sessionAuthToken;
-  StreamSubscription<AdminEvent>? _mcpEventSubscription;
-  List<AdminEvent> _liveEvents = const [];
-  String _activityStatus = 'Activity stream is connecting…';
-  final Map<String, DeviceReadiness> _deviceReadiness = {};
-  final Set<String> _busyDevices = {};
-  Timer? _readinessTimer;
-  McpClient? _healthClient;
-  bool _checkingReadiness = false;
-  int _connectionGeneration = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _refresh();
-  }
-
-  @override
-  void dispose() {
-    _readinessTimer?.cancel();
-    unawaited(_healthClient?.dispose() ?? Future<void>.value());
-    _baseUrlController.dispose();
-    _tokenController.dispose();
-    unawaited(_mcpEventSubscription?.cancel() ?? Future<void>.value());
-    unawaited(_mcpClient?.dispose() ?? Future<void>.value());
-    super.dispose();
-  }
-
-  McpClient _client() {
-    _sessionBaseUrl ??= _baseUrlController.text;
-    _sessionAuthToken ??= _tokenController.text;
-    return _mcpClient ??= McpClient(
-      baseUrl: _baseUrlController.text,
-      bearerToken: _tokenController.text,
-    );
-  }
-
-  Future<void> _importFlow() async {
-    final file = await openFile(
-      acceptedTypeGroups: const [
-        XTypeGroup(label: 'Flow YAML', extensions: ['yaml', 'yml']),
-      ],
-    );
-    if (file == null || !mounted) return;
-    final yaml = await file.readAsString();
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => FlowYamlRunDialog(
-        fileName: file.name,
-        yaml: yaml,
-        onRun: () async => formatFlowReport(await _client().runFlow(yaml)),
-      ),
-    );
-  }
-
-  void _refresh() {
-    final existing = _mcpClient;
-    if (existing != null &&
-        _sessionBaseUrl == _baseUrlController.text &&
-        _sessionAuthToken == _tokenController.text) {
-      setState(() {
-        _snapshot = existing.loadDashboard();
-      });
-      return;
-    }
-    _sessionBaseUrl = _baseUrlController.text;
-    _sessionAuthToken = _tokenController.text;
-    _readinessTimer ??= Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => _pollDeviceReadiness(),
-    );
-    final generation = ++_connectionGeneration;
-    final previousClient = _mcpClient;
-    final previousHealthClient = _healthClient;
-    final client = McpClient(
-      baseUrl: _baseUrlController.text,
-      bearerToken: _tokenController.text,
-      onDeviceReadiness: (deviceId, readiness) {
-        if (mounted && generation == _connectionGeneration) {
-          setState(() => _deviceReadiness[deviceId] = readiness);
-        }
-      },
-    );
-    // A separate MCP session can still check the lock state while a UI tool is
-    // waiting for XCTest in the interactive session.
-    _healthClient = McpClient(
-      baseUrl: _baseUrlController.text,
-      bearerToken: _tokenController.text,
-    );
-    unawaited(previousHealthClient?.dispose() ?? Future<void>.value());
-    _mcpClient = client;
-    unawaited(previousClient?.dispose() ?? Future<void>.value());
-    setState(() {
-      _liveEvents = const [];
-      _deviceReadiness.clear();
-      _activityStatus = 'MCP session is connecting…';
-      _snapshot = client.loadDashboard();
-    });
-    unawaited(_listenToMcpEvents(client, generation));
-  }
-
-  Future<void> _pollDeviceReadiness() async {
-    if (_checkingReadiness || _healthClient == null) return;
-    _checkingReadiness = true;
-    final generation = _connectionGeneration;
-    final client = _healthClient!;
-    try {
-      final snapshot = await _snapshot;
-      if (!mounted || generation != _connectionGeneration) return;
-      final statuses = await Future.wait(
-        snapshot.devices
-            .where(
-              (device) =>
-                  device.platform == 'ios' &&
-                  (device.state == 'available' ||
-                      RegExp(
-                        r'^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{16}|[0-9a-fA-F]{40})$',
-                      ).hasMatch(device.id)),
-            )
-            .map(
-              (device) async =>
-                  MapEntry(device.id, await client.runnerStatus(device.id)),
-            ),
-      );
-      if (!mounted || generation != _connectionGeneration) return;
-      setState(() => _deviceReadiness.addEntries(statuses));
-    } catch (_) {
-      // Discovery/session failures are already reported by the connection UI.
-    } finally {
-      _checkingReadiness = false;
-    }
-  }
-
-  Future<void> _listenToMcpEvents(McpClient client, int generation) async {
-    await _mcpEventSubscription?.cancel();
-    if (!mounted || generation != _connectionGeneration) return;
-    _mcpEventSubscription = client.events.listen(
-      (event) {
-        if (!mounted || generation != _connectionGeneration) return;
-        setState(() {
-          if (_liveEvents.every(
-            (existing) => existing.sequence != event.sequence,
-          )) {
-            _liveEvents = [..._liveEvents, event];
-          }
-          _activityStatus = 'MCP session connected.';
-        });
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        if (mounted && generation == _connectionGeneration) {
-          setState(() => _activityStatus = 'MCP session unavailable: $error');
-        }
-      },
-      onDone: () {
-        if (mounted && generation == _connectionGeneration) {
-          setState(() => _activityStatus = 'MCP session disconnected.');
-        }
-      },
-    );
-  }
-
-  DashboardSnapshot _withLiveEvents(DashboardSnapshot snapshot) {
-    final eventsBySequence = {
-      for (final event in snapshot.events) event.sequence: event,
-      for (final event in _liveEvents) event.sequence: event,
-    };
-    final events = eventsBySequence.values.toList()
-      ..sort((first, second) => first.sequence.compareTo(second.sequence));
-    final firstToKeep = events.length - snapshot.config.logCapacity;
-    return DashboardSnapshot(
-      devices: [
-        for (final device in snapshot.devices)
-          if (_deviceReadiness[device.id] case final readiness?)
-            device.withReadiness(readiness)
-          else
-            device,
-      ],
-      config: snapshot.config,
-      events: firstToKeep > 0 ? events.sublist(firstToKeep) : events,
-    );
-  }
-
-  Future<void> _runnerAction(AdminDevice device, RunnerAction action) async {
-    if (_busyDevices.contains(device.id)) return;
-    final generation = _connectionGeneration;
-    setState(() => _busyDevices.add(device.id));
-    try {
-      final status = await _client().runnerStatus(device.id, action: action);
-      if (!mounted || generation != _connectionGeneration) return;
-      setState(() => _deviceReadiness[device.id] = status);
-      await showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('${device.name}: ${status.label}'),
-          content: SingleChildScrollView(
-            child: SizedBox(
-              width: 480,
-              child:
-                  status.state == 'trust_required' ||
-                      status.state == 'device_locked'
-                  ? DeviceRecoveryWarning(
-                      detail: status.detail,
-                      showRetry: false,
-                      deviceLocked: status.state == 'device_locked',
-                    )
-                  : SelectableText(status.report),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _busyDevices.remove(device.id));
-    }
-  }
-
-  Future<void> _restartWeb(AdminDevice device) async {
-    if (_busyDevices.contains(device.id)) return;
-    setState(() => _busyDevices.add(device.id));
-    try {
-      await _client().bootDevice(device.id, restart: true);
-      if (mounted) _refresh();
-    } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not restart web session: $error')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _busyDevices.remove(device.id));
-    }
-  }
-
-  void _showAndroidLive(AdminDevice device) async {
-    final client = _client();
-    var targetId = device.id;
-    var targetName = device.name;
-    if (['windows', 'macos'].contains(device.platform)) {
-      final window = await showDialog<AppWindow>(
-        context: context,
-        builder: (_) => WindowsLiveTargetDialog(
-          title: device.platform == 'macos' ? 'macOS Live' : 'Windows Live',
-          runningApps: client.listRunningApps(device.id),
-          windowsFor: (pid) => client.listWindows(device.id, processId: pid),
-        ),
-      );
-      if (!mounted || window == null) return;
-      targetId = '${device.platform}:${window.processId}:${window.windowId}';
-      targetName = '${device.name} · ${window.label}';
-    }
-    if (!mounted) return;
-    showDialog<void>(
-      context: context,
-      builder: (context) => AndroidLiveDialog(
-        deviceName: targetName,
-        recording: _recordings.putIfAbsent(
-          device.id,
-          () => LiveRecording(
-            deviceId: device.id,
-            platform: device.platform,
-            directory: LiveRecording.defaultDirectory(),
-          ),
-        ),
-        connect: () =>
-            ['chrome', 'windows', 'macos', 'ios'].contains(device.platform)
-            ? client.watchWebLive(targetId)
-            : client.watchAndroidLive(device.id),
-        platform: device.platform,
-        openVideo: () => AndroidVideoSession.connect(client, targetId),
-        onInput: (input) =>
-            ['chrome', 'windows', 'macos', 'ios'].contains(device.platform)
-            ? client.sendWebInput(targetId, input)
-            : client.sendAndroidInput(device.id, input),
-        onRunFlow: client.runFlow,
-        onTerminateApps: device.platform == 'android'
-            ? (all) => client.terminateApps(device.id, all: all)
-            : null,
-      ),
-    );
-  }
-
-  void _showScreenshot(AdminDevice device) async {
-    DesktopCaptureSettings? capture;
-    if (device.platform == 'macos' || device.platform == 'windows') {
-      capture = await showDialog<DesktopCaptureSettings>(
-        context: context,
-        builder: (context) => DesktopCaptureDialog(
-          apps: _client().listInstalledApps(device.id),
-          displays: _client().listDisplays(device.id),
-          runningApps: _client().listRunningApps(device.id),
-          windowsFor: (processId) =>
-              _client().listWindows(device.id, processId: processId),
-          onActivate: (processId, windowId) => _client().activateApp(
-            device.id,
-            processId: processId,
-            windowId: windowId,
-          ),
-          previous: _desktopCaptures[device.id],
-        ),
-      );
-      if (!mounted || capture == null) return;
-      _desktopCaptures[device.id] = capture;
-    }
-    if (!mounted) return;
-    showDialog<void>(
-      context: context,
-      builder: (context) => _ScreenshotDialog(
-        device: device,
-        loadInspection: (source) =>
-            _loadInspection(device, capture: capture, source: source),
-      ),
-    );
-  }
-
-  Future<void> _bootDevice(AdminDevice device) async {
-    if (_busyDevices.contains(device.id)) return;
-    final generation = _connectionGeneration;
-    setState(() => _busyDevices.add(device.id));
-    try {
-      await _client().bootDevice(device.id);
-      if (mounted && generation == _connectionGeneration) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${device.name} started. Refreshing devices…'),
-          ),
-        );
-        _refresh();
-      }
-    } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not start ${device.name}: $error')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _busyDevices.remove(device.id));
-    }
-  }
-
-  Future<void> _launchApp(AdminDevice device) async {
-    if (device.platform == 'chrome') {
-      final opened = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => WebUrlDialog(
-          deviceName: device.name,
-          onOpen: (url) => _client().openUrl(device.id, url),
-        ),
-      );
-      if (mounted && opened == true) _refresh();
-      return;
-    }
-    final installedApps = _client().listInstalledApps(device.id);
-    final appId = await showDialog<String>(
-      context: context,
-      builder: (context) => LaunchAppDialog(
-        deviceName: device.name,
-        installedApps: installedApps,
-      ),
-    );
-    if (!mounted || appId == null || appId.trim().isEmpty) return;
-    try {
-      await _client().launchApp(device.id, appId.trim());
-      if (device.platform == 'ios') {
-        final status = await _client().runnerStatus(
-          device.id,
-          action: RunnerAction.prepare,
-          appId: appId.trim(),
-        );
-        if (!status.ready) throw McpException(status.detail);
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Launched ${appId.trim()} on ${device.name}.'),
-          ),
-        );
-        _refresh();
-      }
-    } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Could not launch app: $error')));
-      }
-    }
-  }
-
-  Future<_InspectionData> _loadInspection(
-    AdminDevice device, {
-    DesktopCaptureSettings? capture,
-    String source = 'auto',
-  }) async {
-    // Draw labels from the chosen tree. Server annotations use native nodes
-    // and would have different indices after switching to a Flutter snapshot.
-    final client = _client();
-    final image = await client.takeScreenshot(
-      device.id,
-      appId: capture?.appId,
-      displayId: capture?.display.id,
-    );
-    try {
-      final inspection = await client.inspectElements(
-        device.id,
-        source: source,
-        processId: capture?.processId,
-        windowId: capture?.windowId,
-      );
-      return _InspectionData(
-        image: image,
-        labelsOnImage: false,
-        elements: capture == null
-            ? inspection.elements
-            : inspection.elements
-                  .where(capture.display.containsElement)
-                  .toList(),
-        elementsError:
-            capture != null &&
-                !inspection.elements.any(capture.display.containsElement)
-            ? 'No target app elements are visible on ${capture.display.name}. Choose the screen containing the target window.'
-            : inspection.warning,
-        display: capture?.display,
-      );
-    } catch (error) {
-      // A screenshot does not require an app context, while iOS XCTest UI
-      // queries do. Keep the screenshot visible when the latter is unavailable.
-      return _InspectionData(
-        image: image,
-        labelsOnImage: false,
-        elements: const [],
-        elementsError: elementInspectionErrorMessage(error),
-        display: capture?.display,
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) => Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1180),
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: [
-                        Image.asset(
-                          'assets/device-bot.png',
-                          width: 40,
-                          height: 40,
-                          excludeFromSemantics: true,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            companionTitle,
-                            style: Theme.of(context).textTheme.headlineMedium,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Local operations view — device state, server configuration, and MCP activity.',
-                    ),
-                    const SizedBox(height: 24),
-                    _ConnectionForm(
-                      baseUrlController: _baseUrlController,
-                      tokenController: _tokenController,
-                      onRefresh: _refresh,
-                      onImportFlow: _importFlow,
-                      activityStatus: _activityStatus,
-                    ),
-                    const SizedBox(height: 20),
-                    Expanded(
-                      child: FutureBuilder<DashboardSnapshot>(
-                        future: _snapshot,
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState ==
-                              ConnectionState.waiting) {
-                            return const Center(
-                              child: CircularProgressIndicator(),
-                            );
-                          }
-                          if (snapshot.hasError) {
-                            return _ErrorPanel(
-                              message: snapshot.error.toString(),
-                              onRetry: _refresh,
-                            );
-                          }
-                          return Dashboard(
-                            snapshot: _withLiveEvents(snapshot.requireData),
-                            onViewScreenshot: _showScreenshot,
-                            onLive: _showAndroidLive,
-                            onRestartWeb: _restartWeb,
-                            onBootDevice: _bootDevice,
-                            onLaunchApp: _launchApp,
-                            onRunnerAction: _runnerAction,
-                            busyDevices: _busyDevices,
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ConnectionForm extends StatelessWidget {
-  const _ConnectionForm({
-    required this.baseUrlController,
-    required this.tokenController,
-    required this.onRefresh,
-    required this.onImportFlow,
-    required this.activityStatus,
+class ScreenshotInspectorDialog extends StatefulWidget {
+  const ScreenshotInspectorDialog({
+    super.key,
+    required this.device,
+    required this.loadInspection,
   });
-
-  final TextEditingController baseUrlController;
-  final TextEditingController tokenController;
-  final VoidCallback onRefresh;
-  final VoidCallback onImportFlow;
-  final String activityStatus;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            SizedBox(
-              width: 340,
-              child: Semantics(
-                container: true,
-                identifier: 'mcp-server-url',
-                child: TextField(
-                  controller: baseUrlController,
-                  keyboardType: TextInputType.url,
-                  decoration: const InputDecoration(
-                    labelText: 'MCP server URL',
-                  ),
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 280,
-              child: Semantics(
-                container: true,
-                identifier: 'mcp-bearer-token',
-                child: TextField(
-                  controller: tokenController,
-                  obscureText: true,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                  decoration: InputDecoration(
-                    labelText: 'Bearer token',
-                    suffixIcon: IconButton(
-                      tooltip: 'Paste token',
-                      icon: const Icon(Icons.content_paste),
-                      onPressed: () async {
-                        final data = await Clipboard.getData(
-                          Clipboard.kTextPlain,
-                        );
-                        if (!context.mounted || data?.text == null) return;
-                        tokenController.text = data!.text!.trim();
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            FilledButton.icon(
-              onPressed: onRefresh,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Refresh'),
-            ),
-            OutlinedButton.icon(
-              key: const Key('import-flow-yaml'),
-              onPressed: onImportFlow,
-              icon: const Icon(Icons.file_open),
-              label: const Text('Import flow'),
-            ),
-            SizedBox(
-              width: 340,
-              child: Semantics(
-                container: true,
-                liveRegion: true,
-                child: Text(activityStatus),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ErrorPanel extends StatelessWidget {
-  const _ErrorPanel({required this.message, required this.onRetry});
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      liveRegion: true,
-      child: Card(
-        color: Theme.of(context).colorScheme.errorContainer,
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Could not reach the MCP server',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 8),
-              SelectableText(message),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Try again'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _InspectionData {
-  const _InspectionData({
-    required this.image,
-    required this.elements,
-    this.labelsOnImage = false,
-    this.elementsError,
-    this.display,
-  });
-
-  final Uint8List image;
-  final bool labelsOnImage;
-  final List<AdminElement> elements;
-  final String? elementsError;
-  final DesktopDisplay? display;
-}
-
-class _ScreenshotDialog extends StatefulWidget {
-  const _ScreenshotDialog({required this.device, required this.loadInspection});
 
   final AdminDevice device;
-  final Future<_InspectionData> Function(String source) loadInspection;
+  final Future<InspectionData> Function(String source) loadInspection;
 
   @override
-  State<_ScreenshotDialog> createState() => _ScreenshotDialogState();
+  State<ScreenshotInspectorDialog> createState() => _ScreenshotDialogState();
 }
 
-class _ScreenshotDialogState extends State<_ScreenshotDialog> {
+class _ScreenshotDialogState extends State<ScreenshotInspectorDialog> {
   late final TextEditingController _yamlController;
   int? _selectedIndex;
   int _flowSequence = 0;
-  late Future<_InspectionData> _inspection;
-  String _treeSource = 'auto';
+  late final InspectorCubit _cubit;
+  String get _treeSource => _cubit.state.source;
 
   @override
   void initState() {
     super.initState();
     _yamlController = TextEditingController(text: _initialYaml());
-    _inspection = widget.loadInspection(_treeSource);
+    _cubit = InspectorCubit(widget.loadInspection);
+    unawaited(_cubit.load('auto'));
   }
 
   @override
   void dispose() {
+    unawaited(_cubit.close());
     _yamlController.dispose();
     super.dispose();
   }
@@ -843,7 +141,13 @@ steps:
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      BlocBuilder<InspectorCubit, InspectorState>(
+        bloc: _cubit,
+        builder: (context, state) => _buildDialog(context),
+      );
+
+  Widget _buildDialog(BuildContext context) {
     return AlertDialog(
       title: Row(
         children: [
@@ -860,9 +164,8 @@ steps:
             onChanged: (source) {
               if (source == null || source == _treeSource) return;
               setState(() {
-                _treeSource = source;
                 _selectedIndex = null;
-                _inspection = widget.loadInspection(_treeSource);
+                unawaited(_cubit.load(source));
               });
             },
           ),
@@ -874,7 +177,7 @@ steps:
             ),
             onPressed: () => setState(() {
               _selectedIndex = null;
-              _inspection = widget.loadInspection(_treeSource);
+              unawaited(_cubit.load(_treeSource));
             }),
           ),
           Tooltip(
@@ -890,16 +193,16 @@ steps:
       content: SizedBox(
         width: 1080,
         height: 680,
-        child: FutureBuilder<_InspectionData>(
-          future: _inspection,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
+        child: Builder(
+          builder: (context) {
+            final snapshot = _cubit.state;
+            if (snapshot.loading) {
               return const Center(child: CircularProgressIndicator());
             }
-            if (snapshot.hasError) {
+            if (snapshot.error != null) {
               return SelectableText(snapshot.error.toString());
             }
-            final inspection = snapshot.requireData;
+            final inspection = snapshot.data!;
             final selected =
                 _selectedIndex != null &&
                     _selectedIndex! < inspection.elements.length
@@ -1412,10 +715,10 @@ class _ScreenshotCanvasState extends State<_ScreenshotCanvas> {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
-        if (snapshot.hasError) {
+        if (snapshot.error != null) {
           return SelectableText(snapshot.error.toString());
         }
-        final image = snapshot.requireData;
+        final image = snapshot.data!;
         return LayoutBuilder(
           builder: (context, constraints) {
             final scale = math.min(

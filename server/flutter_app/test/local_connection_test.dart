@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobile_mcp_companion/local_connection.dart';
-import 'package:mobile_mcp_companion/mcp_client.dart';
+import 'package:mobile_mcp_companion/core/platform/local_connection.dart';
+import 'package:mobile_mcp_companion/core/network/mcp_client.dart';
 
 void main() {
   test('automatic credentials stay on the matching local endpoint', () async {
@@ -41,11 +41,11 @@ void main() {
       );
       var authenticated = 0;
       server.listen((request) async {
-      if (request.method == 'DELETE') {
-        request.response.statusCode = 204;
-        await request.response.close();
-        return;
-      }
+        if (request.method == 'DELETE') {
+          request.response.statusCode = 204;
+          await request.response.close();
+          return;
+        }
         expect(
           request.headers.value(HttpHeaders.authorizationHeader),
           'Bearer auto-token',

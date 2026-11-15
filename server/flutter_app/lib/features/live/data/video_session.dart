@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'mcp_client.dart';
+import 'package:mobile_mcp_companion/core/network/mcp_client.dart';
 
 /// Receive-only video and the associated MCP capture session.
 class AndroidVideoSession extends ChangeNotifier {

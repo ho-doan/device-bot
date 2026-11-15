@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'models.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 class DesktopCaptureSettings {
   const DesktopCaptureSettings({

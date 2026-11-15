@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobile_mcp_companion/mcp_client.dart';
+import 'package:mobile_mcp_companion/core/network/mcp_client.dart';
 
 void main() {
   test('desktop screenshot sends selected app/display through MCP', () async {

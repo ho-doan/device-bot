@@ -1,8 +1,9 @@
+import 'package:mobile_mcp_companion/features/inspector/domain/inspector_yaml.dart';
+import 'package:mobile_mcp_companion/features/inspector/presentation/screenshot_inspector.dart';
 import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobile_mcp_companion/companion_home.dart';
-import 'package:mobile_mcp_companion/models.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 void main() {
   test(

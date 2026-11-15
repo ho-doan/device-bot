@@ -1,3 +1,4 @@
+import 'support/http_dio_adapter.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -6,7 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:mobile_mcp_companion/companion_home.dart';
+import 'package:mobile_mcp_companion/features/connection/presentation/companion_page.dart';
 
 class _CredentialFile extends Fake implements File {
   _CredentialFile(this.port, this.onRead);
@@ -53,7 +54,7 @@ void main() {
           () async {
             Widget app() => MaterialApp(
               theme: ThemeData(splashFactory: InkRipple.splashFactory),
-              home: const CompanionHome(),
+              home: CompanionHome(clientFactory: fixtureMcpClient),
             );
             await tester.pumpWidget(app());
             await tester.pumpAndSettle();

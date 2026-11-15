@@ -1,21 +1,21 @@
 import 'dart:convert';
 import 'package:file_selector/file_selector.dart';
-import 'flow_import.dart';
-import 'live_recording.dart';
-import 'live_recording_review.dart';
+import 'package:mobile_mcp_companion/features/flows/presentation/flow_run_dialog.dart';
+import 'package:mobile_mcp_companion/features/live/data/live_recording.dart';
+import 'package:mobile_mcp_companion/features/flows/presentation/flow_review_dialog.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
-import 'inspector_yaml.dart';
+import 'package:mobile_mcp_companion/features/inspector/domain/inspector_yaml.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'android_video.dart';
+import 'package:mobile_mcp_companion/features/live/data/video_session.dart';
 
-import 'mcp_client.dart';
-import 'models.dart';
-import 'windows_live.dart';
+import 'package:mobile_mcp_companion/core/network/mcp_client.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
+import 'package:mobile_mcp_companion/features/devices/presentation/window_picker_dialog.dart';
 
 /// Where a fitted screenshot sits inside the mirror viewport.
 Rect fittedScreenshotRect({required Size viewport, required Size image}) {

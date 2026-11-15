@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobile_mcp_companion/flow_import.dart';
+import 'package:mobile_mcp_companion/features/flows/presentation/flow_run_dialog.dart';
 
 MaterialApp _app(Widget home) {
   return MaterialApp(

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'models.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 String installedAppsErrorMessage(Object? error) {
   final message = error.toString();

@@ -1,3 +1,5 @@
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../cubit/flow_run_cubit.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -40,28 +42,30 @@ class FlowYamlRunDialog extends StatefulWidget {
 }
 
 class _FlowYamlRunDialogState extends State<FlowYamlRunDialog> {
-  bool _busy = false;
-  String? _runSummary;
-
-  Future<void> _run() async {
-    setState(() {
-      _busy = true;
-      _runSummary = null;
-    });
-    try {
-      final summary = await widget.onRun();
-      if (mounted) setState(() => _runSummary = summary);
-    } on Object catch (error) {
-      if (mounted) {
-        setState(() => _runSummary = 'Run failed\n$error');
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+  late final FlowRunCubit _cubit;
+  @override
+  void initState() {
+    super.initState();
+    _cubit = FlowRunCubit(widget.onRun);
   }
 
   @override
-  Widget build(BuildContext context) {
+  void dispose() {
+    _cubit.close();
+    super.dispose();
+  }
+
+  bool get _busy => _cubit.state.busy;
+  String? get _runSummary => _cubit.state.summary;
+  Future<void> _run() => _cubit.run();
+
+  @override
+  Widget build(BuildContext context) => BlocBuilder<FlowRunCubit, FlowRunState>(
+    bloc: _cubit,
+    builder: (context, state) => _buildDialog(context),
+  );
+
+  Widget _buildDialog(BuildContext context) {
     final yaml = widget.yaml.trim();
     return Dialog(
       child: SizedBox(

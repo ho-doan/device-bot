@@ -2,10 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
+import 'dio_client.dart';
 
-import 'models.dart';
-import 'local_connection.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
+import 'package:mobile_mcp_companion/core/platform/local_connection.dart';
 
 /// MCP client used by the Flutter companion.
 ///
@@ -18,9 +19,13 @@ class McpClient {
     required this.bearerToken,
     this.onDeviceReadiness,
     this.localConnectionDirectory,
-  }) : _baseUri = Uri.parse(baseUrl);
+    Dio? dio,
+  }) : _baseUri = Uri.parse(baseUrl),
+       _dio = dio ?? createQcDio();
 
   final Uri _baseUri;
+  final Dio _dio;
+  final Set<CancelToken> _liveRequests = {};
   String bearerToken;
   final void Function(String deviceId, DeviceReadiness readiness)?
   onDeviceReadiness;
@@ -286,27 +291,58 @@ class McpClient {
   }
 
   /// Inspection metadata only; video arrives independently over WebRTC.
-  Stream<AndroidLiveUpdate> watchAndroidLive(String deviceId) async* {
+  Stream<AndroidLiveUpdate> watchAndroidLive(String deviceId) {
+    final cancellation = CancelToken();
+    StreamSubscription<AndroidLiveUpdate>? subscription;
+    late final StreamController<AndroidLiveUpdate> controller;
+    controller = StreamController<AndroidLiveUpdate>(
+      onListen: () {
+        subscription = _readAndroidLive(deviceId, cancellation).listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: () => unawaited(controller.close()),
+        );
+      },
+      onPause: () => subscription?.pause(),
+      onResume: () => subscription?.resume(),
+      onCancel: () async {
+        // Abort the request before waiting for an async generator blocked on SSE.
+        cancellation.cancel('Live subscription closed');
+        await subscription?.cancel();
+      },
+    );
+    return controller.stream;
+  }
+
+  Stream<AndroidLiveUpdate> _readAndroidLive(
+    String deviceId,
+    CancelToken cancellation,
+  ) async* {
     if (_disposed) {
       throw const McpException('MCP client is closed.');
     }
-    final client = http.Client();
+    _liveRequests.add(cancellation);
     try {
-      final request = http.Request('GET', _adminUri(deviceId, 'live'));
-      request.headers['accept'] = 'text/event-stream';
-      _setBearer(request.headers);
-      final response = await client.send(request);
-      if (response.statusCode != 200) {
-        final body = await response.stream.bytesToString();
-        throw McpException(
-          _adminError(body, response.statusCode),
-          httpStatus: response.statusCode,
-        );
+      final response = await _dio.getUri<ResponseBody>(
+        _adminUri(deviceId, 'live'),
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: {'accept': 'text/event-stream', ..._bearerHeaders()},
+          validateStatus: (_) => true,
+        ),
+        cancelToken: cancellation,
+      );
+      final stream = response.data!.stream;
+      final status = response.statusCode ?? 0;
+      if (status != 200) {
+        final body = await utf8.decoder.bind(stream).join();
+        throw McpException(_adminError(body, status), httpStatus: status);
       }
       var name = 'message';
       final data = StringBuffer();
       await for (final line
-          in response.stream
+          in stream
+              .cast<List<int>>()
               .transform(utf8.decoder)
               .transform(const LineSplitter())) {
         if (line.isEmpty) {
@@ -329,9 +365,13 @@ class McpClient {
     } on McpException {
       rethrow;
     } on Object catch (error) {
-      throw McpException('Android live mirror stopped: $error');
+      if (!_disposed &&
+          !(error is DioException && CancelToken.isCancel(error))) {
+        throw McpException('Android live mirror stopped: $error');
+      }
     } finally {
-      client.close();
+      _liveRequests.remove(cancellation);
+      cancellation.cancel('Live subscription closed');
     }
   }
 
@@ -345,27 +385,32 @@ class McpClient {
     if (_disposed) {
       throw const McpException('MCP client is closed.');
     }
-    final client = http.Client();
     try {
-      final response = await client
-          .post(
+      final response = await _dio
+          .postUri<String>(
             _adminUri(deviceId, 'input'),
-            headers: {'content-type': 'application/json', ..._bearerHeaders()},
-            body: jsonEncode(input),
+            data: jsonEncode(input),
+            options: Options(
+              responseType: ResponseType.plain,
+              headers: {
+                'content-type': 'application/json',
+                ..._bearerHeaders(),
+              },
+              validateStatus: (_) => true,
+            ),
           )
           .timeout(const Duration(seconds: 30));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      final status = response.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
         throw McpException(
-          _adminError(response.body, response.statusCode),
-          httpStatus: response.statusCode,
+          _adminError(response.data ?? '', status),
+          httpStatus: status,
         );
       }
     } on McpException {
       rethrow;
     } on Object catch (error) {
       throw McpException('Android input failed: $error');
-    } finally {
-      client.close();
     }
   }
 
@@ -373,10 +418,6 @@ class McpClient {
     return _baseUri.replace(
       pathSegments: ['admin', 'devices', deviceId, action],
     );
-  }
-
-  void _setBearer(Map<String, String> headers) {
-    headers.addAll(_bearerHeaders());
   }
 
   Map<String, String> _bearerHeaders() {
@@ -633,7 +674,6 @@ class McpClient {
     Map<String, dynamic> body, {
     bool expectResponse = true,
   }) async {
-    final client = http.Client();
     final preparing =
         body['method'] == 'tools/call' &&
         (body['params'] as Map?)?['name'] == 'mobile_get_ui_runner_status' &&
@@ -659,27 +699,35 @@ class McpClient {
         ..._bearerHeaders(),
         'mcp-session-id': ?_sessionId,
       };
-      final response = await client
-          .post(
+      final response = await _dio
+          .postUri<String>(
             _baseUri.resolve('/mcp'),
-            headers: headers,
-            body: jsonEncode(body),
+            data: jsonEncode(body),
+            options: Options(
+              headers: headers,
+              responseType: ResponseType.plain,
+              validateStatus: (_) => true,
+              sendTimeout: timeout,
+              receiveTimeout: timeout,
+            ),
           )
           .timeout(timeout);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      final responseBody = response.data ?? '';
+      if ((response.statusCode ?? 0) < 200 ||
+          (response.statusCode ?? 0) >= 300) {
         throw McpException(
           'MCP ${body['method']} failed with HTTP ${response.statusCode}: '
-          '${response.body}',
+          '$responseBody',
           httpStatus: response.statusCode,
         );
       }
-      if (!expectResponse || response.body.isEmpty) {
+      if (!expectResponse || responseBody.isEmpty) {
         return _McpResponse(
           body: const {},
-          sessionId: response.headers['mcp-session-id'],
+          sessionId: response.headers.value('mcp-session-id'),
         );
       }
-      final decoded = jsonDecode(response.body);
+      final decoded = jsonDecode(responseBody);
       if (decoded is! Map<String, dynamic>) {
         throw const McpException('MCP response was not a JSON object.');
       }
@@ -691,14 +739,12 @@ class McpClient {
       }
       return _McpResponse(
         body: decoded,
-        sessionId: response.headers['mcp-session-id'],
+        sessionId: response.headers.value('mcp-session-id'),
       );
     } on McpException {
       rethrow;
     } on Object catch (error) {
       throw McpException('Could not reach MCP server: $error');
-    } finally {
-      client.close();
     }
   }
 
@@ -719,12 +765,15 @@ class McpClient {
     _sessionId = null;
     try {
       if (session != null) {
-        final client = http.Client();
         try {
-          final response = await client
-              .delete(
+          final response = await _dio
+              .deleteUri<String>(
                 _baseUri.resolve('/mcp'),
-                headers: {'mcp-session-id': session, ..._bearerHeaders()},
+                options: Options(
+                  responseType: ResponseType.plain,
+                  validateStatus: (_) => true,
+                  headers: {'mcp-session-id': session, ..._bearerHeaders()},
+                ),
               )
               .timeout(const Duration(seconds: 10));
           if (response.statusCode != 204 && response.statusCode != 404) {
@@ -738,11 +787,13 @@ class McpClient {
             'error',
             'Could not release the MCP session; server connection unavailable',
           );
-        } finally {
-          client.close();
         }
       }
     } finally {
+      for (final request in _liveRequests.toList()) {
+        request.cancel('MCP client closed');
+      }
+      _dio.close(force: true);
       await _eventsController.close();
     }
   }

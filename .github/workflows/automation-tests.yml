@@ -35,8 +35,13 @@ jobs:
       - name: Analyze and test QC
         working-directory: server/flutter_app
         run: |
+          dart run build_runner build
+          git diff --exit-code -- lib/core/models
           flutter analyze
           flutter test
+      - name: Test QC browser stream lifecycle
+        working-directory: server/flutter_app
+        run: flutter test --platform chrome test/browser/streaming_adapter_test.dart
       - name: Build the web app under test
         working-directory: server/flutter_app
         run: flutter build web --release --base-href /qc/

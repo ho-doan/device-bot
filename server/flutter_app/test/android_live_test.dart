@@ -3,12 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:yaml/yaml.dart';
-import 'package:mobile_mcp_companion/android_live.dart';
-import 'package:mobile_mcp_companion/dashboard.dart';
-import 'package:mobile_mcp_companion/mcp_client.dart';
-import 'package:mobile_mcp_companion/models.dart';
-import 'package:mobile_mcp_companion/live_recording.dart';
-import 'package:mobile_mcp_companion/main.dart';
+import 'package:mobile_mcp_companion/features/live/presentation/live_dialog.dart';
+import 'package:mobile_mcp_companion/features/devices/presentation/dashboard.dart';
+import 'package:mobile_mcp_companion/core/network/mcp_client.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
+import 'package:mobile_mcp_companion/features/live/data/live_recording.dart';
+import 'package:mobile_mcp_companion/app/qc_app.dart';
 
 /// Widget tests target Android, whose ink-sparkle shader fails to compile
 /// in this Flutter SDK. Ripple keeps taps from loading that shader.

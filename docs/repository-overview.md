@@ -8,7 +8,7 @@ This map connects that flow to the applications and source code in this repo.
 | App / tool | Technology | Role in the flow | Source |
 | --- | --- | --- | --- |
 | `device-bot` | Rust, Tokio, Axum, MCP / JSON-RPC | CLI entry point; starts QC or reports; serves device tools over stdio or HTTP | [mcp-server](../server/crates/mcp-server) |
-| QC Companion | Flutter / Dart, HTTP, `flutter_webrtc` | Desktop/web device selection, element inspector, Live control, YAML review/export and replay | [QC app](../server/flutter_app) |
+| QC Companion | Flutter / Dart, Cubit (`flutter_bloc`), Dio, `json_serializable` / `build_runner`, `flutter_webrtc` | Desktop/web device selection, element inspector, Live control, YAML review/export and replay | [QC app and architecture](../server/flutter_app/README.md) |
 | `robot-flow` | Rust, YAML v2, MCP client | Replays scenarios, applies target profiles and writes per-step results/evidence | [flow runner](../server/crates/robot-flow), [YAML contract](../server/docs/yaml-mcp-client.md) |
 | `robot-report` + QA Reports | Rust / Axum; HTML, CSS, JavaScript | Imports and retains project/run snapshots; browser history, filters and evidence downloads | [report app](../server/crates/robot-report) |
 | Device Bot Broadcast | Swift / SwiftUI, ReplayKit, VideoToolbox | iPhone Wi-Fi screen capture; the user starts a system broadcast; H.264 enters the existing Live stream | [broadcast app + extension](../server/crates/robot-ios-real/xctest-runner/WifiBroadcast) |

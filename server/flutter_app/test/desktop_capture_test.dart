@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobile_mcp_companion/desktop_capture.dart';
-import 'package:mobile_mcp_companion/models.dart';
+import 'package:mobile_mcp_companion/features/devices/presentation/desktop_capture_dialog.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 const mainScreen = DesktopDisplay(
   id: 'main',

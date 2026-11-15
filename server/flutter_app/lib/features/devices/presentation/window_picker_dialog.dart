@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'models.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 /// A Live session always names a specific process and native window.
 String windowsLiveDeviceId(AppWindow window) =>

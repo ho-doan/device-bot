@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
-import 'package:mobile_mcp_companion/main.dart';
+import 'package:mobile_mcp_companion/app/qc_app.dart';
 
 void main() {
   testWidgets('renders the MCP companion connection controls', (tester) async {
@@ -26,7 +26,8 @@ void main() {
       var fields = 0;
       void countFields(SemanticsNode node) {
         final data = node.getSemanticsData();
-        if (data.flagsCollection.isTextField && data.label == 'MCP server URL') {
+        if (data.flagsCollection.isTextField &&
+            data.label == 'MCP server URL') {
           fields++;
         }
         node.visitChildren((child) {

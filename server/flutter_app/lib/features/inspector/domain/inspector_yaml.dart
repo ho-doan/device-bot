@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'models.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 enum InspectorFlowAction { tap, typeText, assertVisible, scrollUp, scrollDown }
 

@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobile_mcp_companion/mcp_client.dart';
-import 'package:mobile_mcp_companion/models.dart';
+import 'package:mobile_mcp_companion/core/network/mcp_client.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 void main() {
   test(

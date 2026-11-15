@@ -1,10 +1,11 @@
+import 'support/http_dio_adapter.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:mobile_mcp_companion/companion_home.dart';
+import 'package:mobile_mcp_companion/features/connection/presentation/companion_page.dart';
 
 void main() {
   for (final action in ['Open URL', 'Start']) {
@@ -17,7 +18,7 @@ void main() {
           await tester.pumpWidget(
             MaterialApp(
               theme: ThemeData(splashFactory: InkRipple.splashFactory),
-              home: const CompanionHome(),
+              home: CompanionHome(clientFactory: fixtureMcpClient),
             ),
           );
           await tester.enterText(

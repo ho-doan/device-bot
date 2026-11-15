@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mobile_mcp_companion/launch_app.dart';
-import 'package:mobile_mcp_companion/models.dart';
+import 'package:mobile_mcp_companion/features/devices/presentation/launch_app_dialog.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 const apps = [
   InstalledApp(name: 'Chat Beta', identifier: 'org.chat.beta'),

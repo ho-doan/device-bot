@@ -5,8 +5,9 @@ MCP endpoint at `/mcp`, using the same initialize/session/tools contract as any
 other MCP client. It displays devices, local MCP activity, and on-demand device
 screenshots. The screenshot inspector also finds all accessibility
 elements, overlays their bounds and names, and provides a small `robot-flow` YAML
-editor for drafting a scenario around the selected element. It never sends
-device-control requests through a separate admin protocol.
+editor for drafting a scenario around the selected element. MCP handles device
+tools; authenticated admin endpoints supply Live event streams and low-latency
+input.
 
 For iOS Simulator, the target app must first be launched through Device Bot
 (for example with `mobile_launch_app`) before the inspector can query XCTest
@@ -32,8 +33,75 @@ flutter run -d macos \
   --dart-define=DEVICE_BOT_AUTH=replace-with-the-printed-token
 ```
 
-The companion is intentionally an MCP client only. It does not start or stop
-the Rust server and never controls devices outside the `/mcp` session.
+The companion connects to an existing server and does not start or stop it.
+
+## Project structure
+
+The app uses Cubit from `flutter_bloc` for connection, inspector loading and
+flow execution state. Dio owns HTTP requests and cancellation. Wire models use
+`json_serializable`, generated with `build_runner`.
+
+```text
+lib/
+  main.dart                  # Bootstrap and Flutter inspection bridge
+  app/qc_app.dart             # MaterialApp and shared theme
+  core/
+    models/                  # Shared wire models and generated JSON code
+    network/                 # MCP session, Dio, native/web stream adapters
+    platform/                # Platform-specific local connection discovery
+  features/
+    connection/              # ConnectionCubit and companion page
+    devices/presentation/    # Dashboard and device/app/window dialogs
+    inspector/               # InspectorCubit, snapshots, YAML helpers, UI
+    flows/                   # FlowRunCubit, execution and review dialogs
+    live/                    # WebRTC, recording storage and Live controls
+```
+
+Widgets retain rendering resources, text controllers and gesture state.
+Cubits own asynchronous requests and prevent stale responses from replacing a
+new connection or inspector selection. The connection Cubit uses a separate
+health session so readiness polling can continue during long tool calls.
+Live widgets own media resources and dispose them when their dialog closes.
+
+```mermaid
+flowchart LR
+  UI[QC widgets] --> C[Connection / Inspector / Flow Cubits]
+  C --> M[MCP client]
+  M --> D[Dio]
+  D --> API[Device Bot MCP and admin endpoints]
+  API --> J[Generated JSON models]
+  J --> C
+  API --> S[Live SSE / WebRTC]
+  S --> UI
+```
+
+The web adapter uses Fetch streams for SSE so Live receives events before the
+response ends. Cancelling a subscription aborts its request. Regular web
+requests use Dio's browser adapter; native requests use its native adapter.
+
+## Development checks
+
+Run these commands from this directory:
+
+```bash
+flutter pub get
+dart run build_runner build
+flutter analyze
+flutter test
+flutter test --platform chrome test/browser/streaming_adapter_test.dart
+flutter build web --release --base-href /qc/
+```
+
+Commit generated `lib/core/models/*.g.dart` with model changes. Edit the source
+models rather than generated files. Browser tests exercise streaming and
+cancellation with an open SSE response; native/widget tests cover MCP sessions,
+authentication, Cubit races, inspector selection and existing control flows.
+
+The reusable [QC automation workflow](../../.github/workflows/automation-tests.yml)
+checks generation, analysis, tests and the web build before replaying the web
+YAML suite on Linux and Windows.
+
+## Live control and web deployment
 
 Live control is available for Android and Chrome. Select an element to inspect
 it, then use **Tap selected** to control it. **Up 50 px / Down 50 px** send pixel

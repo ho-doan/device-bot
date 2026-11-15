@@ -643,21 +643,20 @@ class _ConnectionForm extends StatelessWidget {
                 ),
               ),
             ),
-            if (kIsWeb)
-              SizedBox(
-                width: 280,
-                child: Semantics(
-                  container: true,
-                  identifier: 'mcp-bearer-token',
-                  child: TextField(
-                    controller: tokenController,
-                    obscureText: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Bearer token',
-                    ),
-                  ),
+            SizedBox(
+              width: 280,
+              child: Semantics(
+                container: true,
+                identifier: 'mcp-bearer-token',
+                child: TextField(
+                  controller: tokenController,
+                  obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: const InputDecoration(labelText: 'Bearer token'),
                 ),
               ),
+            ),
             FilledButton.icon(
               onPressed: onRefresh,
               icon: const Icon(Icons.refresh),

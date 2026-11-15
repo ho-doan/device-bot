@@ -1,7 +1,7 @@
 name: mobile_mcp_companion
 description: Local desktop MCP companion for Device Bot.
 publish_to: none
-version: 0.1.20+20
+version: 0.1.21+21
 
 environment:
   sdk: ^3.11.1

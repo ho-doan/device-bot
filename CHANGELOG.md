@@ -1,3 +1,20 @@
+## 0.1.21 — 2026-11-15
+
+* Add the Apache-2.0 license and package metadata. Include LICENSE and NOTICE
+  in release archives and retain them under `licenses/device-bot/` on install.
+* Introduce a shared Device Bot icon for QC, QA Reports and the iPhone Broadcast
+  app, with an amber variant for Orbit example apps and a reproducible SVG-to-icon tool.
+* Add the repository technology/app map and an end-to-end Mermaid workflow
+  connecting agents, QC, YAML replay, platform drivers, Live and report review.
+* Run the QC web automation suite on Linux and Windows before publishing.
+  Bring report controls into view on short windows and exclude locked Chrome
+  profiles from evidence uploads. Configure fixture downloads for each flow's
+  browser context so an inactive page cannot prevent report download checks.
+* Teach `implement-to-mcp-test` to draft Flutter YAML like the QC inspector:
+  use observed IDs/labels or scoped positions, run a stable flow first, then
+  optimize selectors when useful.
+* Skip Rust cache warming on exact cache hits and retain build timings for misses.
+
 ## 0.1.20 — 2026-11-15
 
 * Align Live video, element overlays and pointer mapping with the decoded frame

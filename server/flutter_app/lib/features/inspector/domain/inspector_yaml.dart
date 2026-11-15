@@ -1,4 +1,4 @@
-import 'dart:convert';
+import 'package:mobile_mcp_companion/core/models/flow_yaml.dart';
 
 import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
@@ -106,7 +106,7 @@ String buildInspectorFlowYaml({
   }
 }
 
-String _yamlQuoteValue(String value) => jsonEncode(value);
+String _yamlQuoteValue(String value) => encodeFlowYamlValue(value);
 
 bool _hasLabel(AdminElement element, String label) =>
     [element.text, element.contentDescription].whereType<String>().any(

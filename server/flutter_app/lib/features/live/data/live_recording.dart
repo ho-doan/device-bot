@@ -1,5 +1,5 @@
 import 'package:mobile_mcp_companion/core/models/live_models.dart';
-import 'dart:convert';
+import 'package:mobile_mcp_companion/core/models/flow_yaml.dart';
 import 'package:mobile_mcp_companion/features/inspector/domain/inspector_yaml.dart';
 import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 import 'package:mobile_mcp_companion/features/live/data/recording_store.dart';
@@ -100,7 +100,7 @@ class LiveRecording {
         );
       }
     }
-    return '$prefix  - id: ${action.wireName}_$sequence\n    call_tool:\n      name: $tool\n      arguments: ${jsonEncode(args)}';
+    return '$prefix  - id: ${action.wireName}_$sequence\n    call_tool:\n      name: $tool\n      arguments: ${encodeFlowYamlValue(args)}';
   }
 
   Future<void> commit(String step) async {
@@ -131,22 +131,22 @@ class LiveRecording {
         '  - id: select_device\n    select_device:\n      platform: chrome\n      state: available',
       );
       steps.add(
-        '  - id: open_page\n    call_tool:\n      name: mobile_open_url\n      arguments: ${jsonEncode({'deviceId': '<selected>', 'url': captureContext.url})}',
+        '  - id: open_page\n    call_tool:\n      name: mobile_open_url\n      arguments: ${encodeFlowYamlValue({'deviceId': '<selected>', 'url': captureContext.url})}',
       );
       steps.add('  - id: wait_for_page\n    wait:\n      ms: 500');
     } else {
       steps.add(
-        '  - id: select_device\n    select_device:\n      id: ${jsonEncode(deviceId)}\n      platform: $platform\n      state: available',
+        '  - id: select_device\n    select_device:\n      id: ${encodeFlowYamlValue(deviceId)}\n      platform: $platform\n      state: available',
       );
       final app = captureContext.appId;
       if (app != null && app.isNotEmpty) {
         steps.add(
-          '  - id: launch_recorded_app\n    launch_app:\n      app_id: ${jsonEncode(app)}',
+          '  - id: launch_recorded_app\n    launch_app:\n      app_id: ${encodeFlowYamlValue(app)}',
         );
       }
     }
     steps.addAll(_steps);
-    return 'version: 2\nname: ${jsonEncode(name)}\ndescription: ${jsonEncode('Recorded live actions for $platform only.')}\nsteps:\n${steps.join('\n')}\n';
+    return 'version: 2\nname: ${encodeFlowYamlValue(name)}\ndescription: ${encodeFlowYamlValue('Recorded live actions for $platform only.')}\nsteps:\n${steps.join('\n')}\n';
   }
 
   static String? defaultDirectory() => recordingHomePath();

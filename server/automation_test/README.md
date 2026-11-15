@@ -183,6 +183,14 @@ node --test server/automation_test/file_chooser.test.cjs
 python3 server/automation_test/run.py --only report-download
 ```
 
+CI còn xuất recording từ test Flutter, chuyển các YAML và expected JSON sang
+cả Linux/Windows, rồi chạy `verify_recording_contracts.py` sau khi build Rust.
+Bài này replay qua MCP stdio fixture và so sánh text được gửi với input ban đầu,
+bao gồm Unicode, newline và chuỗi trông giống `${variable}`. Nó kiểm tra hợp đồng
+export/compiler/transport; không thay thế kiểm thử bàn phím hoặc file picker
+native. Xem [audit edge cases](../../docs/automation-edge-case-audit.md) để biết
+coverage đã có và những giới hạn còn lại.
+
 Đây là smoke/regression suite cho các luồng trên; chưa bao phủ mọi backend Live,
 toàn bộ thao tác thiết bị, import file thành công trên desktop/lưu export thành công,
 hay truy cập từ máy LAN

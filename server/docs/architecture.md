@@ -98,6 +98,14 @@ error kind from words in its message. Opaque MCP tool failures remain execution
 failures unless their kind is supplied explicitly. Report fields retain their
 existing string values for JSON consumers and persisted history.
 
+In flow templates, `${name}` resolves a variable and `$${name}` is the literal
+text `${name}`. Exporters escape every recorded `${` opener, including an
+unfinished `${...` typed by a user. Variable values are opaque and are not
+expanded again. The export-only encoder lives in QC's `core/models/flow_yaml.dart`;
+normal MCP JSON retains the original values. CI exports real Flutter recordings
+and replays them through the Rust compiler and a stdio MCP fixture on Linux and
+Windows, comparing the forwarded text with the original recorded input.
+
 Each platform crate owns its external process commands, output parsers, and
 driver-specific tests. `robot-android` may depend on `robot-core`, but no
 platform driver may depend on `mcp-server`; tool-to-driver adaptation belongs

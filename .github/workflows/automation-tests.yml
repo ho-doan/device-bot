@@ -44,6 +44,8 @@ jobs:
           flutter test
       - name: Analyze and test QC
         working-directory: server/flutter_app
+        env:
+          LIVE_RECORDING_FIXTURE_DIR: ${{ github.workspace }}/artifacts/recording-contracts
         run: |
           dart run build_runner build
           git diff --exit-code -- lib/core/models
@@ -59,6 +61,12 @@ jobs:
         with:
           name: automation-qc-web
           path: server/flutter_app/build/web
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: automation-recording-contracts
+          path: artifacts/recording-contracts
           if-no-files-found: error
           retention-days: 7
 
@@ -88,6 +96,10 @@ jobs:
         with:
           name: automation-qc-web
           path: server/flutter_app/build/web
+      - uses: actions/download-artifact@v4
+        with:
+          name: automation-recording-contracts
+          path: artifacts/recording-contracts
       - name: Test automation harness
         run: python -m unittest discover -s server/automation_test -p "test_*.py" -v
       - name: Test browser fixture setup
@@ -96,6 +108,8 @@ jobs:
         run: cargo test --manifest-path server/Cargo.toml --locked -p robot-chrome -p robot-windows -p robot-android -- --test-threads=1
       - name: Build the backend and flow runner under test
         run: cargo build --manifest-path server/Cargo.toml --locked -p device-bot -p robot-flow -p robot-report
+      - name: Replay Flutter exports through the Rust compiler and MCP transport
+        run: python server/automation_test/verify_recording_contracts.py --fixtures artifacts/recording-contracts
       - name: Install Linux virtual display
         if: runner.os == 'Linux'
         run: |

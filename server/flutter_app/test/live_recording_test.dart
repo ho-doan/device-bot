@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_mcp_companion/features/live/data/live_recording.dart';
@@ -18,6 +19,29 @@ const editor = AdminElement(
 );
 
 void main() {
+  test(
+    'export keeps literal template-like input for runner round trips',
+    () async {
+      const text =
+          'Tiếng Việt 👩🏽‍💻\n"quoted" \\path '
+          r'${literal_missing} $${dollars} ${unfinished';
+      final recording = LiveRecording(deviceId: 'phone-1', platform: 'android');
+      await recording.commit(
+        recording.prepare({'action': 'type', 'text': text}, [], null),
+      );
+      final yaml = recording.toYaml();
+      expect(yaml, contains('literal_missing'));
+      final fixture = Platform.environment['LIVE_RECORDING_FIXTURE_DIR'];
+      if (fixture != null) {
+        await Directory(fixture).create(recursive: true);
+        await File('$fixture/literal.yaml').writeAsString(yaml);
+        await File(
+          '$fixture/literal.expected.json',
+        ).writeAsString(jsonEncode({'text': text}));
+      }
+    },
+  );
+
   test(
     'Chrome export boots a new case and preserves ordered actions and text',
     () async {
@@ -72,6 +96,17 @@ void main() {
       if (fixture != null) {
         await Directory(fixture).create(recursive: true);
         await File('$fixture/chrome.yaml').writeAsString(yaml);
+        await File('$fixture/chrome.expected.json').writeAsString(
+          jsonEncode({
+            'texts': [
+              for (final input in inputs)
+                if (input['action'] == 'type')
+                  input['text']
+                else if (input['action'] == 'clear')
+                  '',
+            ],
+          }),
+        );
       }
     },
   );
@@ -111,6 +146,9 @@ void main() {
       final fixture = Platform.environment['LIVE_RECORDING_FIXTURE_DIR'];
       if (fixture != null) {
         await File('$fixture/android.yaml').writeAsString(recording.toYaml());
+        await File(
+          '$fixture/android.expected.json',
+        ).writeAsString(jsonEncode({'texts': []}));
       }
     },
   );

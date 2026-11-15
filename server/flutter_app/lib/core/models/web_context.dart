@@ -1,4 +1,5 @@
 import 'package:json_annotation/json_annotation.dart';
+import 'flow_yaml.dart';
 
 part 'web_context.g.dart';
 
@@ -71,16 +72,16 @@ class WebContext {
   String toYaml(String indent) {
     final lines = <String>['${indent}web_context:'];
     if (appId != null && appId!.isNotEmpty) {
-      lines.add('$indent  app_id: "${_yaml(appId!)}"');
+      lines.add('$indent  app_id: ${encodeFlowYamlValue(appId!)}');
     }
     if ((pageUrl != null && pageUrl!.isNotEmpty) ||
         (pageTitle != null && pageTitle!.isNotEmpty)) {
       lines.add('$indent  page:');
       if (pageUrl != null && pageUrl!.isNotEmpty) {
-        lines.add('$indent    url: "${_yaml(pageUrl!)}"');
+        lines.add('$indent    url: ${encodeFlowYamlValue(pageUrl!)}');
       }
       if (pageTitle != null && pageTitle!.isNotEmpty) {
-        lines.add('$indent    title: "${_yaml(pageTitle!)}"');
+        lines.add('$indent    title: ${encodeFlowYamlValue(pageTitle!)}');
       }
     }
     if (framePath.isNotEmpty) {
@@ -88,11 +89,11 @@ class WebContext {
       for (final frame in framePath) {
         final fields = <String>[
           if (frame.css != null && frame.css!.isNotEmpty)
-            'css: "${_yaml(frame.css!)}"',
+            'css: ${encodeFlowYamlValue(frame.css!)}',
           if (frame.name != null && frame.name!.isNotEmpty)
-            'name: "${_yaml(frame.name!)}"',
+            'name: ${encodeFlowYamlValue(frame.name!)}',
           if (frame.url != null && frame.url!.isNotEmpty)
-            'url: "${_yaml(frame.url!)}"',
+            'url: ${encodeFlowYamlValue(frame.url!)}',
           if (frame.position != null) 'position: ${frame.position}',
         ];
         lines.add('$indent    - ${fields.join('\n$indent      ')}');
@@ -101,9 +102,6 @@ class WebContext {
     return lines.join('\n');
   }
 }
-
-String _yaml(String value) =>
-    value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('\n', ' ');
 
 @JsonSerializable(explicitToJson: true, includeIfNull: false)
 class WebContextPayload {

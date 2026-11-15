@@ -232,6 +232,15 @@ pub fn resolve(value: &Value, variables: &BTreeMap<String, Value>) -> Result<Val
                 let mut rest = text.as_str();
                 let mut result = String::new();
                 while let Some(start) = rest.find("${") {
+                    // Exporters escape literal template openers by doubling `$`.
+                    // Consume only the opener: even `${unfinished` is valid input
+                    // when it came from a recording rather than a template.
+                    if let Some(prefix) = rest[..start].strip_suffix('$') {
+                        result.push_str(prefix);
+                        result.push_str("${");
+                        rest = &rest[start + 2..];
+                        continue;
+                    }
                     result.push_str(&rest[..start]);
                     let end =
                         rest[start + 2..].find('}').ok_or("unterminated variable")? + start + 2;
@@ -337,6 +346,10 @@ fn resolve_definition(
             Value::String(text) => {
                 let mut rest = text.as_str();
                 while let Some(start) = rest.find("${") {
+                    if rest[..start].ends_with('$') {
+                        rest = &rest[start + 2..];
+                        continue;
+                    }
                     let end =
                         rest[start + 2..].find('}').ok_or("unterminated variable")? + start + 2;
                     let key = &rest[start + 2..end];
@@ -856,5 +869,58 @@ mod input_metadata_tests {
             &Profile::default(),
         )
         .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod literal_escape_tests {
+    use super::*;
+
+    #[test]
+    fn escaped_templates_are_literal_even_when_unclosed_or_nested() {
+        for (source, expected) in [
+            ("$${missing}", "${missing}"),
+            ("$$${dollars}", "$${dollars}"),
+            ("$${unfinished", "${unfinished"),
+            ("$${outer$${inner}}", "${outer${inner}}"),
+        ] {
+            assert_eq!(
+                resolve(&json!(source), &BTreeMap::new()).unwrap(),
+                json!(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn literal_text_and_real_variables_can_coexist_without_recursive_expansion() {
+        let variables = BTreeMap::from([
+            ("name".into(), json!("${opaque}")),
+            ("list".into(), json!([1, 2])),
+        ]);
+        assert_eq!(
+            resolve(
+                &json!({"text":"$${missing} / ${name}", "items":"${list}"}),
+                &variables
+            )
+            .unwrap(),
+            json!({"text":"${missing} / ${opaque}", "items":[1, 2]})
+        );
+    }
+
+    #[test]
+    fn escaped_profile_values_do_not_create_phantom_dependencies() {
+        let mut profile = Profile::default();
+        profile
+            .variables
+            .insert("recorded".into(), json!("$${missing} / $${unfinished"));
+        let flow = FlowDocument::from_yaml(
+            "version: 2\nname: literal\nsteps:\n  - type_text: {text: '${recorded}'}\n",
+        )
+        .unwrap();
+        let steps = compile(&flow, &profile).unwrap();
+        assert_eq!(
+            steps[0].action["type_text"]["text"],
+            "${missing} / ${unfinished"
+        );
     }
 }

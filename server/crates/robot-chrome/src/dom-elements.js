@@ -27,13 +27,14 @@
             const tag = element.tagName.toLowerCase();
             const type = (element.getAttribute('type') || '').toLowerCase();
             const role = (element.getAttribute('role') || '').toLowerCase();
+            const menuItem = ['menuitem', 'menuitemcheckbox', 'menuitemradio'].includes(role);
             let elementType = '';
             if (role === 'checkbox' || type === 'checkbox') elementType = 'checkBox';
             else if (role === 'switch') elementType = 'switch';
             else if (role === 'radio' || type === 'radio') elementType = 'radio';
             else if (role === 'slider' || type === 'range') elementType = 'slider';
             else if (tag === 'textarea' || tag === 'input' || role === 'textbox' || role === 'searchbox') elementType = 'textField';
-            else if (tag === 'button' || role === 'button') elementType = 'button';
+            else if (tag === 'button' || role === 'button' || menuItem) elementType = 'button';
             else if (tag === 'a' || role === 'link') elementType = 'link';
             else if (tag === 'img' || role === 'img') elementType = 'image';
             const selectable = type === 'checkbox' || type === 'radio' || role === 'checkbox' || role === 'radio' || role === 'switch';
@@ -45,8 +46,8 @@
               value: typeof element.value === 'string' ? element.value : null,
               elementType,
               left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom,
-              clickable: typeof element.onclick === 'function' || role === 'button' || ['a', 'button', 'input', 'select', 'textarea'].includes(tag),
-              enabled: !element.disabled,
+              clickable: typeof element.onclick === 'function' || role === 'button' || menuItem || ['a', 'button', 'input', 'select', 'textarea'].includes(tag),
+              enabled: !element.disabled && element.getAttribute('aria-disabled') !== 'true',
               focused: document.activeElement === element,
               checked: selectable ? !!element.checked : null,
               selected: element.getAttribute('aria-selected') === 'true' ? true : (element.getAttribute('aria-selected') === 'false' ? false : null)

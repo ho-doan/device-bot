@@ -1,0 +1,21 @@
+version: 2
+name: qc_windows_web_live_lifecycle
+description: Open and close Windows Live from QC web using accessible menu selectors.
+steps:
+  - run: {recipe: open_qc_web}
+  - tap_element: {label: '${env:QC_WINDOWS_LIVE_LABEL}', element_type: button}
+  - assert_element: {label: Windows Live, timeout_ms: 15000}
+  - tap_element: {label: Running app, element_type: button, timeout_ms: 30000}
+  - tap_element: {label: '${env:QC_WINDOWS_APP_LABEL}', element_type: button}
+  - tap_element: {label: Window, element_type: button, timeout_ms: 15000}
+  - tap_element: {label: '${env:QC_WINDOWS_WINDOW_TITLE}', element_type: button}
+  - tap_element: {label: Open Live, element_type: button}
+  - assert_element: {label: Text for focused field, element_type: textField, timeout_ms: 30000}
+  - assert_element: {filter: 'elements from the native tree.', timeout_ms: 60000}
+  - assert_absent: {filter: 'Inspection unavailable:'}
+  - assert_absent: {label: Live mirror stopped.}
+  - screenshot: {path: windows-live.png}
+  - tap_element: {label: Close, element_type: button}
+  - assert_element: {label: MCP session connected., timeout_ms: 15000}
+  - tap_element: {label: Refresh, element_type: button}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 30000}

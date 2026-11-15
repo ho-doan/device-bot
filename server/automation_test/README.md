@@ -1,5 +1,40 @@
 # QC / report self-tests
 
+## Test web QC với backend Windows qua LAN
+
+`run_remote_web.py` chạy Chrome/profile và kho report riêng trên máy chạy test,
+kết nối tới backend đã có qua `--url`. Token lấy từ `DEVICE_BOT_AUTH`, không
+ghi token vào YAML. Backend Windows không bị restart hay cài đè. Các thao tác
+Live trong bài dưới chỉ mở/đóng viewer và đọc inspector, không nhập dữ liệu
+vào app Windows đang được xem.
+
+```sh
+# Set DEVICE_BOT_AUTH in the environment before running (do not commit it).
+python3 server/automation_test/run_remote_web.py \
+  --url http://192.168.1.183:3337 --output artifacts/remote-qc-auth
+
+# Build current web assets, then test them against that same Windows backend.
+scripts/build_qc_web.sh
+export QC_WINDOWS_LIVE_LABEL='Live control of DESKTOP-KHB7APD'
+export QC_WINDOWS_APP_LABEL='mobile_mcp_companion · pid 8888'
+export QC_WINDOWS_WINDOW_TITLE='Device Bot Companion'
+python3 server/automation_test/run_remote_web.py \
+  --url http://192.168.1.183:3337 --local-web --repeat 3 \
+  --scenario server/automation_test/qc-windows-web-live.yaml \
+  --inspection-failures 1 --output artifacts/remote-qc-live
+```
+
+Thay các nhãn app/PID/cửa sổ theo danh sách thực tế trước mỗi đợt test.
+Build `device-bot` và `robot-flow` debug trước khi chạy. `--local-web` phục vụ
+web build ở loopback và proxy MCP tới Windows; nó kiểm source web mới mà không
+thay bản Windows đã cài. `--inspection-failures` chỉ chèn lỗi vào truy vấn
+inspector Windows của trang test. `summary.json` phân biệt lỗi được chèn và
+phản hồi thật; mọi case lặp đều phải PASS. Retry inspector có giới hạn ba lần,
+sau đó người dùng có thể chọn **Retry inspection**. Không suy kết quả web
+thành xác minh native executable Windows mới.
+
+## Bộ self-test cục bộ
+
 Các YAML chạy bằng **Device Bot / robot-flow**, dùng Chrome thật và QC desktop
 thật. Không dùng Computer Use để thay cho các bước của bot.
 

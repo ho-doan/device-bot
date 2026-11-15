@@ -48,6 +48,97 @@ class _RenderedTestVideo extends _TestVideo {
 }
 
 void main() {
+  testWidgets('Windows inspection recovers without reopening healthy video', (
+    tester,
+  ) async {
+    final first = StreamController<AndroidLiveUpdate>.broadcast();
+    final recovered = StreamController<AndroidLiveUpdate>.broadcast();
+    addTearDown(() {
+      unawaited(first.close());
+    });
+    addTearDown(() {
+      unawaited(recovered.close());
+    });
+    var inspections = 0;
+    var videos = 0;
+    final inputs = <Map<String, dynamic>>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AndroidLiveDialog(
+          deviceName: 'Windows',
+          platform: 'windows',
+          connect: () => ++inspections == 1 ? first.stream : recovered.stream,
+          openVideo: () async {
+            videos++;
+            return _TestVideo({'originX': 100, 'originY': 200});
+          },
+          onInput: (input) async => inputs.add(input),
+        ),
+      ),
+    );
+    await tester.pump();
+    first.addError(StateError('Windows Live: deadline has elapsed'));
+    await first.close();
+    await tester.pump();
+    expect(find.textContaining('Retrying inspection in 1 s'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+    await tester.pump();
+    expect(inspections, 2);
+    expect(videos, 1);
+    recovered.add(AndroidLiveElements(elements: const [], source: 'native'));
+    await tester.pump();
+    expect(find.textContaining('deadline has elapsed'), findsNothing);
+    expect(find.text('Live mirror stopped.'), findsNothing);
+    await tester.tap(find.text('Down 50 px'));
+    await tester.pump();
+    expect(inputs, hasLength(1));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('inspection retries are bounded, manual retry and close work', (
+    tester,
+  ) async {
+    var inspections = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AndroidLiveDialog(
+          deviceName: 'Windows',
+          platform: 'windows',
+          connect: () {
+            inspections++;
+            return Stream.error(
+              StateError('Windows Live: deadline has elapsed'),
+            );
+          },
+          onInput: (_) async {},
+        ),
+      ),
+    );
+    await tester.pump();
+    for (final seconds in [1, 2, 4]) {
+      await tester.pump(Duration(seconds: seconds));
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+    expect(inspections, 4);
+    await tester.pump(const Duration(seconds: 30));
+    expect(inspections, 4);
+    await tester.tap(find.byKey(const Key('live-retry-inspection')));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+    await tester.pump();
+    expect(inspections, 5);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 10));
+    expect(inspections, 5);
+  });
+
   testWidgets('Windows inspection boxes cannot paint outside the fitted video', (
     tester,
   ) async {
@@ -417,6 +508,61 @@ void main() {
     expect(terminations, 0);
   });
   const window = AppWindow(windowId: '456', processId: 123, title: 'Editor');
+  testWidgets('returning to an app ignores its older window request', (
+    tester,
+  ) async {
+    final requests = <Completer<List<AppWindow>>>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: WindowsLiveTargetDialog(
+          runningApps: Future.value(const [
+            RunningApp(processId: 123, name: 'Editor'),
+            RunningApp(processId: 789, name: 'Browser'),
+          ]),
+          windowsFor: (_) {
+            final request = Completer<List<AppWindow>>();
+            requests.add(request);
+            return request.future;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    Future<void> select(String label) async {
+      await tester.tap(find.byKey(const Key('windows-live-app')));
+      // A window query is still pending, so do not settle its progress bar.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text(label).last);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    await select('Editor · pid 123');
+    await select('Browser · pid 789');
+    await select('Editor · pid 123');
+    requests[2].complete(const [window]);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('windows-live-window-123')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Editor').last);
+    await tester.pumpAndSettle();
+    requests[0].complete(const [
+      AppWindow(windowId: '999', processId: 123, title: 'Closed old window'),
+    ]);
+    requests[1].complete(const []);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Closed old window'), findsNothing);
+    expect(find.text('Editor'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Open Live'))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
   test('window identity and negative monitor origins remain scoped', () {
     expect(windowsLiveDeviceId(window), 'windows:123:456');
     const origin = <String, dynamic>{'originX': -1400, 'originY': 120};

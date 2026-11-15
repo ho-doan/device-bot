@@ -31,6 +31,17 @@ test('native controls and onclick handlers remain clickable', async () => {
   assert.equal((await snapshot('div')).clickable, false);
 });
 
+test('Flutter popup menu rows expose a clickable action supported by YAML selectors', async () => {
+  for (const role of ['menuitem', 'menuitemcheckbox', 'menuitemradio']) {
+    const element = await snapshot('flt-semantics', { role, 'aria-label': 'Editor · pid 123' });
+    assert.equal(element.elementType, 'button');
+    assert.equal(element.clickable, true);
+    assert.equal(element.contentDescription, 'Editor · pid 123');
+  }
+  const disabled = await snapshot('flt-semantics', { role: 'menuitem', 'aria-disabled': 'true' });
+  assert.equal(disabled.enabled, false);
+});
+
 test('empty fields have an empty value; non-fields have no value', async () => {
   assert.equal((await snapshot('input', {}, { value: '' })).value, '');
   assert.equal((await snapshot('textarea', {}, { value: 'hello' })).value, 'hello');

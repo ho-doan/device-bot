@@ -28,8 +28,10 @@ class _WindowsLiveTargetDialogState extends State<WindowsLiveTargetDialog> {
   List<AppWindow> _windows = const [];
   bool _loading = false;
   String? _error;
+  int _windowRequest = 0;
 
   Future<void> _selectApp(int processId) async {
+    final request = ++_windowRequest;
     setState(() {
       _processId = processId;
       _window = null;
@@ -39,13 +41,13 @@ class _WindowsLiveTargetDialogState extends State<WindowsLiveTargetDialog> {
     });
     try {
       final windows = await widget.windowsFor(processId);
-      if (!mounted || _processId != processId) return;
+      if (!mounted || request != _windowRequest) return;
       setState(() {
         _windows = windows.where((w) => w.processId == processId).toList();
         _loading = false;
       });
     } on Object catch (error) {
-      if (!mounted || _processId != processId) return;
+      if (!mounted || request != _windowRequest) return;
       setState(() {
         _loading = false;
         _error = 'Could not list windows: $error';

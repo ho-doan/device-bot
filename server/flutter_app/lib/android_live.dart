@@ -120,6 +120,10 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   bool _openingVideo = false;
   Timer? _reconnectTimer;
   int _reconnectAttempts = 0;
+  Timer? _inspectionTimer;
+  int _inspectionAttempts = 0;
+  int _inspectionGeneration = 0;
+  String? _inspectionError;
   bool get _isWindowLive => ['windows', 'macos'].contains(widget.platform);
   bool get _isNativeLive =>
       ['windows', 'macos', 'ios'].contains(widget.platform);
@@ -140,20 +144,56 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   }
 
   void _connectInspection() {
+    final generation = ++_inspectionGeneration;
     _subscription = widget.connect().listen(
-      _onUpdate,
+      (update) {
+        if (generation == _inspectionGeneration) _onUpdate(update);
+      },
       onError: (Object error) {
-        if (mounted) setState(() => _status = error.toString());
+        if (!mounted || generation != _inspectionGeneration) return;
+        _inspectionTimer?.cancel();
+        final retry = _inspectionAttempts < 3;
+        final seconds = 1 << _inspectionAttempts;
+        if (retry) _inspectionAttempts++;
+        setState(() {
+          _stopped = true;
+          _elements = const [];
+          _selectedIndex = null;
+          _deviceFocus = null;
+          _inspectionError =
+              'Inspection unavailable: $error'
+              '${retry ? ' Retrying inspection in $seconds s ($_inspectionAttempts/3)…' : ''}';
+        });
+        if (retry) {
+          _inspectionTimer = Timer(Duration(seconds: seconds), () {
+            if (mounted) unawaited(_retryInspection());
+          });
+        }
       },
       onDone: () {
-        if (mounted) setState(() => _stopped = true);
+        if (mounted && generation == _inspectionGeneration) {
+          setState(() => _stopped = true);
+        }
       },
     );
+  }
+
+  Future<void> _retryInspection({bool manual = false}) async {
+    _inspectionTimer?.cancel();
+    if (manual) _inspectionAttempts = 0;
+    final generation = ++_inspectionGeneration;
+    final previous = _subscription;
+    _subscription = null;
+    await previous?.cancel().catchError((Object _) {});
+    if (!mounted || generation != _inspectionGeneration) return;
+    _connectInspection();
   }
 
   @override
   void dispose() {
     _reconnectTimer?.cancel();
+    _inspectionTimer?.cancel();
+    _inspectionGeneration++;
     unawaited(_subscription?.cancel());
     _text.dispose();
     _elementScroll.dispose();
@@ -267,6 +307,10 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         final reveal =
             selection != null && (followFocus || selection != _selectedIndex);
         setState(() {
+          _inspectionTimer?.cancel();
+          _inspectionAttempts = 0;
+          _inspectionError = null;
+          _stopped = false;
           _elements = elements;
           _source = source;
           _selectedIndex = selection;
@@ -331,6 +375,10 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     });
     try {
       if (widget.openVideo != null) {
+        _inspectionGeneration++;
+        _inspectionTimer?.cancel();
+        _inspectionAttempts = 0;
+        _inspectionError = null;
         await _subscription?.cancel();
         _subscription = null;
         _stopped = false;
@@ -710,6 +758,28 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                       color: Theme.of(context).colorScheme.error,
                     ),
                   ),
+                ),
+              ),
+            if (_inspectionError != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Wrap(
+                  spacing: 12,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      _inspectionError!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                    TextButton.icon(
+                      key: const Key('live-retry-inspection'),
+                      onPressed: () => _retryInspection(manual: true),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry inspection'),
+                    ),
+                  ],
                 ),
               ),
             Expanded(

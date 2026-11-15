@@ -17,6 +17,10 @@ permissions:
   contents: write
 
 jobs:
+  automation:
+    name: Verify QC automation before publishing
+    uses: ./.github/workflows/automation-tests.yml
+
   qc-web:
     name: Build shared QC web
     runs-on: ubuntu-latest
@@ -129,7 +133,7 @@ jobs:
   publish:
     name: Publish GitHub release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, automation]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

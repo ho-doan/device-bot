@@ -46,6 +46,14 @@ CASES = {
 }
 
 
+def select_cases(suite, only=None):
+    if only:
+        return [only]
+    return [name for name, config in CASES.items()
+            if suite == 'all' or (suite == 'live' and config.get('live'))
+            or (suite == 'web' and not config.get('desktop'))]
+
+
 def wait_backend(server, base_url):
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
@@ -248,14 +256,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--only", choices=CASES)
-    selection.add_argument("--suite", choices=['all', 'live'], default='all')
+    selection.add_argument("--suite", choices=['all', 'live', 'web'], default='all')
     parser.add_argument("--port", type=int, default=3338)
     parser.add_argument("--app", type=Path, help="Built QC app bundle/executable")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     host = {"Darwin": "macos", "Windows": "windows"}.get(platform.system())
-    names = [args.only] if args.only else [name for name, config in CASES.items()
-                                         if args.suite == 'all' or config.get('live')]
+    names = select_cases(args.suite, args.only)
     if host == 'windows' and not args.only and args.suite == 'all':
         names = [name for name in names if not CASES[name].get('live')]
         print('Skipping the six macOS-only Live cases on Windows.', flush=True)

@@ -1,0 +1,117 @@
+name: QC automation tests
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'server/**'
+      - 'scripts/**'
+      - '.github/actions/setup-release-flutter/**'
+      - '.github/workflows/automation-tests.yml'
+      - '.github/workflows/release.yml'
+  pull_request:
+    paths:
+      - 'server/**'
+      - 'scripts/**'
+      - '.github/actions/setup-release-flutter/**'
+      - '.github/workflows/automation-tests.yml'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Build QC web and test Flutter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-release-flutter
+        with:
+          platform: web
+      - name: Analyze and test QC
+        working-directory: server/flutter_app
+        run: |
+          flutter analyze
+          flutter test
+      - name: Build the web app under test
+        working-directory: server/flutter_app
+        run: flutter build web --release --base-href /qc/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: automation-qc-web
+          path: server/flutter_app/build/web
+          if-no-files-found: error
+          retention-days: 7
+
+  e2e:
+    name: QC web E2E / ${{ matrix.runner }}
+    needs: web
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server -> target
+          shared-key: automation-${{ runner.os }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: automation-qc-web
+          path: server/flutter_app/build/web
+      - name: Test automation harness
+        run: python -m unittest discover -s server/automation_test -p "test_*.py" -v
+      - name: Test capture and input drivers
+        run: cargo test --manifest-path server/Cargo.toml --locked -p robot-chrome -p robot-windows -p robot-android -- --test-threads=1
+      - name: Build the backend and flow runner under test
+        run: cargo build --manifest-path server/Cargo.toml --locked -p device-bot -p robot-flow -p robot-report
+      - name: Install Linux virtual display
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+      - name: Run all web YAML cases on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" python server/automation_test/run.py --suite web --output artifacts/ci-qc-web
+      - name: Run all web YAML cases on Windows
+        if: runner.os == 'Windows'
+        run: python server/automation_test/run.py --suite web --output artifacts/ci-qc-web
+      - name: Write test summary
+        if: always()
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          summary = Path('artifacts/ci-qc-web/summary.json')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
+              output.write('## QC web E2E / ${{ matrix.runner }}\n\n')
+              if not summary.exists():
+                  output.write('Suite did not complete. Check the job log and evidence artifact.\n')
+              else:
+                  results = json.loads(summary.read_text(encoding='utf-8'))
+                  output.write('| Case | Status |\n| --- | --- |\n')
+                  for result in results:
+                      output.write(f"| {result['test']} | {result['status']} |\n")
+      - name: Upload logs, trace, screenshots and report history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qc-web-evidence-${{ matrix.runner }}
+          path: artifacts/ci-qc-web
+          if-no-files-found: warn
+          retention-days: 7

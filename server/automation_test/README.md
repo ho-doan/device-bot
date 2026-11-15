@@ -1,5 +1,30 @@
 # QC / report self-tests
 
+## GitHub CI
+
+`.github/workflows/automation-tests.yml` chạy khi PR/push vào `master` thay đổi
+source, scripts hoặc workflow liên quan; cũng có thể chạy thủ công. Workflow
+release gọi lại bộ này và chỉ publish khi cả build lẫn automation đều PASS.
+
+CI chạy analyzer/toàn bộ Flutter tests, build web từ source, rồi chạy 10 YAML
+web bằng Chrome thật trên Ubuntu và Windows. Linux dùng Xvfb; không mock UI
+hay kết quả flow. Mỗi runner build backend/runner riêng, dùng token ngẫu nhiên,
+port loopback và kho report riêng. CI cũng chạy test harness và các driver
+Chrome/Windows/Android. Case FAIL làm job FAIL; case import-fail chỉ PASS khi
+payload FAIL đúng dự kiến và có evidence/history thật.
+
+Mỗi job có bảng kết quả trong GitHub Actions summary. Artifact
+`qc-web-evidence-<runner>` giữ `summary.json`, log, trace, screenshot và history
+trong 7 ngày, kể cả khi test thất bại. Chạy cùng bộ tại local:
+
+```sh
+python3 server/automation_test/run.py --suite web
+```
+
+Các case desktop/Live cần phiên màn hình thật, quyền automation, hoặc backend
+Windows trong LAN vẫn chạy riêng theo hướng dẫn bên dưới. CI web không xác
+nhận native Windows Live, record/replay desktop hay con trỏ vật lý.
+
 ## Test web QC với backend Windows qua LAN
 
 `run_remote_web.py` chạy Chrome/profile và kho report riêng trên máy chạy test,

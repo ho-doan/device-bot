@@ -42,8 +42,30 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - name: Restore Rust release dependency cache
+        id: rust-cache
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: server -> target
           shared-key: release-${{ matrix.target }}
-      - run: cargo build --manifest-path server/Cargo.toml --release --locked -p device-bot -p robot-flow -p robot-report --target ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Report Rust dependency cache status
+        shell: bash
+        env:
+          EXACT_CACHE_HIT: ${{ steps.rust-cache.outputs.cache-hit }}
+        run: |
+          echo "Exact Rust dependency cache hit: ${EXACT_CACHE_HIT:-false}"
+          echo "A non-exact hit can still restore compatible dependencies from a fallback key."
+          echo "Exact hits skip only this warmer build; release jobs still compile workspace code."
+      - name: Warm Rust release dependencies
+        id: warm-build
+        if: steps.rust-cache.outputs.cache-hit != 'true'
+        run: cargo build --manifest-path server/Cargo.toml --release --locked --timings -p device-bot -p robot-flow -p robot-report --target ${{ matrix.target }}
+      - name: Upload Rust warm-build timings
+        if: always() && steps.warm-build.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-warm-timings-${{ matrix.target }}
+          path: server/target/cargo-timings/*.html
+          if-no-files-found: ignore
+          retention-days: 7

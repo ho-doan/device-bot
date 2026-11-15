@@ -28,7 +28,10 @@ mod recording;
 const DEVICE_ID: &str = "windows-host";
 const MAX_UI_NODES: usize = 5_000;
 const MAX_UI_DEPTH: usize = 128;
-const UIA_QUERY_TIMEOUT: Duration = Duration::from_millis(2_500);
+// This budget includes starting PowerShell, loading UIA assemblies and compiling
+// its helper, not just traversing the app. Cold Windows/RDP starts can use the
+// old 2.5s budget before the first element is visited.
+const UIA_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 static SCREENSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
@@ -123,9 +126,10 @@ impl WindowsRobot {
         let output = tokio::time::timeout(UIA_QUERY_TIMEOUT, self.powershell(script))
             .await
             .map_err(|_| {
-                RobotError::CommandFailed(
-                    "Windows UI Automation traversal exceeded its 2.5 second deadline".into(),
-                )
+                RobotError::CommandFailed(format!(
+                    "Windows UI Automation helper exceeded its {} second startup/traversal deadline",
+                    UIA_QUERY_TIMEOUT.as_secs()
+                ))
             })??;
         parse_uia_elements(&output)
     }

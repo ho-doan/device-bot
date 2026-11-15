@@ -263,7 +263,12 @@ impl WindowsRobot {
                 &format!("$target = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]([int64]{}))\nif ($null -eq $target -or $target.Current.ProcessId -ne {}) {{ throw 'The selected window no longer belongs to the selected app.' }}",target.hwnd,target.pid));
         let output = tokio::time::timeout(UIA_QUERY_TIMEOUT, self.powershell(script))
             .await
-            .map_err(failure)??;
+            .map_err(|_| {
+                failure(format!(
+                    "UI Automation helper exceeded its {} second startup/traversal deadline",
+                    UIA_QUERY_TIMEOUT.as_secs()
+                ))
+            })??;
         parse_uia_elements(&output)
     }
 
@@ -346,7 +351,10 @@ async fn spawn_capture(
         "-framerate",
         "30",
         "-draw_mouse",
-        "1",
+        // Cursor capture can make the real Windows cursor flicker while GDI
+        // streams the window, especially over RDP/high-DPI desktops. QC already
+        // has its own pointer; do not paint a second host cursor into the video.
+        "0",
         "-i",
     ])
     .arg(format!("hwnd={}", target.hwnd))
@@ -621,6 +629,19 @@ mod process_tests {
     }
 
     #[tokio::test]
+    async fn live_inspection_allows_powershell_startup_before_traversal() {
+        let (directory, helper) = fixture("sleep 3\nprintf '[]'").await;
+        let mut robot = WindowsRobot::new(&directory);
+        robot.powershell_path = helper.to_string_lossy().into_owned();
+        let elements = robot.live_elements("windows:42:123", None, Some(10)).await;
+        tokio::fs::remove_dir_all(directory).await.unwrap();
+        assert!(
+            elements.is_ok(),
+            "PowerShell startup must not consume the entire inspection budget: {elements:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn capture_pins_handle_and_dropping_receiver_reaps_encoder() {
         let (dir, ffmpeg) = fixture(
             r#"printf '%s\n' "$@" > "$0.args"
@@ -646,6 +667,10 @@ exec tail -f /dev/null"#,
             .await
             .unwrap();
         assert!(args.contains("-i\nhwnd=123\n"));
+        assert!(
+            args.contains("-draw_mouse\n0\n"),
+            "Live must not capture the host cursor: {args}"
+        );
         assert!(!args.contains("desktop"));
         assert!(!args.contains("title="));
         let pid = tokio::fs::read_to_string(dir.join("ffmpeg.pid"))

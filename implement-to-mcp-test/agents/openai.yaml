@@ -1,4 +1,4 @@
 interface:
   display_name: "Implement to MCP Test"
   short_description: "Create MCP control flows and capture evidence for QC"
-  default_prompt: "Dùng $implement-to-mcp-test để dựa vào behavior đã implement, tạo flow YAML tap/input/scroll qua device-bot MCP và quay evidence cho QC verify thủ công; để verify nghiệp vụ tự động cho giai đoạn được yêu cầu sau."
+  default_prompt: "Dùng $implement-to-mcp-test để tạo YAML tap/input/scroll và quay evidence cho QC; với Flutter app/web, ưu tiên cách chọn control của app QC để chạy flow ổn trước khi tối ưu selector, còn verify nghiệp vụ tự động dành cho giai đoạn được yêu cầu sau."

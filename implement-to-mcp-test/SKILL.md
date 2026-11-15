@@ -1,6 +1,6 @@
 ---
 name: implement-to-mcp-test
-description: Generate device-bot YAML control flows from implemented UI behavior and capture evidence for manual QC review. Use for post-implementation automation handoff or integration-test conversion; automated behavior verification is a later, explicitly requested mode.
+description: Generate device-bot YAML control flows from implemented UI behavior and capture evidence for manual QC review. Use for post-implementation automation handoff or integration-test conversion, including QC-style Flutter app/web flows that run before selector optimization; automated behavior verification is a later, explicitly requested mode.
 ---
 
 # Implement to MCP test
@@ -36,6 +36,12 @@ capability và evidence thực tế; đọc phần verify trong
 Đọc [readiness.md](references/readiness.md) khi setup/reset hoặc selector chưa
 rõ. Xác định app/build, thiết bị, binary/agent và khả năng recording. Chỉ sửa
 fixture/accessibility trong phạm vi được giao, giữ hành vi và ngữ nghĩa UI.
+
+**Flutter app/web:** đọc [flutter.md](references/flutter.md) trước khi chọn
+selector. Ưu tiên viết YAML như app QC: chọn control cố định, ID hoặc nhãn dễ
+nhận diện từ snapshot thực tế, chạy được chuỗi thao tác rồi mới cân nhắc tối ưu.
+Agent tự soạn YAML từ snapshot; chỉ cần mở QC khi cần inspect/record để lấy
+thông tin còn thiếu.
 
 Dùng probe nhỏ cho control chưa có evidence: query đúng target, tap/focus,
 nhập dữ liệu và scroll nếu cần. Giữ các guard tối thiểu để điều khiển đúng,

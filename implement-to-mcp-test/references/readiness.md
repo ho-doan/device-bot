@@ -18,7 +18,8 @@ heartbeat không phải bằng chứng rằng field của app không tồn tại
 
 ## Control có thể nhận diện và thao tác
 
-- Chọn selector từ cây native, lấy bounds mới sau scroll/navigation/keyboard.
+- Chọn selector từ snapshot target thực sự expose: native, Flutter hoặc DOM;
+  lấy bounds mới sau scroll/navigation/keyboard.
   Dùng label/role/ID đúng ngữ nghĩa và thu hẹp khi có nhiều control giống nhau.
 - Flutter ValueKey, Compose testTag, React Native testID/nativeID và SwiftUI
   accessibilityIdentifier không tự có ánh xạ giống nhau. Query xác nhận

@@ -67,6 +67,24 @@ drivers and transports. Run `cargo test -p robot-core` from `server/` for those
 contracts; use `cargo check --workspace --all-targets` to verify consumers after
 changing a public contract.
 
+`robot-flow::runner` owns flow lifecycle, cancellation, step deadlines, device
+scope and the MCP session. Its private modules share that state while keeping
+different reasons for change separate:
+
+- `runner/preflight.rs` validates every compiled branch before tool execution.
+- `runner/actions.rs` dispatches validated actions.
+- `runner/elements.rs` owns discovery, bounded waits, assertions, focus and
+  document scoping.
+- `runner/arguments.rs` builds the MCP payloads shared by validation and execution.
+- `runner/artifacts.rs` owns evidence paths, snapshots, recording cleanup and
+  secret redaction.
+
+Keep tool payload construction in `arguments.rs` so preflight and execution use
+the same contract. Child-module methods are visible only within the runner;
+callers continue to use `FlowRunner`, `FlowReport` and `runner::filter_elements`.
+Run `cargo test -p robot-flow` for the mocked MCP workflows, CLI subprocesses,
+schema contracts and evidence regressions before changing execution behavior.
+
 Each platform crate owns its external process commands, output parsers, and
 driver-specific tests. `robot-android` may depend on `robot-core`, but no
 platform driver may depend on `mcp-server`; tool-to-driver adaptation belongs

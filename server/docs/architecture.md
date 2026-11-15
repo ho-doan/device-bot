@@ -48,6 +48,25 @@ WebRTC for Live video. It does not invoke ADB, simctl or go-ios directly.
 `robot-core` owns portable `Robot`, device, point, and error contracts. It
 must not refer to `adb`, `simctl`, HTTP, or MCP message types.
 
+The crate root re-exports its public contracts so consumers do not depend on
+the internal file layout. Inside `robot-core`, keep changes with their owner:
+
+| Module | Responsibility |
+| --- | --- |
+| `device.rs` | Device identity, desktop targets, screenshot options and geometry |
+| `input.rs` | Portable input actions and IME commands |
+| `elements.rs` | Accessibility models, classification, filtering and result limits |
+| `web.rs` | Stable document/frame selectors, validation and context matching |
+| `robot.rs` | Driver interface, default capability behavior and helper status |
+| `registry.rs` | Device routing, session isolation and driver cleanup |
+| `video.rs` | Encoded/native stream contracts and subprocess capture transport |
+| `health.rs` | Read-only health reports and recovery recommendations |
+
+Contract and registry tests in `tests.rs` exercise the root exports used by
+drivers and transports. Run `cargo test -p robot-core` from `server/` for those
+contracts; use `cargo check --workspace --all-targets` to verify consumers after
+changing a public contract.
+
 Each platform crate owns its external process commands, output parsers, and
 driver-specific tests. `robot-android` may depend on `robot-core`, but no
 platform driver may depend on `mcp-server`; tool-to-driver adaptation belongs

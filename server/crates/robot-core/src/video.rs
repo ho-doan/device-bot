@@ -1,7 +1,29 @@
 //! Event-driven Annex-B H.264 subprocess transport shared by native capture drivers.
-use crate::{RobotError, VideoFrame, VideoStream};
+use crate::RobotError;
 use std::{process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
+/// One complete Annex B H.264 access unit, using the encoder presentation clock.
+pub struct VideoFrame {
+    pub data: Vec<u8>,
+    pub pts_us: u64,
+    pub keyframe: bool,
+}
+
+pub struct VideoStream {
+    pub width: u32,
+    pub height: u32,
+    pub frames: tokio::sync::mpsc::Receiver<Result<VideoFrame, RobotError>>,
+}
+
+/// Browser-native WebRTC media; Rust owns signaling and cancellation.
+pub struct NativeVideoStream {
+    pub sdp: String,
+    pub width: u32,
+    pub height: u32,
+    pub stop: tokio::sync::watch::Sender<bool>,
+    pub done: tokio::task::JoinHandle<()>,
+}
+
 fn failure(error: impl std::fmt::Display) -> RobotError {
     RobotError::CommandFailed(format!("Live capture: {error}"))
 }

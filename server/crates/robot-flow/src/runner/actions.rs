@@ -40,7 +40,8 @@ impl FlowRunner {
                     return Err(format!(
                         "device selection matched {} devices; require exactly one",
                         matches.len()
-                    ));
+                    )
+                    .into());
                 }
                 self.device = Some(matches[0].clone());
             }
@@ -213,7 +214,8 @@ impl FlowRunner {
                         "expected {} element(s), observed {}",
                         args["count"],
                         found.len()
-                    ));
+                    )
+                    .into());
                 }
             }
             "assert_element" => {
@@ -223,14 +225,17 @@ impl FlowRunner {
                 let e = self.find(args, false).await?;
                 let property = required(args, "property")?;
                 if e.get(property).and_then(Value::as_bool).is_none() {
-                    return Err(format!("{property} is unknown, not false"));
+                    return Err(crate::outcome::FlowError::new(
+                        crate::outcome::ErrorKind::Unsupported,
+                        format!("{property} is unknown, not false"),
+                    ));
                 }
                 if e[property] != args["expected"] {
-                    return Err(format!("{property} does not match expected state"));
+                    return Err(format!("{property} does not match expected state").into());
                 }
             }
             "assert_value" => self.assert_value(args, string(args, "expected")?).await?,
-            _ => return Err(format!("unknown action {action}")),
+            _ => return Err(format!("unknown action {action}").into()),
         }
         Ok(())
     }

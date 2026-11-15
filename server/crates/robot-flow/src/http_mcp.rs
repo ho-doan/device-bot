@@ -1,5 +1,5 @@
 //! HTTP transport for running YAML against the same MCP backend used by QC.
-use crate::mcp::{Mcp, Result};
+use crate::mcp::{ErrorKind, FlowError, Mcp, Result};
 use async_trait::async_trait;
 use http_body_util::{BodyExt, Full};
 use hyper::{Method, Request, Uri, body::Bytes};
@@ -130,16 +130,17 @@ impl HttpMcp {
                 .map_err(|e| e.to_string())?
                 .to_bytes();
             if !status.is_success() {
-                return Err(format!("MCP HTTP request failed with status {status}"));
+                return Err(format!("MCP HTTP request failed with status {status}").into());
             }
             if bytes.is_empty() {
                 Ok(Value::Null)
             } else {
-                serde_json::from_slice(&bytes).map_err(|e| format!("invalid MCP HTTP JSON: {e}"))
+                serde_json::from_slice(&bytes)
+                    .map_err(|e| FlowError::from(format!("invalid MCP HTTP JSON: {e}")))
             }
         })
         .await
-        .map_err(|_| "MCP HTTP request timed out".to_owned())?
+        .map_err(|_| FlowError::new(ErrorKind::Timeout, "MCP HTTP request timed out"))?
     }
 }
 
@@ -158,7 +159,7 @@ impl Mcp for HttpMcp {
             return Err("MCP HTTP response ID mismatch".into());
         }
         if let Some(error) = response.get("error") {
-            return Err(format!("MCP protocol error: {error}"));
+            return Err(format!("MCP protocol error: {error}").into());
         }
         response
             .get("result")
@@ -251,6 +252,7 @@ mod tests {
                 .request("initialize", json!({}))
                 .await
                 .unwrap_err()
+                .to_string()
                 .contains("bad params")
         );
         let mut client = client_with_response(json!({"jsonrpc":"2.0","id":99,"result":{}})).await;
@@ -259,6 +261,7 @@ mod tests {
                 .request("initialize", json!({}))
                 .await
                 .unwrap_err()
+                .to_string()
                 .contains("ID mismatch")
         );
     }

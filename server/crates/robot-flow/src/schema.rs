@@ -127,10 +127,9 @@ impl FlowWebContext {
             let name = frame.name.as_deref().unwrap_or("").trim();
             let url = frame.url.as_deref().unwrap_or("").trim();
             if css.is_empty() && name.is_empty() && url.is_empty() {
-                return Err(format!(
-                    "web frame {} needs a css selector, name, or url",
-                    index + 1
-                ));
+                return Err(
+                    format!("web frame {} needs a css selector, name, or url", index + 1).into(),
+                );
             }
             if frame.position.is_some_and(|position| position == 0) {
                 return Err("web frame position is one-based".into());
@@ -264,12 +263,12 @@ fn variable(key: &str, variables: &BTreeMap<String, Value>) -> Result<Value> {
     if let Some(name) = key.strip_prefix("env:") {
         return std::env::var(name)
             .map(Value::String)
-            .map_err(|_| format!("missing environment variable {name}"));
+            .map_err(|_| crate::FlowError::from(format!("missing environment variable {name}")));
     }
     variables
         .get(key)
         .cloned()
-        .ok_or_else(|| format!("unresolved variable {key}"))
+        .ok_or_else(|| crate::FlowError::from(format!("unresolved variable {key}")))
 }
 
 /// Expand declarative recipes before connecting to MCP. Recursive/unknown
@@ -328,7 +327,7 @@ fn resolve_definition(
     stack: &mut Vec<String>,
 ) -> Result<Value> {
     if stack.iter().any(|n| n == name) || stack.len() >= 16 {
-        return Err(format!("cyclic or excessive variable nesting: {name}"));
+        return Err(format!("cyclic or excessive variable nesting: {name}").into());
     }
     let value = definitions
         .get(name)
@@ -374,7 +373,7 @@ fn resolve_definition(
 
 fn check_recipe_cycles(name: &str, profile: &Profile, stack: &mut Vec<String>) -> Result<()> {
     if stack.iter().any(|n| n == name) {
-        return Err(format!("recipe cycle: {name}"));
+        return Err(format!("recipe cycle: {name}").into());
     }
     if stack.len() >= 16 {
         return Err("recipe nesting exceeds 16".into());
@@ -424,7 +423,7 @@ fn validate_selector(name: &str, s: &Selector, p: &Profile, stack: &mut Vec<Stri
         return Err("source must be auto, native, or flutter".into());
     }
     if stack.iter().any(|v| v == name) {
-        return Err(format!("selector relation cycle: {name}"));
+        return Err(format!("selector relation cycle: {name}").into());
     }
     if s.max_results.is_some_and(|n| !(1..=100).contains(&n)) {
         return Err("max_results must be 1..100".into());
@@ -452,12 +451,12 @@ fn validate_selector(name: &str, s: &Selector, p: &Profile, stack: &mut Vec<Stri
         ]
         .contains(&t.as_str())
         {
-            return Err(format!("unknown element_type {t}"));
+            return Err(format!("unknown element_type {t}").into());
         }
     }
     for r in [&s.replace_recipe, &s.verify_recipe].into_iter().flatten() {
         if !p.recipes.contains_key(r) {
-            return Err(format!("unknown field recipe {r}"));
+            return Err(format!("unknown field recipe {r}").into());
         }
     }
     stack.push(name.into());
@@ -465,7 +464,7 @@ fn validate_selector(name: &str, s: &Selector, p: &Profile, stack: &mut Vec<Stri
         let related = p
             .selectors
             .get(target)
-            .ok_or_else(|| format!("unknown selector {target}"))?;
+            .ok_or_else(|| crate::FlowError::from(format!("unknown selector {target}")))?;
         validate_selector(target, related, p, stack)?;
     }
     stack.pop();
@@ -493,7 +492,7 @@ pub fn selector(args: &Value, profile: &Profile) -> Result<Selector> {
             .selectors
             .get(target)
             .cloned()
-            .ok_or_else(|| format!("unknown selector {target}"));
+            .ok_or_else(|| crate::FlowError::from(format!("unknown selector {target}")));
     }
     let mut raw = args.clone();
     if let Some(map) = raw.as_object_mut() {
@@ -541,10 +540,10 @@ fn expand(
                 .unwrap_or_else(|| format!("step-{}", index + 1))
         );
         if !ids.insert(id.clone()) {
-            return Err(format!("duplicate step ID {id}"));
+            return Err(format!("duplicate step ID {id}").into());
         }
         if step.action.len() != 1 {
-            return Err(format!("{id}: exactly one action required"));
+            return Err(format!("{id}: exactly one action required").into());
         }
         let platform = step
             .platform
@@ -553,7 +552,9 @@ fn expand(
                 let resolved = resolve(&json!(value), vars)?;
                 let platform = resolved.as_str().ok_or("step platform must be a string")?;
                 if !["android", "ios", "macos", "windows", "chrome"].contains(&platform) {
-                    return Err(format!("{id}: unknown step platform {platform}"));
+                    return Err(crate::FlowError::from(format!(
+                        "{id}: unknown step platform {platform}"
+                    )));
                 }
                 Ok(platform.to_owned())
             })
@@ -562,7 +563,8 @@ fn expand(
         if action == "select_device" && platform.is_some() {
             return Err(format!(
                 "{id}: use select_device.platform for persistent device selection"
-            ));
+            )
+            .into());
         }
         // Branch bodies are templates in the current recipe scope. Resolve each
         // leaf once during recursive expansion, never the already resolved data.
@@ -586,7 +588,7 @@ fn expand(
                 .ok_or("run.recipe missing")?
                 .to_owned();
             if stack.contains(&name) {
-                return Err(format!("recipe cycle: {name}"));
+                return Err(format!("recipe cycle: {name}").into());
             }
             let recipe = p
                 .recipes
@@ -651,7 +653,7 @@ fn expand(
                     );
                 }
                 if args["text"].as_str().is_none_or(str::is_empty) {
-                    return Err(format!("{id}: fill_field.text must not be empty"));
+                    return Err(format!("{id}: fill_field.text must not be empty").into());
                 }
                 for (field, recipe) in [
                     ("replacement", s.replace_recipe),
@@ -710,7 +712,7 @@ fn expand(
             "call_tool",
         ];
         if !allowed.contains(&action.as_str()) {
-            return Err(format!("unknown action {action}"));
+            return Err(format!("unknown action {action}").into());
         }
         if action == "wait" && args["ms"].as_u64().is_none_or(|n| n > 600_000) {
             return Err("wait.ms must be 0..600000".into());
@@ -759,7 +761,7 @@ fn validate_action_keys(action: &str, args: &Value) -> Result<()> {
         }
         "gesture" => return check_keys(args, &format!("{selector} from to duration_ms")),
         "scroll" => return check_keys(args, &format!("{selector} direction")),
-        _ => return Err(format!("unknown action {action}")),
+        _ => return Err(format!("unknown action {action}").into()),
     };
     check_keys(args, extra)
 }
@@ -769,7 +771,7 @@ fn check_keys(args: &Value, allowed: &str) -> Result<()> {
         .ok_or("action arguments must be a mapping")?;
     for key in map.keys() {
         if !allowed.split_whitespace().any(|k| k == key) {
-            return Err(format!("unknown action argument {key}"));
+            return Err(format!("unknown action argument {key}").into());
         }
     }
     Ok(())

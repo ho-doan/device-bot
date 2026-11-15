@@ -231,18 +231,19 @@ async fn main() {
                         }
                         if !o.dry {
                             if let Err(error) = runner.annotate_video(&report).await {
-                                report.status = "FAIL".into();
+                                report.status = robot_flow::FlowStatus::Fail.as_str().into();
                                 if let Some(existing) = report.error.as_mut() {
                                     existing.push_str(&format!("; {error}"));
                                 } else {
-                                    report.error = Some(error);
-                                    report.error_kind = Some("artifact".into());
+                                    report.error = Some(error.to_string());
+                                    report.error_kind =
+                                        Some(robot_flow::ErrorKind::Artifact.as_str().into());
                                 }
                             }
                         }
                         report
                     }
-                    Err(error) => setup_error(&flow.name, o.dry, error),
+                    Err(error) => setup_error(&flow.name, o.dry, error.to_string()),
                 }
             }
             Err(error) => setup_error(&format!("scenario-{}", i + 1), o.dry, error),

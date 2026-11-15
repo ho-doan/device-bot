@@ -41,18 +41,18 @@ pub(super) fn required<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
     v.get(key)
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| format!("missing or empty {key}"))
+        .ok_or_else(|| crate::FlowError::from(format!("missing or empty {key}")))
 }
 pub(super) fn string<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
     v.get(key)
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("missing string {key}"))
+        .ok_or_else(|| crate::FlowError::from(format!("missing string {key}")))
 }
 pub(super) fn number(v: &Value, key: &str) -> Result<f64> {
     v.get(key)
         .and_then(Value::as_f64)
         .filter(|n| n.is_finite())
-        .ok_or_else(|| format!("invalid coordinate {key}"))
+        .ok_or_else(|| crate::FlowError::from(format!("invalid coordinate {key}")))
 }
 pub(super) fn tap_arguments(device: &str, element: &Value, b: (f64, f64, f64, f64)) -> Value {
     let mut args = json!({"deviceId":device,"x":(b.0+b.2)/2.,"y":(b.1+b.3)/2.});

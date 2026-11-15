@@ -168,7 +168,7 @@ impl FlowRunner {
                     required(args, "message")?;
                 }
                 "wait" | "reset_fields" => {}
-                _ => return Err(format!("unsupported action {action}")),
+                _ => return Err(format!("unsupported action {action}").into()),
             }
             if !self.tools.is_empty() || self.client.is_some() {
                 for (name, args) in calls {

@@ -13,7 +13,8 @@ use tokio::{
     time::timeout,
 };
 
-pub type Result<T> = std::result::Result<T, String>;
+pub use crate::outcome::{ErrorKind, FlowError};
+pub type Result<T> = std::result::Result<T, FlowError>;
 
 #[async_trait]
 pub trait Mcp: Send {
@@ -56,11 +57,18 @@ impl StdioMcp {
     }
 
     async fn send(&mut self, message: Value) -> Result<()> {
-        let mut bytes = serde_json::to_vec(&message).map_err(|e| e.to_string())?;
+        let mut bytes =
+            serde_json::to_vec(&message).map_err(|e| crate::FlowError::from(e.to_string()))?;
         bytes.push(b'\n');
         let input = self.input.as_mut().ok_or("MCP session closed")?;
-        input.write_all(&bytes).await.map_err(|e| e.to_string())?;
-        input.flush().await.map_err(|e| e.to_string())
+        input
+            .write_all(&bytes)
+            .await
+            .map_err(|e| crate::FlowError::from(e.to_string()))?;
+        input
+            .flush()
+            .await
+            .map_err(|e| crate::FlowError::from(e.to_string()))
     }
 }
 
@@ -84,7 +92,7 @@ impl Mcp for StdioMcp {
                     .output
                     .next_line()
                     .await
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| crate::FlowError::from(e.to_string()))?
                     .ok_or_else(|| format!("MCP EOF while awaiting {method}"))?;
                 if line.len() > 32 * 1024 * 1024 {
                     return Err("MCP message exceeds 32 MiB".into());
@@ -107,7 +115,7 @@ impl Mcp for StdioMcp {
                 }
                 self.pending.remove(&id);
                 if let Some(error) = value.get("error") {
-                    return Err(format!("MCP protocol error: {error}"));
+                    return Err(format!("MCP protocol error: {error}").into());
                 }
                 return value
                     .get("result")
@@ -124,7 +132,10 @@ impl Mcp for StdioMcp {
             }
             Err(_) => {
                 self.poisoned = true;
-                Err(format!("MCP timeout awaiting {method}"))
+                Err(FlowError::new(
+                    ErrorKind::Timeout,
+                    format!("MCP timeout awaiting {method}"),
+                ))
             }
         }
     }
@@ -135,21 +146,26 @@ impl Mcp for StdioMcp {
             self.send(json!({"jsonrpc":"2.0","method":method,"params":params})),
         )
         .await
-        .map_err(|_| "MCP notification timeout".to_string())?
+        .map_err(|_| FlowError::new(ErrorKind::Timeout, "MCP notification timeout"))?
     }
 
     async fn close(&mut self) -> Result<()> {
         self.input.take();
         let status = match timeout(Duration::from_secs(7), self.child.wait()).await {
-            Ok(result) => result.map_err(|e| e.to_string())?,
+            Ok(result) => result.map_err(|e| crate::FlowError::from(e.to_string()))?,
             Err(_) => {
-                self.child.start_kill().map_err(|e| e.to_string())?;
+                self.child
+                    .start_kill()
+                    .map_err(|e| crate::FlowError::from(e.to_string()))?;
                 let _ = self.child.wait().await;
-                return Err("MCP shutdown timeout; connection closed for context cleanup".into());
+                return Err(FlowError::new(
+                    ErrorKind::Timeout,
+                    "MCP shutdown timeout; connection closed for context cleanup",
+                ));
             }
         };
         if !status.success() {
-            return Err(format!("MCP server exited with {status} during cleanup"));
+            return Err(format!("MCP server exited with {status} during cleanup").into());
         }
 
         Ok(())
@@ -190,7 +206,7 @@ pub async fn initialize(client: &mut dyn Mcp) -> Result<BTreeMap<String, Value>>
                 .insert(name.to_owned(), tool["inputSchema"].clone())
                 .is_some()
             {
-                return Err(format!("duplicate MCP tool {name}"));
+                return Err(format!("duplicate MCP tool {name}").into());
             }
         }
         let next = page
@@ -237,7 +253,7 @@ pub fn validate_arguments(schema: &Value, value: &Value) -> Result<()> {
         ]
         .contains(&key.as_str())
         {
-            return Err(format!("unsupported MCP schema constraint {key}"));
+            return Err(format!("unsupported MCP schema constraint {key}").into());
         }
     }
     if schema.get("type").is_some_and(|t| !t.is_string()) {
@@ -255,7 +271,7 @@ pub fn validate_arguments(schema: &Value, value: &Value) -> Result<()> {
             _ => false,
         };
         if !valid {
-            return Err(format!("MCP argument must be {kind}"));
+            return Err(format!("MCP argument must be {kind}").into());
         }
     }
     if let Some(choices) = schema.get("enum").and_then(Value::as_array) {
@@ -267,7 +283,7 @@ pub fn validate_arguments(schema: &Value, value: &Value) -> Result<()> {
         for key in required {
             let key = key.as_str().ok_or("invalid required property")?;
             if value.get(key).is_none() {
-                return Err(format!("missing MCP argument {key}"));
+                return Err(format!("missing MCP argument {key}").into());
             }
         }
     }
@@ -276,7 +292,7 @@ pub fn validate_arguments(schema: &Value, value: &Value) -> Result<()> {
             if let Some(property) = schema.get("properties").and_then(|p| p.get(key)) {
                 validate_arguments(property, item).map_err(|e| format!("{key}: {e}"))?;
             } else if schema.get("additionalProperties") == Some(&json!(false)) {
-                return Err(format!("unknown MCP argument {key}"));
+                return Err(format!("unknown MCP argument {key}").into());
             } else if let Some(s) = schema.get("additionalProperties").filter(|s| s.is_object()) {
                 validate_arguments(s, item)?;
             }
@@ -301,20 +317,20 @@ pub fn validate_arguments(schema: &Value, value: &Value) -> Result<()> {
     ] {
         if let (Some(bound), Some(actual)) = (schema[keyword].as_u64(), count) {
             if (minimum && actual < bound as usize) || (!minimum && actual > bound as usize) {
-                return Err(format!("MCP argument violates {keyword}"));
+                return Err(format!("MCP argument violates {keyword}").into());
             }
         }
     }
     for (keyword, minimum) in [("minimum", true), ("maximum", false)] {
         if let (Some(bound), Some(actual)) = (schema[keyword].as_f64(), value.as_f64()) {
             if !actual.is_finite() || (minimum && actual < bound) || (!minimum && actual > bound) {
-                return Err(format!("MCP argument violates {keyword}"));
+                return Err(format!("MCP argument violates {keyword}").into());
             }
         }
     }
     for keyword in ["$ref", "oneOf", "anyOf", "allOf", "not", "pattern"] {
         if schema.get(keyword).is_some() {
-            return Err(format!("unsupported MCP schema constraint {keyword}"));
+            return Err(format!("unsupported MCP schema constraint {keyword}").into());
         }
     }
     Ok(())

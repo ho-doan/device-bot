@@ -23,13 +23,13 @@ impl TracedMcp {
             .create(true)
             .append(true)
             .open(&self.path)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| crate::FlowError::from(e.to_string()))?;
         writeln!(
             file,
             "{}",
             json!({"sequence":self.sequence,"method":method,"tool":tool,"direction":direction})
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| crate::FlowError::from(e.to_string()))
     }
 }
 #[async_trait]

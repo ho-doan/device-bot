@@ -1,4 +1,5 @@
 //! Element discovery, bounded waits, assertions, focus, and document scoping.
+use crate::outcome::{ErrorKind, FlowError};
 
 use super::arguments::{
     gesture_arguments, query_arguments, rectangle, tap_arguments, type_arguments,
@@ -22,7 +23,10 @@ impl FlowRunner {
             return match value.as_str() {
                 Some(value) if value == expected => Ok(()),
                 Some(_) => Err("field does not expose expected value".into()),
-                None => Err("Unsupported: native field value is unknown".into()),
+                None => Err(FlowError::new(
+                    ErrorKind::Unsupported,
+                    "Unsupported: native field value is unknown",
+                )),
             };
         }
         let exposed = ["text", "contentDescription"]
@@ -30,7 +34,10 @@ impl FlowRunner {
             .filter_map(|key| e.get(key).and_then(Value::as_str))
             .collect::<Vec<_>>();
         if exposed.is_empty() {
-            return Err("Unsupported: native field value is unknown".into());
+            return Err(FlowError::new(
+                ErrorKind::Unsupported,
+                "Unsupported: native field value is unknown",
+            ));
         }
         // Existing native responses may combine a field's text and label on
         // separate lines. Retain that baseline representation when value is absent.
@@ -77,10 +84,9 @@ impl FlowRunner {
                     }
                 }
                 if unique && found.len() > 1 {
-                    return Err(format!(
-                        "ambiguous selector: {} matching elements",
-                        found.len()
-                    ));
+                    return Err(
+                        format!("ambiguous selector: {} matching elements", found.len()).into(),
+                    );
                 }
                 // Native trees can retain offscreen controls with an all-zero
                 // rectangle. Search the viewport for those controls; malformed
@@ -197,7 +203,7 @@ impl FlowRunner {
             let raw = result
                 .pointer("/structuredContent/elements")
                 .and_then(Value::as_array)
-                .ok_or("MCP elements missing")?;
+                .ok_or_else(|| FlowError::from("MCP elements missing").into_transport())?;
             if raw.len() >= s.max_results.unwrap_or(100) {
                 return Err("query reached max_results; result may be truncated".into());
             }

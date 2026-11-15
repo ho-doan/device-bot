@@ -46,7 +46,7 @@ struct State {
 struct Fake(Arc<Mutex<State>>);
 #[async_trait]
 impl Mcp for Fake {
-    async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+    async fn request(&mut self, method: &str, params: Value) -> robot_flow::mcp::Result<Value> {
         let mut s = self.0.lock().unwrap();
         s.calls.push(json!({"method":method,"params":params}));
         match method {
@@ -88,7 +88,7 @@ impl Mcp for Fake {
             _ => Err("unexpected method".into()),
         }
     }
-    async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
+    async fn notify(&mut self, method: &str, params: Value) -> robot_flow::mcp::Result<()> {
         self.0
             .lock()
             .unwrap()
@@ -96,7 +96,7 @@ impl Mcp for Fake {
             .push(json!({"method":method,"params":params}));
         Ok(())
     }
-    async fn close(&mut self) -> Result<(), String> {
+    async fn close(&mut self) -> robot_flow::mcp::Result<()> {
         self.0.lock().unwrap().closed = true;
         Ok(())
     }
@@ -185,6 +185,7 @@ fn profile_selectors_resolve_variables_and_reject_missing_environment() {
     assert!(
         schema::compile(&f, &profile)
             .unwrap_err()
+            .to_string()
             .contains("missing environment variable")
     );
 }
@@ -463,13 +464,19 @@ fn recursive_recipe_and_unknown_selectors_fail() {
         "recursive".into(),
         serde_yaml::from_str("- run: {recipe: recursive}").unwrap(),
     );
-    assert!(schema::compile(&f, &p).unwrap_err().contains("cycle"));
+    assert!(
+        schema::compile(&f, &p)
+            .unwrap_err()
+            .to_string()
+            .contains("cycle")
+    );
     assert!(
         schema::compile(
             &flow("  - tap_element: {target: typo}"),
             &Profile::default()
         )
         .unwrap_err()
+        .to_string()
         .contains("unknown selector")
     );
 }
@@ -749,7 +756,12 @@ fn recipe_parameters_are_opaque_data_not_templates() {
     );
     p.variables.insert("a".into(), json!("${b}"));
     p.variables.insert("b".into(), json!("${a}"));
-    assert!(schema::compile(&f, &p).unwrap_err().contains("cyclic"));
+    assert!(
+        schema::compile(&f, &p)
+            .unwrap_err()
+            .to_string()
+            .contains("cyclic")
+    );
 }
 
 #[tokio::test]
@@ -827,6 +839,43 @@ async fn assertion_failure_is_distinct_from_transport_error() {
     .await;
     assert_eq!(r.error_kind.as_deref(), Some("assertion"));
     assert_eq!(r.status, "FAIL");
+}
+
+#[tokio::test]
+async fn setup_messages_cannot_masquerade_as_timeout_or_interruption() {
+    let mut scenario = flow("  - wait: {ms: 1}");
+    scenario
+        .preconditions
+        .push("verify MCP timeout and interrupted labels".into());
+    let report = run(
+        &scenario,
+        &Profile::default(),
+        Arc::new(Mutex::new(State::default())),
+    )
+    .await;
+    assert_eq!(report.error_kind.as_deref(), Some("setup"));
+    assert_eq!(report.status, "FAIL");
+}
+
+#[tokio::test]
+async fn opaque_tool_errors_remain_execution_failures_during_assertions() {
+    let state = Arc::new(Mutex::new(State {
+        fail: Some("mobile_list_elements_on_screen".into()),
+        ..State::default()
+    }));
+    let report = run(
+        &flow("  - assert_absent: {label: Task}"),
+        &Profile::default(),
+        state,
+    )
+    .await;
+    assert_eq!(report.error_kind.as_deref(), Some("execution"));
+    assert!(
+        report
+            .error
+            .unwrap()
+            .contains("Unsupported: deliberately unavailable")
+    );
 }
 
 #[tokio::test]
@@ -1106,8 +1155,15 @@ for line in sys.stdin:
                 Duration::from_secs(2),
             )
             .unwrap();
-            let error = client.request("query", json!({})).await.unwrap_err();
-            assert!(error.contains("MCP response ID mismatch"), "{error}");
+            let error = client
+                .request("query", json!({}))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.to_string().contains("MCP response ID mismatch"),
+                "{error}"
+            );
             client.close().await.unwrap();
         }
     }
@@ -1140,8 +1196,12 @@ for line in sys.stdin:
                 },
             )
             .unwrap();
-            let error = client.request("initialize", json!({})).await.unwrap_err();
-            assert!(error.contains(expected), "{error}");
+            let error = client
+                .request("initialize", json!({}))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.to_string().contains(expected), "{error}");
             client.close().await.unwrap();
         }
     }
@@ -1222,7 +1282,7 @@ struct ScrollSearchFake {
 }
 #[async_trait]
 impl Mcp for ScrollSearchFake {
-    async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+    async fn request(&mut self, method: &str, params: Value) -> robot_flow::mcp::Result<Value> {
         if method == "tools/call" {
             let name = params["name"].as_str().unwrap();
             if name == "mobile_swipe_on_screen" {
@@ -1250,10 +1310,10 @@ impl Mcp for ScrollSearchFake {
         }
         self.inner.request(method, params).await
     }
-    async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
+    async fn notify(&mut self, method: &str, params: Value) -> robot_flow::mcp::Result<()> {
         self.inner.notify(method, params).await
     }
-    async fn close(&mut self) -> Result<(), String> {
+    async fn close(&mut self) -> robot_flow::mcp::Result<()> {
         self.inner.close().await
     }
 }
@@ -1520,6 +1580,7 @@ fn step_platform_validation_and_recipe_variables() {
         assert!(
             schema::compile(&flow, &Profile::default())
                 .unwrap_err()
+                .to_string()
                 .contains("unknown step platform")
         );
     }

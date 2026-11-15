@@ -85,6 +85,14 @@ callers continue to use `FlowRunner`, `FlowReport` and `runner::filter_elements`
 Run `cargo test -p robot-flow` for the mocked MCP workflows, CLI subprocesses,
 schema contracts and evidence regressions before changing execution behavior.
 
+`robot-flow::outcome` owns typed execution errors and the stable report status
+values. MCP clients return `FlowError`; error context and cleanup preserve the
+original kind. Classify deadlines and unsupported observations where they occur,
+and tag transport failures before they cross an assertion step. Never infer an
+error kind from words in its message. Opaque MCP tool failures remain execution
+failures unless their kind is supplied explicitly. Report fields retain their
+existing string values for JSON consumers and persisted history.
+
 Each platform crate owns its external process commands, output parsers, and
 driver-specific tests. `robot-android` may depend on `robot-core`, but no
 platform driver may depend on `mcp-server`; tool-to-driver adaptation belongs

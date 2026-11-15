@@ -10,6 +10,7 @@ mod artifacts;
 mod elements;
 mod preflight;
 
+use crate::outcome::{ErrorKind, FlowError, FlowStatus, StepStatus};
 use crate::{
     mcp::{self, Mcp, Result},
     schema::{self, FlowDocument, Profile, Step},
@@ -127,7 +128,7 @@ impl FlowRunner {
                     if !confirmed.contains(condition) {
                         return Err(format!(
                             "setup precondition not confirmed: {condition} (use --confirm after completing it outside the runner)"
-                        ));
+                        ).into());
                     }
                 }
                 fs::create_dir_all(&self.directory).map_err(|e| e.to_string())?;
@@ -141,16 +142,21 @@ impl FlowRunner {
             self.preflight(&steps)?;
             self.execute_steps(&steps).await
         };
-        let outcome = tokio::select! {result=timeout(case_timeout,result)=>result,_=interrupted()=>Ok(Err("runner interrupted".into()))};
+        let outcome = tokio::select! {result=timeout(case_timeout,result)=>result,_=interrupted()=>Ok(Err(FlowError::new(ErrorKind::Interrupted, "runner interrupted")))};
         let mut error = match outcome {
             Ok(Ok(())) => None,
-            Ok(Err(e)) => Some(self.redact(&e)),
-            Err(_) => Some(
+            Ok(Err(e)) => Some(if self.steps.is_empty() {
+                e.during_setup()
+            } else {
+                e
+            }),
+            Err(_) => Some(FlowError::new(
+                ErrorKind::Timeout,
                 self.active_step
                     .as_ref()
                     .map(|(id, action)| format!("scenario timeout at step {id} ({action})"))
                     .unwrap_or("scenario timeout during setup".into()),
-            ),
+            )),
         };
         // A case deadline or signal drops the active execute_steps future before
         // it can append its StepReport. Preserve that failed leaf in the report.
@@ -158,72 +164,47 @@ impl FlowRunner {
             if !self
                 .steps
                 .iter()
-                .any(|s| s.id == *id && s.status == "failed")
+                .any(|s| s.id == *id && s.status == StepStatus::Failed.as_str())
             {
                 self.steps.push(StepReport {
                     note: self.active_note.as_ref().map(|note| self.redact(note)),
                     id: id.clone(),
                     action: action.clone(),
-                    status: "failed".into(),
-                    error: Some(error.clone()),
+                    status: StepStatus::Failed.as_str().into(),
+                    error: Some(self.redact(&error.to_string())),
                 });
             }
         }
         if self.recording {
             if let Err(e) = self.stop_recording().await {
-                append_error(
-                    &mut error,
-                    format!("recording cleanup: {}", self.redact(&e)),
-                );
+                append_error(&mut error, e.context("recording cleanup"));
             }
         }
         if let Some(client) = self.client.as_mut() {
             if let Err(e) = client.close().await {
-                append_error(&mut error, format!("MCP cleanup: {}", self.redact(&e)));
+                append_error(&mut error, e.into_transport().context("MCP cleanup"));
             }
         }
-        let error_kind = error.as_ref().map(|e| {
-            {
-                if e.contains("timeout") {
-                    "timeout"
-                } else if e.contains("interrupted") {
-                    "interrupted"
-                } else if self.steps.is_empty() {
-                    "setup"
-                } else if e.contains("Unsupported") || e.contains("unknown, not false") {
-                    "unsupported"
-                } else if !e.contains("MCP")
-                    && self
-                        .steps
-                        .iter()
-                        .find(|s| s.status == "failed")
-                        .is_some_and(|s| s.action.starts_with("assert_"))
-                {
-                    "assertion"
-                } else {
-                    "execution"
-                }
-            }
-            .to_owned()
-        });
+        let error_kind = error.as_ref().map(|e| e.kind().as_str().to_owned());
         FlowReport {
             name: flow.name.clone(),
             dry_run,
             status: if error.is_some() {
-                "FAIL"
+                FlowStatus::Fail
             } else if dry_run {
-                "DRY_RUN"
+                FlowStatus::DryRun
             } else if self.limitations.is_empty() {
-                "PASS"
+                FlowStatus::Pass
             } else {
-                "PARTIAL"
+                FlowStatus::Partial
             }
+            .as_str()
             .into(),
             selected_device: self.device.clone(),
             steps: std::mem::take(&mut self.steps),
             limitations: self.limitations.clone(),
             preconditions,
-            error,
+            error: error.map(|e| self.redact(&e.to_string())),
             error_kind,
         }
     }
@@ -261,28 +242,32 @@ impl FlowRunner {
                     },
                 )
                 .await
-                .unwrap_or_else(|_| Err("step timeout".into()));
+                .unwrap_or_else(|_| Err(FlowError::new(ErrorKind::Timeout, "step timeout")));
                 self.step_device = previous_device;
                 self.steps.push(StepReport {
                     note: step.note.as_ref().map(|note| self.redact(note)),
                     id: step.id.clone().unwrap_or_default(),
                     action: action.clone(),
                     status: if result.is_err() {
-                        "failed"
+                        StepStatus::Failed
                     } else if self.client.is_none() {
-                        "validated"
+                        StepStatus::Validated
                     } else {
-                        "passed"
+                        StepStatus::Passed
                     }
+                    .as_str()
                     .into(),
-                    error: result.as_ref().err().map(|e| self.redact(e)),
+                    error: result.as_ref().err().map(|e| self.redact(&e.to_string())),
                 });
                 if result.is_ok() {
                     self.active_step = parent.clone();
                     self.active_note = parent_note.clone();
                 }
                 result.map_err(|e| {
-                    format!("step {} ({action}): {e}", step.id.as_deref().unwrap_or("?"))
+                    e.for_step(action).context(format!(
+                        "step {} ({action})",
+                        step.id.as_deref().unwrap_or("?")
+                    ))
                 })?;
             }
             Ok(())
@@ -295,15 +280,20 @@ impl FlowRunner {
                 .get(name)
                 .ok_or_else(|| format!("missing MCP tool {name}"))?,
             &args,
-        )?;
+        )
+        .map_err(FlowError::into_transport)?;
         let result = self
             .client
             .as_mut()
             .ok_or("MCP unavailable in dry-run")?
             .request("tools/call", json!({"name":name,"arguments":args}))
-            .await?;
+            .await
+            .map_err(FlowError::into_transport)?;
         if result.get("isError") == Some(&json!(true)) {
-            return Err(format!("MCP tool {name} failed: {}", result["content"]));
+            return Err(
+                FlowError::from(format!("MCP tool {name} failed: {}", result["content"]))
+                    .into_transport(),
+            );
         }
         Ok(result)
     }
@@ -335,7 +325,7 @@ impl FlowRunner {
             return Err(format!(
                 "step platform {platform} matched {} devices; require exactly one (use select_device to disambiguate)",
                 matches.len()
-            ));
+            ).into());
         }
         Ok(matches[0].clone())
     }
@@ -349,12 +339,11 @@ impl FlowRunner {
     }
 }
 
-fn append_error(error: &mut Option<String>, message: String) {
-    if let Some(e) = error {
-        e.push_str("; ");
-        e.push_str(&message);
+fn append_error(error: &mut Option<FlowError>, next: FlowError) {
+    if let Some(primary) = error {
+        primary.append(next);
     } else {
-        *error = Some(message);
+        *error = Some(next);
     }
 }
 async fn interrupted() {

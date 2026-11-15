@@ -47,7 +47,7 @@ impl Mcp for CaseMcp {
             .await
             .ok_or("MCP response missing")?;
         if let Some(error) = response.get("error") {
-            return Err(error.to_string());
+            return Err(error.to_string().into());
         }
         response
             .get("result")
@@ -68,7 +68,7 @@ impl Mcp for CaseMcp {
     }
 
     async fn close(&mut self) -> Result<()> {
-        self.server.shutdown().await.map_err(|e| e.to_string())
+        self.server.shutdown().await.map_err(|e| e.to_string().into())
     }
 }
 
@@ -115,7 +115,7 @@ pub(super) async fn run(robot: &Arc<dyn Robot>, args: &Value) -> ToolResult {
     ) {
         result["artifactWarning"] = json!(error.to_string());
     } else if let Err(error) = record_history(&flow, &directory) {
-        result["historyWarning"] = json!(error);
+        result["historyWarning"] = json!(error.to_string());
     }
     ToolResult::structured(result)
 }

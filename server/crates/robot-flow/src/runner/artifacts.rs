@@ -16,13 +16,15 @@ impl FlowRunner {
             return Ok(());
         };
         self.scrub(&mut snapshot);
-        fs::create_dir_all(&self.directory).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&self.directory).map_err(|e| crate::FlowError::from(e.to_string()))?;
         for (key, name) in [
             ("profile", "resolved-profile.yaml"),
             ("flow", "expanded-flow.yaml"),
         ] {
-            let yaml = serde_yaml::to_string(&snapshot[key]).map_err(|e| e.to_string())?;
-            fs::write(self.directory.join(name), yaml).map_err(|e| e.to_string())?;
+            let yaml = serde_yaml::to_string(&snapshot[key])
+                .map_err(|e| crate::FlowError::from(e.to_string()))?;
+            fs::write(self.directory.join(name), yaml)
+                .map_err(|e| crate::FlowError::from(e.to_string()))?;
         }
         Ok(())
     }
@@ -54,10 +56,15 @@ impl FlowRunner {
             })
             .ok_or("recorded video path missing")?;
         let path = Path::new(path.trim());
-        if fs::metadata(path).map_err(|e| e.to_string())?.len() == 0 {
+        if fs::metadata(path)
+            .map_err(|e| crate::FlowError::from(e.to_string()))?
+            .len()
+            == 0
+        {
             return Err("recorded video is empty".into());
         }
-        fs::copy(path, self.directory.join("video.mp4")).map_err(|e| e.to_string())?;
+        fs::copy(path, self.directory.join("video.mp4"))
+            .map_err(|e| crate::FlowError::from(e.to_string()))?;
         Ok(())
     }
 
@@ -117,9 +124,9 @@ impl FlowRunner {
 
 pub(super) fn write(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        fs::create_dir_all(parent).map_err(|e| crate::FlowError::from(e.to_string()))?;
     }
-    fs::write(path, bytes).map_err(|e| e.to_string())
+    fs::write(path, bytes).map_err(|e| crate::FlowError::from(e.to_string()))
 }
 
 pub(super) fn collect_secrets(value: &Value, out: &mut Vec<String>) {

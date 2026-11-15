@@ -739,6 +739,7 @@ fn native_accessibility_elements(
     Ok(elements)
 }
 
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DesktopWindow {
     process_id: u32,
@@ -747,6 +748,7 @@ struct DesktopWindow {
     title: String,
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn running_apps_from_windows(windows: &[DesktopWindow]) -> Vec<RunningApp> {
     let mut apps = Vec::new();
     for window in windows {
@@ -771,6 +773,7 @@ fn running_apps_from_windows(windows: &[DesktopWindow]) -> Vec<RunningApp> {
     apps
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn windows_for_process(windows: &[DesktopWindow], process_id: Option<u32>) -> Vec<AppWindow> {
     windows
         .iter()
@@ -1207,6 +1210,7 @@ fn parse_accessibility_elements(output: &str) -> Vec<UiElement> {
         .collect()
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn non_empty(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.into())

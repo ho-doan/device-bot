@@ -17,22 +17,12 @@ pub(crate) struct FrameNode {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub(crate) struct AttachedTarget {
-    pub session_id: String,
-    pub parent_session_id: Option<String>,
-    pub target_type: String,
-    pub root_frame_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AuthorizedFrame {
     pub session_id: String,
     pub frame_id: String,
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub(crate) struct FrameOwnerBox {
     pub frame_id: String,
     pub css: Option<String>,
@@ -40,8 +30,6 @@ pub(crate) struct FrameOwnerBox {
     pub url: String,
     pub left: f64,
     pub top: f64,
-    pub right: f64,
-    pub bottom: f64,
     pub unsupported_transform: bool,
 }
 
@@ -167,7 +155,16 @@ pub(crate) fn frame_ids(root: &FrameNode) -> HashSet<String> {
 
 /// An iframe target is usable only when its root frame belongs to the owned page tree
 /// and its parent session is the page or an already authorized descendant.
-#[allow(dead_code)]
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub(crate) struct AttachedTarget {
+    pub session_id: String,
+    pub parent_session_id: Option<String>,
+    pub target_type: String,
+    pub root_frame_id: String,
+}
+
+#[cfg(test)]
 pub(crate) fn authorize_frames(
     page_session: &str,
     owned_frames: &HashSet<String>,
@@ -346,8 +343,6 @@ pub(crate) fn bind_owners(children: &[FrameNode], raw: &[Value]) -> Vec<FrameOwn
             url: owner["url"].as_str().unwrap_or("").to_owned(),
             left: owner["left"].as_f64().unwrap_or(0.0),
             top: owner["top"].as_f64().unwrap_or(0.0),
-            right: owner["right"].as_f64().unwrap_or(0.0),
-            bottom: owner["bottom"].as_f64().unwrap_or(0.0),
             unsupported_transform: owner["unsupported"].as_bool().unwrap_or(false),
         });
     }
@@ -482,8 +477,6 @@ mod tests {
                 url: "https://shop.example/frame".into(),
                 left: 10.0,
                 top: 20.0,
-                right: 110.0,
-                bottom: 80.0,
                 unsupported_transform: false,
             },
             FrameOwnerBox {
@@ -493,8 +486,6 @@ mod tests {
                 url: "https://pay.example/a".into(),
                 left: 0.0,
                 top: 100.0,
-                right: 50.0,
-                bottom: 150.0,
                 unsupported_transform: false,
             },
             FrameOwnerBox {
@@ -504,8 +495,6 @@ mod tests {
                 url: "https://pay.example/b".into(),
                 left: 60.0,
                 top: 100.0,
-                right: 120.0,
-                bottom: 160.0,
                 unsupported_transform: false,
             },
             FrameOwnerBox {
@@ -515,8 +504,6 @@ mod tests {
                 url: "https://pay.example/nested".into(),
                 left: 4.0,
                 top: 6.0,
-                right: 40.0,
-                bottom: 30.0,
                 unsupported_transform: false,
             },
         ]

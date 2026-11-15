@@ -238,6 +238,8 @@ impl MacosRobot {
         id: &str,
         points: &[Point],
     ) -> Result<Target, RobotError> {
+        #[cfg(not(target_os = "macos"))]
+        let _ = points;
         let target = Target::parse(id)?
             .ok_or_else(|| RobotError::InvalidInput("Missing window target".into()))?;
         let g = geometry(target)?;

@@ -6,9 +6,13 @@
 //! server never upgrades in the background while it is serving MCP requests.
 
 use serde::{Deserialize, Serialize};
-use std::io::{self, Write};
+use std::io;
+#[cfg(target_os = "macos")]
+use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::process::Stdio;
 use std::thread::sleep;
 use std::time::Duration;
 

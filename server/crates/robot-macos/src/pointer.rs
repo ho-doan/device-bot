@@ -1,17 +1,24 @@
 //! Quartz drag gestures. Always release the button when cancelled or failed.
 use robot_core::{Point, RobotError};
+#[cfg(any(target_os = "macos", test))]
 use std::time::Duration;
 
+#[cfg(any(target_os = "macos", test))]
 const MOVED: u32 = 5;
+#[cfg(any(target_os = "macos", test))]
 const DOWN: u32 = 1;
+#[cfg(any(target_os = "macos", test))]
 const UP: u32 = 2;
+#[cfg(any(target_os = "macos", test))]
 const DRAGGED: u32 = 6;
 
+#[cfg(any(target_os = "macos", test))]
 struct HeldPointer<F: FnMut(u32, Point) -> Result<(), RobotError>> {
     post: F,
     at: Point,
     held: bool,
 }
+#[cfg(any(target_os = "macos", test))]
 impl<F: FnMut(u32, Point) -> Result<(), RobotError>> Drop for HeldPointer<F> {
     fn drop(&mut self) {
         if self.held {
@@ -20,6 +27,7 @@ impl<F: FnMut(u32, Point) -> Result<(), RobotError>> Drop for HeldPointer<F> {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 async fn drag_with<F: FnMut(u32, Point) -> Result<(), RobotError>>(
     start: Point,
     end: Point,

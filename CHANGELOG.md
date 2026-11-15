@@ -1,3 +1,29 @@
+## 0.1.19 — 2026-11-15
+
+* Align Live video, element overlays and pointer mapping with the decoded frame
+  when its aspect ratio differs from the driver's input coordinate space. Keep
+  alignment when QC is narrowed or resized, and clip boxes to the video area.
+* End Chrome fallback capture when the target viewport or zoom changes, so Live
+  reconnects with fresh coordinates instead of using the previous window size.
+* Disable **Tap selected** while its click is pending, including same-frame
+  duplicate clicks, and unlock it after success or failure. Queue Chrome mouse
+  release before awaiting press acknowledgements to avoid native popup stalls.
+* Retry transient Live inspector failures independently of healthy video, with
+  bounded retries and a manual retry action. Ignore stale app/window picker
+  responses when switching targets quickly.
+* Allow bounded extra startup time for Windows UI Automation helpers, including
+  PowerShell and UIA assembly loading, instead of failing cold starts after 2.5s.
+* Make Flutter web popup menus selectable through Chrome automation and respect
+  disabled menu items. Add repeatable Windows-backed web Live regression tests.
+* Disable host-cursor drawing in Windows Live's FFmpeg capture to avoid cursor
+  capture interference on Windows/RDP. This does not change Windows mouse
+  settings or desktop input, and is separate from hiding helper consoles.
+* Bind Windows Live tracks through an owned native stream and retain encoder
+  failure diagnostics. Allow QC desktop to connect to remote servers with an
+  explicit bearer token, including pasting from the clipboard.
+* Keep Windows Android discovery and media helpers from opening consoles, and
+  include the matching web assets in every native release bundle.
+
 ## 0.1.18 — 2026-11-14
 
 * Fix the Windows installer reporting `Remove-Item` errors after a successful

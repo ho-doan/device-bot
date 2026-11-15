@@ -54,6 +54,9 @@ class NativeRelease(unittest.TestCase):
 
     def setup_version(self, version):
         self.version = version
+        self.repo.mkdir(parents=True, exist_ok=True)
+        for name in ('LICENSE', 'NOTICE'):
+            (self.repo / name).write_text(f'Device Bot {name} fixture\n')
         for tool, crate in [('device-bot', 'mcp-server'), ('robot-flow', 'robot-flow'), ('robot-report', 'robot-report')]:
             path = self.repo / f'server/crates/{crate}/Cargo.toml'
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -112,7 +115,7 @@ esac
     def test_mac_bundle_contains_all_tools_and_versioned_assets(self):
         archive = self.package()
         with tarfile.open(archive) as bundle:
-            for name in ['device-bot', 'robot-flow', 'robot-report', 'bundle.json',
+            for name in ['device-bot', 'robot-flow', 'robot-report', 'bundle.json', 'LICENSE', 'NOTICE',
                          'robot-report-assets/0.1.4/deploy/README.md',
                          'device-bot-assets/0.1.4/manifest.json']:
                 self.assertIn(name, bundle.getnames())
@@ -138,7 +141,7 @@ esac
 
     def test_windows_bundle_contains_all_executables(self):
         with zipfile.ZipFile(self.package('x86_64-pc-windows-msvc')) as bundle:
-            for name in ['device-bot.exe', 'robot-flow.exe', 'robot-report.exe', 'bundle.json']:
+            for name in ['device-bot.exe', 'robot-flow.exe', 'robot-report.exe', 'bundle.json', 'LICENSE', 'NOTICE']:
                 self.assertIn(name, bundle.namelist())
 
     def test_release_archive_includes_the_qc_bundle(self):
@@ -252,6 +255,9 @@ cp "$TEST_DOWNLOAD_ROOT/${url##*/}" "$output"
         subprocess.run(['adb', 'version'], cwd=self.root, env=env, check=True, capture_output=True)
         self.assertIn('Installed Android Live dependencies', result.stdout)
         self.assertTrue((self.install_dir / 'ffmpeg/bin/ffmpeg').is_file())
+        for name in ('LICENSE', 'NOTICE'):
+            self.assertEqual((self.install_dir / 'licenses/device-bot' / name).read_text(),
+                             (self.repo / name).read_text())
 
     @unittest.skipUnless(os.name == 'posix', 'POSIX installer')
     def test_mac_installer_rejects_ffmpeg_without_libx264(self):
@@ -511,6 +517,9 @@ try {{ & '{quoted}' }} finally {{ [Environment]::SetEnvironmentVariable("Path", 
         for name in ['device-bot.exe', 'robot-flow.exe', 'robot-report.exe', 'scrcpy.exe', 'scrcpy-server', 'adb.exe', 'SDL3.dll']:
             self.assertTrue((self.install_dir / name).is_file(), name)
         self.assertIn('Installed Android Live dependencies', result.stdout)
+        for name in ('LICENSE', 'NOTICE'):
+            self.assertEqual((self.install_dir / 'licenses/device-bot' / name).read_text(),
+                             (self.repo / name).read_text())
 
     @unittest.skipUnless(PWSH, 'PowerShell installer')
     def test_windows_installer_rejects_bad_scrcpy_checksum_before_install(self):

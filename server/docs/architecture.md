@@ -1,5 +1,9 @@
 # Architecture boundaries
 
+For the end-to-end workflow, applications and technology map, start with the
+[repository overview](../../docs/repository-overview.md) and the
+[shared flow](../../README.md#how-the-repo-fits-together).
+
 The server is organized around directional dependencies so a transport,
 protocol feature, or device driver can change without absorbing unrelated
 responsibilities.
@@ -9,9 +13,12 @@ mcp-server (binary + connection orchestration)
         │
         ├── mcp-protocol (wire types only)
         ├── admin-api (local operator read models + SSE only)
+        ├── robot-flow / robot-report (flow execution + persistent history)
+        ├── robot-stream (Live session / WebRTC infrastructure)
         └── robot-core (device contracts only)
                 │
-                └── robot-android / robot-ios-sim / future platform drivers
+                └── robot-android / robot-ios-sim / robot-ios-real
+                    robot-macos / robot-windows / robot-chrome
 ```
 
 `mcp-protocol` never starts processes, owns connection state, or knows a
@@ -34,9 +41,9 @@ robot registry, but it does not route MCP methods or depend on a concrete
 platform driver. `mcp-server::http` composes this router at the HTTP edge and
 records only transport-level activity.
 
-`flutter_app/` is a separate client, not a Cargo member and not a device
-controller. It consumes the admin API over HTTP; it has no dependency on ADB,
-simctl, go-ios, or the MCP request path.
+`flutter_app/` is a separate Flutter client, not a Cargo member or a platform
+driver. QC uses HTTP admin read models and MCP tool calls for control, plus
+WebRTC for Live video. It does not invoke ADB, simctl or go-ios directly.
 
 `robot-core` owns portable `Robot`, device, point, and error contracts. It
 must not refer to `adb`, `simctl`, HTTP, or MCP message types.
@@ -46,8 +53,8 @@ driver-specific tests. `robot-android` may depend on `robot-core`, but no
 platform driver may depend on `mcp-server`; tool-to-driver adaptation belongs
 in narrowly scoped server handler modules added with each tool family.
 
-`robot-ios-real` owns the `go-ios` command boundary and WDA/DeviceKit XML
-normalization. It is intentionally independent of `robot-ios-sim`, whose
+`robot-ios-real` owns the `go-ios` command boundary, signed XCTest control,
+and the USB/Wi-Fi screen capture paths. It is independent of `robot-ios-sim`, whose
 `simctl` lifecycle and recording state have different failure modes. The
 simulator driver invokes the repository's XCTest UI-test runner for synthesized
 input and accessibility-tree reads. The project at

@@ -1,10 +1,12 @@
+<p align="center"><img src="assets/brand/device-bot.svg" width="96" height="96" alt="Device Bot robot icon"></p>
+
 # Device Bot
 
 Automate Android, iOS, desktop apps, and Chrome through a native Rust MCP
 server. Use your MCP client, control a device in the QC app, or replay YAML
 scenarios and review their evidence in the report web app.
 
-[Install](#install) · [Quick start](#quick-start) · [MCP setup](#connect-an-mcp-client) ·
+[Overview](#how-the-repo-fits-together) · [Install](#install) · [Quick start](#quick-start) · [MCP setup](#connect-an-mcp-client) ·
 [Platforms](#supported-platforms) · [Live control](#live-control) · [YAML](#run-yaml-scenarios) ·
 [Documentation](#documentation)
 
@@ -17,6 +19,60 @@ scenarios and review their evidence in the report web app.
 
 The platform table describes the current source. See the [changelog](CHANGELOG.md)
 for the features included in your installed release; capabilities vary by target.
+
+## How the repo fits together
+
+Three entry points share the same device drivers: an **MCP client**, the
+**QC desktop/web app**, and the **YAML runner**. QC can record a flow; an agent
+can also write it directly from the implemented behavior and a UI snapshot.
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 20, "rankSpacing": 28, "wrappingWidth": 300}}}%%
+flowchart TB
+    subgraph Author["1 · Author and control"]
+        direction TB
+        Behavior["Behavior / acceptance criteria"]
+        Agent["Agent / MCP client"]
+        QC["QC · Flutter desktop / web<br/>Inspect · control · record"]
+        YAML["YAML v2 + target profiles"]
+        Behavior --> Agent
+        Behavior --> QC
+        Agent -->|write| YAML
+        QC -->|record / export| YAML
+    end
+    subgraph Execute["2 · Run on the target"]
+        direction TB
+        Runner["robot-flow<br/>device-bot run"]
+        MCP["device-bot · Rust MCP<br/>stdio / HTTP"]
+        Drivers["Platform drivers<br/>Android · iOS / Simulator<br/>macOS · Windows · Chrome"]
+        Runner --> MCP
+        MCP --> Drivers
+    end
+    subgraph Review["3 · Observe and review"]
+        direction TB
+        Live["QC Live<br/>H.264 / WebRTC"]
+        History["robot-report<br/>Run + evidence history"]
+        Reports["QA Reports · web app"]
+        Human["QC review"]
+        History --> Reports --> Human
+    end
+    YAML --> Runner
+    Agent -->|direct MCP calls| MCP
+    QC -->|HTTP control / admin| MCP
+    Drivers -->|robot-stream| Live
+    Runner -->|results + evidence| History
+```
+
+Frameworks such as Flutter, SwiftUI, Compose, React Native, React, Vue and WPF
+are **targets**, not alternative MCP backends. The optional Flutter bridge
+adds widget discovery where the native tree is incomplete. A completed control
+flow provides evidence; behavior is manually reviewed unless the flow includes
+explicit automated assertions.
+
+See the [repository map](docs/repository-overview.md) for every app, technology,
+source directory, helper, and the build-to-CI workflow. The
+[Flutter authoring guide](implement-to-mcp-test/references/flutter.md) describes
+how agents can draft QC-style YAML before optimizing selectors.
 
 ## Install
 
@@ -198,6 +254,8 @@ document their verified and partial coverage.
 - [Report service](server/crates/robot-report/README.md): projects, history, results, evidence downloads.
 - [Flutter discovery bridge](packages/device_bot_flutter/README.md): optional widget discovery for target apps.
 - [Architecture](server/docs/architecture.md) and [Live architecture](docs/architecture-live.md).
+- [Repository map](docs/repository-overview.md): apps, technologies and the shared automation workflow.
+- [Brand assets](assets/brand/README.md): icon sources and regeneration for all apps.
 - [Examples](examples): Flutter, SwiftUI, Android Compose, React Native, Windows, Vite, and Electron.
 - [Changelog](CHANGELOG.md).
 
@@ -227,3 +285,9 @@ The [fixture app](examples/flutter_app/README.md),
 [Flutter bridge](packages/device_bot_flutter/README.md) have their own Flutter
 checks. Core code lives in `server/crates/`, QC in `server/flutter_app/`, and
 release tooling in `scripts/`.
+
+## License
+
+Device Bot's original code, documentation and brand assets are licensed under
+the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
+Third-party dependencies and bundled tools retain their own licenses.

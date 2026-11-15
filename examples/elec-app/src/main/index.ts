@@ -32,7 +32,7 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     title: 'Orbit · Your space to focus',
-    ...(process.platform === 'linux' ? { icon } : {}),
+    icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -56,6 +56,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin') app.dock?.setIcon(icon)
   protocol.handle('app', (request) => net.fetch(rendererAsset(new URL(request.url).pathname)))
 
   electronApp.setAppUserModelId('com.electron')

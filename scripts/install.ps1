@@ -272,6 +272,14 @@ try {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     # Keep DLLs and the server beside scrcpy.exe; this directory is on PATH.
     Copy-Item -Path (Join-Path $scrcpyRoot "*") -Destination $InstallDir -Recurse -Force
+    $licenseDestination = Join-Path $InstallDir "licenses\device-bot"
+    New-Item -ItemType Directory -Path $licenseDestination -Force | Out-Null
+    foreach ($notice in @("LICENSE", "NOTICE")) {
+        $source = Join-Path $TempDir $notice
+        if (Test-Path -LiteralPath $source -PathType Leaf) {
+            Copy-Item -LiteralPath $source -Destination $licenseDestination -Force
+        }
+    }
     # Keep the portable build's license and documentation with its executable.
     $ffmpegDestination = Join-Path $InstallDir "ffmpeg"
     if (Test-Path $ffmpegDestination) { Remove-Item -Recurse -Force $ffmpegDestination }

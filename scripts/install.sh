@@ -218,6 +218,12 @@ ln -sf "$FFMPEG" "$INSTALL_DIR/ffmpeg/bin/ffmpeg"
 # Keep client, matching server and portable resources together. The Android
 # driver discovers scrcpy-server in the same PATH directory as scrcpy.
 cp -R "${SCRCPY_ROOT}/." "$INSTALL_DIR/"
+mkdir -p "${INSTALL_DIR}/licenses/device-bot"
+for notice in LICENSE NOTICE; do
+  if [ -f "${TEMP_DIR}/${notice}" ]; then
+    cp "${TEMP_DIR}/${notice}" "${INSTALL_DIR}/licenses/device-bot/"
+  fi
+done
 mkdir -p "${INSTALL_DIR}/device-bot-assets"
 cp -R "${TEMP_DIR}/${ASSETS}" "${INSTALL_DIR}/device-bot-assets/"
 if [ -d "${TEMP_DIR}/robot-report-assets/${VERSION}" ]; then

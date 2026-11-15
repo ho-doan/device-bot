@@ -20,7 +20,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.20"
 edition = "2024"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/ho-doan/device-bot"
 rust-version = "1.85"
 

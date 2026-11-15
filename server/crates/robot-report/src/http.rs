@@ -52,6 +52,15 @@ pub fn router(store: Store) -> Router {
         )
         .route("/", get(index_page))
         .route(
+            "/assets/device-bot.svg",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "image/svg+xml")],
+                    include_str!("web/device-bot.svg"),
+                )
+            }),
+        )
+        .route(
             "/assets/report.css",
             get(|| async {
                 (

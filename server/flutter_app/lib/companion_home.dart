@@ -547,9 +547,22 @@ class _CompanionHomeState extends State<CompanionHome> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      companionTitle,
-                      style: Theme.of(context).textTheme.headlineMedium,
+                    Row(
+                      children: [
+                        Image.asset(
+                          'assets/device-bot.png',
+                          width: 40,
+                          height: 40,
+                          excludeFromSemantics: true,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            companionTitle,
+                            style: Theme.of(context).textTheme.headlineMedium,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 6),
                     const Text(

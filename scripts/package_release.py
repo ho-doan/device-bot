@@ -61,6 +61,8 @@ def package(binary, target, version, output, qc=None, qc_web=None):
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as temp:
         stage = Path(temp)
+        for name in ('LICENSE', 'NOTICE'):
+            shutil.copy2(ROOT / name, stage / name)
         suffix = '.exe' if 'windows' in target else ''
         binaries = ['device-bot', 'robot-flow', 'robot-report']
         for tool in binaries:

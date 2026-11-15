@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Device Bot · Orbit examples</title>
+  <rect width="1024" height="1024" rx="224" fill="#0F172A"/>
+  <path d="M512 280v96" stroke="#F8FAFC" stroke-width="64" stroke-linecap="round"/>
+  <circle cx="512" cy="256" r="48" fill="#FDBA74"/>
+  <rect x="192" y="480" width="96" height="128" rx="40" fill="#FDBA74"/>
+  <rect x="736" y="480" width="96" height="128" rx="40" fill="#FDBA74"/>
+  <rect x="256" y="344" width="512" height="400" rx="112" fill="#F8FAFC"/>
+  <rect x="304" y="392" width="416" height="248" rx="72" fill="#0F172A"/>
+  <circle cx="416" cy="512" r="40" fill="#FDBA74"/>
+  <circle cx="608" cy="512" r="40" fill="#FDBA74"/>
+  <rect x="456" y="680" width="112" height="32" rx="16" fill="#0F172A"/>
+</svg>

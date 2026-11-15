@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -41,6 +42,12 @@ void main() {
       final remoteRequests = <http.Request>[];
       const remoteUrl = 'http://192.0.2.40:3337';
       const remoteToken = 'windows-remote-fixture-token';
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async => call.method == 'Clipboard.getData'
+            ? {'text': '  $remoteToken\n'}
+            : null,
+      );
       await IOOverrides.runWithIOOverrides(
         () => http.runWithClient(
           () async {
@@ -80,7 +87,8 @@ void main() {
             );
             expect(credentials.reads, localReads);
 
-            await tester.enterText(tokenField, remoteToken);
+            await tester.tap(find.byTooltip('Paste token'));
+            await tester.pumpAndSettle();
             await tester.tap(find.widgetWithText(FilledButton, 'Refresh'));
             await tester.pumpAndSettle();
             expect(find.text('Windows fixture'), findsOneWidget);

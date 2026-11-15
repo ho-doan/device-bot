@@ -653,7 +653,20 @@ class _ConnectionForm extends StatelessWidget {
                   obscureText: true,
                   autocorrect: false,
                   enableSuggestions: false,
-                  decoration: const InputDecoration(labelText: 'Bearer token'),
+                  decoration: InputDecoration(
+                    labelText: 'Bearer token',
+                    suffixIcon: IconButton(
+                      tooltip: 'Paste token',
+                      icon: const Icon(Icons.content_paste),
+                      onPressed: () async {
+                        final data = await Clipboard.getData(
+                          Clipboard.kTextPlain,
+                        );
+                        if (!context.mounted || data?.text == null) return;
+                        tokenController.text = data!.text!.trim();
+                      },
+                    ),
+                  ),
                 ),
               ),
             ),

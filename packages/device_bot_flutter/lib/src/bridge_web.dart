@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:js_interop';
 import 'package:flutter/widgets.dart';
 import 'widget_tree.dart';
+import 'bridge_protocol.dart';
 
 @JS('__deviceBotFlutterSnapshot')
 external set _snapshot(JSFunction? callback);
@@ -21,13 +22,14 @@ class DeviceBotFlutter {
     await WidgetsBinding.instance.endOfFrame.timeout(
       const Duration(milliseconds: 800),
     );
-    return jsonEncode({
-      'version': 1,
-      'elements': WidgetTreeSnapshot.capture(
-        screenOrigin: Offset.zero,
-        pixelRatio: 1,
+    return jsonEncode(
+      BridgeResponse(
+        elements: WidgetTreeSnapshot.captureNodes(
+          screenOrigin: Offset.zero,
+          pixelRatio: 1,
+        ),
       ),
-    }).toJS;
+    ).toJS;
   }
 
   static Future<void> stop() async {

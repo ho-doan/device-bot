@@ -64,7 +64,8 @@ class ScreenshotInspectorDialog extends StatefulWidget {
   });
 
   final AdminDevice device;
-  final Future<InspectionData> Function(String source) loadInspection;
+  final Future<InspectionData> Function(InspectorTreeSource source)
+  loadInspection;
 
   @override
   State<ScreenshotInspectorDialog> createState() => _ScreenshotDialogState();
@@ -74,7 +75,7 @@ class _ScreenshotDialogState extends State<ScreenshotInspectorDialog> {
   late final TextEditingController _yamlController;
   int? get _selectedIndex => _cubit.state.selectedIndex;
   late final InspectorCubit _cubit;
-  String get _treeSource => _cubit.state.source;
+  InspectorTreeSource get _treeSource => _cubit.state.source;
 
   @override
   void initState() {
@@ -82,7 +83,7 @@ class _ScreenshotDialogState extends State<ScreenshotInspectorDialog> {
     _cubit = InspectorCubit(widget.loadInspection, initialYaml: _initialYaml());
     _yamlController = TextEditingController(text: _cubit.state.yaml);
     _yamlController.addListener(() => _cubit.editYaml(_yamlController.text));
-    unawaited(_cubit.load('auto'));
+    unawaited(_cubit.load(InspectorTreeSource.auto));
   }
 
   @override
@@ -147,14 +148,23 @@ steps:
       title: Row(
         children: [
           Expanded(child: Text('${widget.device.name} element inspector')),
-          DropdownButton<String>(
+          DropdownButton<InspectorTreeSource>(
             key: const Key('inspector-tree-source'),
             value: _treeSource,
             hint: const Text('Element tree'),
             items: const [
-              DropdownMenuItem(value: 'auto', child: Text('Auto tree')),
-              DropdownMenuItem(value: 'native', child: Text('Native tree')),
-              DropdownMenuItem(value: 'flutter', child: Text('Flutter tree')),
+              DropdownMenuItem(
+                value: InspectorTreeSource.auto,
+                child: Text('Auto tree'),
+              ),
+              DropdownMenuItem(
+                value: InspectorTreeSource.native,
+                child: Text('Native tree'),
+              ),
+              DropdownMenuItem(
+                value: InspectorTreeSource.flutter,
+                child: Text('Flutter tree'),
+              ),
             ],
             onChanged: (source) {
               if (source == null || source == _treeSource) return;

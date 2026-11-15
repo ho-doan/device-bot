@@ -37,36 +37,6 @@ Map<String, dynamic> _$DesktopDisplayToJson(DesktopDisplay instance) =>
       'bounds': instance.bounds.toJson(),
     };
 
-DeviceReadiness _$DeviceReadinessFromJson(Map<String, dynamic> json) =>
-    DeviceReadiness(
-      ready: json['ready'] as bool,
-      state: json['state'] as String,
-      detail: json['detail'] as String,
-      expectedVersion: json['expectedVersion'] as String?,
-      agentVersion: json['agentVersion'] as String?,
-      serverVersion: json['serverVersion'] as String?,
-      targetAppId: json['targetAppId'] as String?,
-      cacheReady: json['cacheReady'] as bool? ?? false,
-      checkedAt: json['checkedAt'] == null
-          ? null
-          : DateTime.parse(json['checkedAt'] as String),
-      diagnostics: json['diagnostics'] as Map<String, dynamic>?,
-    );
-
-Map<String, dynamic> _$DeviceReadinessToJson(DeviceReadiness instance) =>
-    <String, dynamic>{
-      'ready': instance.ready,
-      'state': instance.state,
-      'detail': instance.detail,
-      'expectedVersion': instance.expectedVersion,
-      'agentVersion': instance.agentVersion,
-      'serverVersion': instance.serverVersion,
-      'targetAppId': instance.targetAppId,
-      'cacheReady': instance.cacheReady,
-      'checkedAt': instance.checkedAt?.toIso8601String(),
-      'diagnostics': instance.diagnostics,
-    };
-
 RunningApp _$RunningAppFromJson(Map<String, dynamic> json) => RunningApp(
   processId: (json['processId'] as num).toInt(),
   name: json['name'] as String,
@@ -94,21 +64,6 @@ Map<String, dynamic> _$AppWindowToJson(AppWindow instance) => <String, dynamic>{
   'focused': instance.focused,
 };
 
-InstalledApp _$InstalledAppFromJson(Map<String, dynamic> json) => InstalledApp(
-  name: json['name'] as String,
-  identifier: json['identifier'] as String,
-  version: json['version'] as String?,
-  publisher: json['publisher'] as String?,
-);
-
-Map<String, dynamic> _$InstalledAppToJson(InstalledApp instance) =>
-    <String, dynamic>{
-      'name': instance.name,
-      'identifier': instance.identifier,
-      'version': instance.version,
-      'publisher': instance.publisher,
-    };
-
 AdminBounds _$AdminBoundsFromJson(Map<String, dynamic> json) => AdminBounds(
   left: (json['left'] as num).toInt(),
   top: (json['top'] as num).toInt(),
@@ -123,26 +78,6 @@ Map<String, dynamic> _$AdminBoundsToJson(AdminBounds instance) =>
       'right': instance.right,
       'bottom': instance.bottom,
     };
-
-WebFrameSelector _$WebFrameSelectorFromJson(Map<String, dynamic> json) =>
-    WebFrameSelector(
-      css: json['css'] as String?,
-      name: json['name'] as String?,
-      url: json['url'] as String?,
-      position: (json['position'] as num?)?.toInt(),
-    );
-
-WebContext _$WebContextFromJson(Map<String, dynamic> json) => WebContext(
-  elementRef: json['elementRef'] as String?,
-  appId: json['appId'] as String?,
-  pageUrl: json['pageUrl'] as String?,
-  pageTitle: json['pageTitle'] as String?,
-  framePath:
-      (json['framePath'] as List<dynamic>?)
-          ?.map((e) => WebFrameSelector.fromJson(e as Map<String, dynamic>))
-          .toList() ??
-      const [],
-);
 
 AdminElement _$AdminElementFromJson(Map<String, dynamic> json) => AdminElement(
   className: json['className'] as String,

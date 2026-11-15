@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter/services.dart';
 
 import 'widget_tree.dart';
+import 'bridge_protocol.dart';
 import 'widget_actions.dart';
 import 'window_geometry.dart';
 
@@ -51,22 +52,28 @@ class DeviceBotFlutter {
         await WidgetsBinding.instance.endOfFrame.timeout(
           const Duration(milliseconds: 800),
         );
-        switch (request['command']) {
-          case 'imeAction':
-            WidgetTreeActions.pressImeAction(request['action'] as String);
-          case 'swipe':
+        switch (request.command) {
+          case BridgeCommand.imeAction:
+            WidgetTreeActions.pressImeAction(
+              request.action?.name ??
+                  (throw ArgumentError('Missing IME action')),
+            );
+          case BridgeCommand.swipe:
             await WidgetTreeActions.swipe(
               start: Offset(
-                (request['startX'] as num).toDouble(),
-                (request['startY'] as num).toDouble(),
+                request.startX ?? (throw ArgumentError('Missing startX')),
+                request.startY ?? (throw ArgumentError('Missing startY')),
               ),
               end: Offset(
-                (request['endX'] as num).toDouble(),
-                (request['endY'] as num).toDouble(),
+                request.endX ?? (throw ArgumentError('Missing endX')),
+                request.endY ?? (throw ArgumentError('Missing endY')),
               ),
               screenOrigin: await origin(),
               duration: Duration(
-                milliseconds: (request['durationMs'] as int).clamp(0, 2000),
+                milliseconds:
+                    (request.durationMs ??
+                            (throw ArgumentError('Missing durationMs')))
+                        .clamp(0, 2000),
               ),
             );
           default:
@@ -77,7 +84,7 @@ class DeviceBotFlutter {
         await WidgetsBinding.instance.endOfFrame.timeout(
           const Duration(milliseconds: 800),
         );
-        return WidgetTreeSnapshot.capture(
+        return WidgetTreeSnapshot.captureNodes(
           screenOrigin: await origin(),
           pixelRatio: Platform.isIOS || Platform.isMacOS ? 1 : null,
         );
@@ -112,8 +119,8 @@ class WidgetTreeBridge {
            directory ??
            Directory('${Directory.systemTemp.path}/device-bot-flutter');
 
-  final FutureOr<List<Map<String, Object?>>> Function() snapshot;
-  final FutureOr<void> Function(Map<String, dynamic>)? action;
+  final FutureOr<List<FlutterWidgetNode>> Function() snapshot;
+  final FutureOr<void> Function(BridgeRequest)? action;
   final Directory directory;
   final int port;
   final String? token;
@@ -140,12 +147,9 @@ class WidgetTreeBridge {
       // A reader racing startup sees either a complete manifest or no bridge.
       final pending = File('${manifest.path}.tmp');
       await pending.writeAsString(
-        jsonEncode({
-          'version': 1,
-          'processId': pid,
-          'port': server.port,
-          'token': _token,
-        }),
+        jsonEncode(
+          BridgeManifest(processId: pid, port: server.port, token: _token!),
+        ),
         flush: true,
       );
       await pending.rename(manifest.path);
@@ -165,24 +169,39 @@ class WidgetTreeBridge {
           .takeWhile((byte) => byte != 10)
           .toList()
           .timeout(const Duration(seconds: 2));
-      final data = jsonDecode(utf8.decode(request));
-      if (data is! Map || data['version'] != 1 || data['token'] != _token) {
-        socket.writeln(jsonEncode({'error': 'Unauthorized bridge request'}));
+      final data = BridgeRequest.decode(utf8.decode(request));
+      if (!data.isAuthorized(_token)) {
+        socket.writeln(
+          jsonEncode(
+            const BridgeResponse(
+              version: null,
+              error: 'Unauthorized bridge request',
+            ),
+          ),
+        );
       } else {
-        final command = data['command'];
+        final command = data.command;
         if (command != null) {
+          if (command == BridgeCommand.unknown) {
+            throw ArgumentError('Unknown bridge command');
+          }
+          if (command == BridgeCommand.imeAction &&
+              data.action == BridgeImeAction.unknown) {
+            throw ArgumentError('Unknown bridge IME action');
+          }
           if (action == null) {
             throw UnsupportedError('Bridge actions unavailable');
           }
-          await action!(Map<String, dynamic>.from(data));
+          await action!(data);
         }
         socket.writeln(
-          jsonEncode({
-            'version': 1,
-            'processId': pid,
-            if (command == null) 'elements': await snapshot(),
-            if (command != null) 'ok': true,
-          }),
+          jsonEncode(
+            BridgeResponse(
+              processId: pid,
+              elements: command == null ? await snapshot() : null,
+              ok: command == null ? null : true,
+            ),
+          ),
         );
       }
       await socket.flush();
@@ -190,11 +209,7 @@ class WidgetTreeBridge {
       // Protocol errors also cause the robot to retry through native UIA.
       try {
         socket.writeln(
-          jsonEncode({
-            'version': 1,
-            'processId': pid,
-            'error': error.toString(),
-          }),
+          jsonEncode(BridgeResponse(processId: pid, error: error.toString())),
         );
         await socket.flush();
       } catch (_) {
@@ -216,10 +231,10 @@ class WidgetTreeBridge {
     if (await manifest.exists()) {
       // Do not remove a newer instance's registration after a hot restart.
       try {
-        final data = jsonDecode(await manifest.readAsString());
-        if (data is Map && data['token'] == _token) await manifest.delete();
-      } on FileSystemException {
-        // The process may already have been unregistered.
+        final data = BridgeManifest.decode(await manifest.readAsString());
+        if (data.token == _token) await manifest.delete();
+      } on Object {
+        // An absent, invalid or newer registration must be left untouched.
       }
     }
   }

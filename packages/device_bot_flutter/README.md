@@ -113,3 +113,28 @@ flutter pub get
 flutter analyze --no-pub
 flutter test --no-pub
 ```
+
+## Generated bridge protocol
+
+`lib/src/bridge_protocol.dart` defines the request, manifest, response and widget
+snapshot schemas with `json_serializable`. Bridge commands and IME actions have
+separate enums. Native and browser snapshots use the same generated node schema;
+version/token checks and registration ownership remain application validation.
+
+`WidgetTreeBridge.snapshot` returns `FlutterWidgetNode` objects and its action
+callback receives a `BridgeRequest`. These models are exported from
+`device_bot_flutter.dart`. The existing `WidgetTreeSnapshot.capture` map-facing
+helper remains available and delegates to typed capture plus generated `toJson`.
+
+After changing the protocol, run from this package directory:
+
+```bash
+flutter pub get
+dart run build_runner build
+flutter analyze
+flutter test
+```
+
+Commit generated files with their source models. See the
+[QC JSON audit](../../docs/qc-json-refactor-audit.md) for remaining compatibility
+adapters and the reasons they are retained.

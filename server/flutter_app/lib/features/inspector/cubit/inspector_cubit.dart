@@ -7,7 +7,7 @@ const _unset = Object();
 
 class InspectorState {
   const InspectorState({
-    this.source = 'auto',
+    this.source = InspectorTreeSource.auto,
     this.loading = true,
     this.data,
     this.error,
@@ -15,7 +15,7 @@ class InspectorState {
     this.yaml = '',
     this.sequence = 0,
   });
-  final String source;
+  final InspectorTreeSource source;
   final bool loading;
   final InspectionData? data;
   final Object? error;
@@ -24,7 +24,7 @@ class InspectorState {
   final int sequence;
 
   InspectorState copyWith({
-    String? source,
+    InspectorTreeSource? source,
     bool? loading,
     Object? data = _unset,
     Object? error = _unset,
@@ -47,9 +47,9 @@ class InspectorState {
 class InspectorCubit extends Cubit<InspectorState> {
   InspectorCubit(this._load, {String initialYaml = ''})
     : super(InspectorState(yaml: initialYaml));
-  final Future<InspectionData> Function(String source) _load;
+  final Future<InspectionData> Function(InspectorTreeSource source) _load;
   int _generation = 0;
-  Future<void> load(String source) async {
+  Future<void> load(InspectorTreeSource source) async {
     if (isClosed) return;
     final generation = ++_generation;
     emit(

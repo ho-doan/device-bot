@@ -4,13 +4,27 @@ import 'package:flutter/rendering.dart';
 /// Captures the live Element tree without depending on debug-only APIs or UIA.
 /// Coordinates use the platform driver units: physical pixels on Windows/Android,
 /// desktop points on macOS, UIKit points on iOS, and CSS pixels on web.
+import 'bridge_protocol.dart';
+
 class WidgetTreeSnapshot {
   static List<Map<String, Object?>> capture({
     required Offset screenOrigin,
     Element? root,
     double? pixelRatio,
   }) {
-    final nodes = <Map<String, Object?>>[];
+    return captureNodes(
+      screenOrigin: screenOrigin,
+      root: root,
+      pixelRatio: pixelRatio,
+    ).map((node) => node.toJson()).toList();
+  }
+
+  static List<FlutterWidgetNode> captureNodes({
+    required Offset screenOrigin,
+    Element? root,
+    double? pixelRatio,
+  }) {
+    final nodes = <FlutterWidgetNode>[];
     var visited = 0;
 
     void visit(Element element, bool insideControl, bool insideTextField) {
@@ -41,23 +55,24 @@ class WidgetTreeSnapshot {
             screenOrigin.dx + bounds.right * ratio,
             screenOrigin.dy + bounds.bottom * ratio,
           );
-          nodes.add({
-            ...node,
-            'widgetType': widget.runtimeType.toString(),
-            'resourceId': _identifier(element),
-            'left': rect.left.round(),
-            'top': rect.top.round(),
-            'right': rect.right.round(),
-            'bottom': rect.bottom.round(),
-          });
+          nodes.add(
+            node.withLayout(
+              widgetType: widget.runtimeType.toString(),
+              resourceId: _identifier(element),
+              left: rect.left.round(),
+              top: rect.top.round(),
+              right: rect.right.round(),
+              bottom: rect.bottom.round(),
+            ),
+          );
         }
       }
       final control =
           insideControl ||
-          node?['className'] != null &&
-              node!['className'] != 'text' &&
-              node['className'] != 'image' &&
-              node['className'] != 'scrollView';
+          node != null &&
+              node.className != 'text' &&
+              node.className != 'image' &&
+              node.className != 'scrollView';
       final textField =
           insideTextField || widget is TextField || widget is SelectableText;
       element.visitChildren((child) => visit(child, control, textField));
@@ -68,7 +83,7 @@ class WidgetTreeSnapshot {
     return nodes;
   }
 
-  static Map<String, Object?>? _describe(
+  static FlutterWidgetNode? _describe(
     Element element,
     bool insideControl,
     bool insideTextField,
@@ -219,17 +234,17 @@ class WidgetTreeSnapshot {
       label ??= _descendantText(element);
     }
     label ??= _ancestorLabel(element);
-    return {
-      'className': role,
-      'text': label,
-      'contentDescription': label,
-      'clickable': clickable,
-      'enabled': enabled,
-      'focused': focused,
-      'checked': checked,
-      'selected': selected,
-      'value': value,
-    };
+    return FlutterWidgetNode(
+      className: role,
+      text: label,
+      contentDescription: label,
+      clickable: clickable,
+      enabled: enabled,
+      focused: focused,
+      checked: checked,
+      selected: selected,
+      value: value,
+    );
   }
 
   static Rect? _visibleBounds(Element element) {

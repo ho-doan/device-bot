@@ -1,3 +1,4 @@
+import 'package:mobile_mcp_companion/core/models/live_models.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -110,21 +111,19 @@ class AndroidVideoSession extends ChangeNotifier {
         await gathered.future.timeout(const Duration(seconds: 10));
       }
       final offer = await peer.getLocalDescription();
-      final answer = await client.startAndroidStream(deviceId, offer!.sdp!);
-      session._streamId = answer['streamId'] as String;
-      if (answer['context'] is Map) {
-        session.recordingContext = Map<String, dynamic>.from(
-          answer['context'] as Map,
-        );
+      final answer = LiveStreamAnswer.fromJson(
+        await client.startAndroidStream(deviceId, offer!.sdp!),
+      );
+      session._streamId = answer.streamId;
+      if (answer.context != null) {
+        session.recordingContext = Map.of(answer.context!);
       }
       session._deviceSize = Size(
-        ((session.recordingContext['logicalWidth'] ?? answer['width']) as num)
-            .toDouble(),
-        ((session.recordingContext['logicalHeight'] ?? answer['height']) as num)
-            .toDouble(),
+        answer.captureContext.logicalWidth ?? answer.width,
+        answer.captureContext.logicalHeight ?? answer.height,
       );
       await peer.setRemoteDescription(
-        RTCSessionDescription(answer['sdp'] as String, 'answer'),
+        RTCSessionDescription(answer.sdp, 'answer'),
       );
       await firstFrame.future.timeout(
         const Duration(seconds: 20),

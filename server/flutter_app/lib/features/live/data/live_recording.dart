@@ -1,3 +1,4 @@
+import 'package:mobile_mcp_companion/core/models/live_models.dart';
 import 'dart:convert';
 import 'package:mobile_mcp_companion/features/inspector/domain/inspector_yaml.dart';
 import 'package:mobile_mcp_companion/core/models/admin_models.dart';
@@ -21,10 +22,10 @@ class LiveRecording {
   String? savedPath;
   int get count => _steps.length;
   List<String> get steps => List.unmodifiable(_steps);
+  LiveStreamContext get captureContext => LiveStreamContext.fromJson(context);
   bool get canExport =>
       platform != 'chrome' ||
-      (context['url'] is String &&
-          (context['url'] as String).startsWith(RegExp(r'https?://')));
+      captureContext.url?.startsWith(RegExp(r'https?://')) == true;
 
   String prepare(
     Map<String, dynamic> input,
@@ -33,8 +34,9 @@ class LiveRecording {
   ) {
     // Deleting an earlier action must not reuse an existing YAML step ID.
     final sequence = _nextSequence++;
-    final action = input['action'];
-    if (action == 'tap' && selected != null) {
+    final command = LiveInput.fromJson(input);
+    final action = command.action;
+    if (action == LiveInputAction.tap && selected != null) {
       return buildInspectorFlowYaml(
         element: selected,
         elements: elements,
@@ -45,34 +47,37 @@ class LiveRecording {
     final String tool;
     final Map<String, dynamic> args = {'deviceId': '<selected>'};
     switch (action) {
-      case 'tap':
+      case LiveInputAction.tap:
         tool = 'mobile_click_on_screen_at_coordinates';
-        args.addAll({'x': input['x'], 'y': input['y']});
-      case 'type':
+        args.addAll({'x': command.x, 'y': command.y});
+      case LiveInputAction.typeText:
         tool = 'mobile_type_keys';
-        args['text'] = input['text'];
-      case 'clear':
+        args['text'] = command.text;
+      case LiveInputAction.clear:
         tool = 'mobile_type_keys';
         args.addAll({'text': '', 'clear': true});
-      case 'scroll':
+      case LiveInputAction.scroll:
         tool = 'mobile_scroll';
-        for (final key in ['x', 'y', 'deltaX', 'deltaY']) {
-          args[key] = input[key];
-        }
-      case 'swipe':
+        args.addAll({
+          'x': command.x,
+          'y': command.y,
+          'deltaX': command.deltaX,
+          'deltaY': command.deltaY,
+        });
+      case LiveInputAction.swipe:
         tool = 'mobile_swipe_on_screen';
         args.addAll({
-          'startX': input['x'],
-          'startY': input['y'],
-          'endX': input['endX'],
-          'endY': input['endY'],
-          'durationMs': input['durationMs'] ?? 300,
+          'startX': command.x,
+          'startY': command.y,
+          'endX': command.endX,
+          'endY': command.endY,
+          'durationMs': command.durationMs ?? 300,
         });
-      default:
+      case LiveInputAction.unknown:
         throw ArgumentError('Unsupported recorded action $action');
     }
     var prefix = '';
-    if (action == 'type' || action == 'clear') {
+    if (action == LiveInputAction.typeText || action == LiveInputAction.clear) {
       final focused = elements
           .where(
             (element) =>
@@ -95,7 +100,7 @@ class LiveRecording {
         );
       }
     }
-    return '$prefix  - id: ${action}_$sequence\n    call_tool:\n      name: $tool\n      arguments: ${jsonEncode(args)}';
+    return '$prefix  - id: ${action.wireName}_$sequence\n    call_tool:\n      name: $tool\n      arguments: ${jsonEncode(args)}';
   }
 
   Future<void> commit(String step) async {
@@ -126,15 +131,15 @@ class LiveRecording {
         '  - id: select_device\n    select_device:\n      platform: chrome\n      state: available',
       );
       steps.add(
-        '  - id: open_page\n    call_tool:\n      name: mobile_open_url\n      arguments: ${jsonEncode({'deviceId': '<selected>', 'url': context['url']})}',
+        '  - id: open_page\n    call_tool:\n      name: mobile_open_url\n      arguments: ${jsonEncode({'deviceId': '<selected>', 'url': captureContext.url})}',
       );
       steps.add('  - id: wait_for_page\n    wait:\n      ms: 500');
     } else {
       steps.add(
         '  - id: select_device\n    select_device:\n      id: ${jsonEncode(deviceId)}\n      platform: $platform\n      state: available',
       );
-      final app = context['appId'];
-      if (app is String && app.isNotEmpty) {
+      final app = captureContext.appId;
+      if (app != null && app.isNotEmpty) {
         steps.add(
           '  - id: launch_recorded_app\n    launch_app:\n      app_id: ${jsonEncode(app)}',
         );

@@ -1,3 +1,4 @@
+import 'package:mobile_mcp_companion/core/models/live_models.dart';
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -460,7 +461,9 @@ class LiveCubit extends Cubit<LiveState> {
     final queuedVideo = _video;
     final snapshot = List<AdminElement>.of(_elements);
     final selected = _selectedIndex == null ? null : snapshot[_selectedIndex!];
-    if (input['action'] == 'type' || input['action'] == 'clear') {
+    var command = LiveInput.fromJson(input);
+    if (command.action == LiveInputAction.typeText ||
+        command.action == LiveInputAction.clear) {
       final focused = snapshot
           .where((element) => element.focused == true)
           .toList();
@@ -470,9 +473,10 @@ class LiveCubit extends Cubit<LiveState> {
           ? focused.single
           : null;
       if (field?.webContext != null) {
-        input = {...input, 'webContext': field!.webContext!.toJson()};
+        command = command.withWebContext(field!.webContext!);
       }
     }
+    input = command.toJson();
     // Resolve the selector at click time. Reserve the sequence inside the queue.
     _inputs = _inputs
         .then((_) async {
@@ -499,7 +503,7 @@ class LiveCubit extends Cubit<LiveState> {
             final step = recording.prepare(
               input,
               snapshot,
-              input['action'] == 'tap' ? selected : null,
+              command.action == LiveInputAction.tap ? selected : null,
             );
             await onInput(input);
             await recording.commit(step);

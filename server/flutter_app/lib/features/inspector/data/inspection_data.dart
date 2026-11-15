@@ -1,3 +1,4 @@
+export '../domain/inspector_tree_source.dart';
 import 'dart:typed_data';
 import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 

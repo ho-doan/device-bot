@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:device_bot_flutter/src/bridge.dart';
+import 'package:device_bot_flutter/src/bridge_protocol.dart';
 
 void main() {
   test(
@@ -16,13 +17,13 @@ void main() {
       final bridge = WidgetTreeBridge(
         directory: directory,
         action: (request) {
-          if (request['action'] == 'done') {
+          if (request.action == BridgeImeAction.done) {
             throw StateError('Focused editor is not configured for IME done');
           }
           actions++;
         },
         snapshot: () => [
-          {'className': 'text', 'text': 'snapshot ${++count}'},
+          FlutterWidgetNode(className: 'text', text: 'snapshot ${++count}'),
         ],
       );
       addTearDown(() async {
@@ -69,11 +70,11 @@ void main() {
       final first = await request(manifest['token'] as String);
       expect(first['processId'], pid);
       expect(first['elements'], [
-        {'className': 'text', 'text': 'snapshot 1'},
+        {'className': 'text', 'text': 'snapshot 1', 'value': null},
       ]);
       final second = await request(manifest['token'] as String);
       expect(second['elements'], [
-        {'className': 'text', 'text': 'snapshot 2'},
+        {'className': 'text', 'text': 'snapshot 2', 'value': null},
       ]);
       final ack = await request(manifest['token'] as String, {
         'command': 'imeAction',
@@ -109,7 +110,7 @@ void main() {
       port: port,
       token: token,
       snapshot: () => [
-        {'className': 'textField', 'value': ''},
+        const FlutterWidgetNode(className: 'textField', value: ''),
       ],
     );
     addTearDown(() async {

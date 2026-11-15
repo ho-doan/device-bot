@@ -102,6 +102,13 @@ models rather than generated files. Browser tests exercise streaming and
 cancellation with an open SSE response; native/widget tests cover MCP sessions,
 authentication, Cubit races, inspector selection and existing control flows.
 
+JSON models are grouped by protocol: MCP, Live, runner readiness, installed apps,
+web context, flow reports and local connection profiles. The shared Flutter
+bridge owns its models in `packages/device_bot_flutter/lib/src/bridge_protocol.dart`.
+See the [JSON contract audit](../../docs/qc-json-refactor-audit.md) for the enum
+policies and the exact remaining custom converters/map boundaries, including why
+each is retained.
+
 The reusable [QC automation workflow](../../.github/workflows/automation-tests.yml)
 checks generation, analysis, tests and the web build before replaying the web
 YAML suite on Linux and Windows.

@@ -288,7 +288,7 @@ class _CompanionHomeState extends State<_CompanionView> {
   Future<InspectionData> _loadInspection(
     AdminDevice device, {
     DesktopCaptureSettings? capture,
-    String source = 'auto',
+    InspectorTreeSource source = InspectorTreeSource.auto,
   }) async {
     // Draw labels from the chosen tree. Server annotations use native nodes
     // and would have different indices after switching to a Flutter snapshot.
@@ -301,7 +301,7 @@ class _CompanionHomeState extends State<_CompanionView> {
     try {
       final inspection = await client.inspectElements(
         device.id,
-        source: source,
+        source: source.name,
         processId: capture?.processId,
         windowId: capture?.windowId,
       );

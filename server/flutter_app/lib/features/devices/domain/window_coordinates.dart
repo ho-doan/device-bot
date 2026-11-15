@@ -1,12 +1,14 @@
+import 'package:mobile_mcp_companion/core/models/live_models.dart';
 import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 String windowsLiveDeviceId(AppWindow window) =>
     'windows:${window.processId}:${window.windowId}';
 
 (int, int) _windowOrigin(Map<String, dynamic> context) {
-  final x = context['originX'];
-  final y = context['originY'];
-  if (x is! num || y is! num || !x.isFinite || !y.isFinite) {
+  final value = LiveStreamContext.fromJson(context);
+  final x = value.originX;
+  final y = value.originY;
+  if (x == null || y == null || !x.isFinite || !y.isFinite) {
     throw StateError('Windows Live did not return a valid window origin.');
   }
   return (x.round(), y.round());
@@ -47,11 +49,5 @@ Map<String, dynamic> windowInputForDesktop(
   Map<String, dynamic> context,
 ) {
   final (x, y) = _windowOrigin(context);
-  return {
-    ...input,
-    for (final key in ['x', 'endX'])
-      if (input[key] is num) key: (input[key] as num) + x,
-    for (final key in ['y', 'endY'])
-      if (input[key] is num) key: (input[key] as num) + y,
-  };
+  return LiveInput.fromJson(input).translated(x, y).toJson();
 }

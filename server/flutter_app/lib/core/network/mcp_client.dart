@@ -1,3 +1,8 @@
+import '../models/installed_apps_decoder.dart';
+import '../models/json_value.dart';
+import '../models/mcp_models.dart';
+import '../models/live_models.dart';
+export '../models/mcp_models.dart' show McpToolResult;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -65,10 +70,9 @@ class McpClient {
 
   Future<List<AdminDevice>> listDevices() async {
     final result = await callTool('mobile_list_available_devices', {});
-    final values = (result.structuredContent?['devices'] as List?) ?? const [];
-    return values
-        .map((value) => AdminDevice.fromJson(value as Map<String, dynamic>))
-        .toList();
+    return DeviceListPayload.fromJson(
+      result.structuredContent ?? const {},
+    ).devices;
   }
 
   Future<void> bootDevice(String deviceId, {bool restart = false}) async {
@@ -124,9 +128,9 @@ class McpClient {
     final result = await callTool('mobile_list_running_apps', {
       'deviceId': deviceId,
     });
-    return ((result.structuredContent?['apps'] as List?) ?? const [])
-        .map((value) => RunningApp.fromJson(value as Map<String, dynamic>))
-        .toList();
+    return RunningAppsPayload.fromJson(
+      result.structuredContent ?? const {},
+    ).apps;
   }
 
   Future<List<AppWindow>> listWindows(String deviceId, {int? processId}) async {
@@ -134,9 +138,9 @@ class McpClient {
       'deviceId': deviceId,
       'processId': ?processId,
     });
-    return ((result.structuredContent?['windows'] as List?) ?? const [])
-        .map((value) => AppWindow.fromJson(value as Map<String, dynamic>))
-        .toList();
+    return WindowsPayload.fromJson(
+      result.structuredContent ?? const {},
+    ).windows;
   }
 
   Future<void> activateApp(
@@ -155,7 +159,7 @@ class McpClient {
     final result = await callTool('mobile_list_installed_apps', {
       'deviceId': deviceId,
     });
-    final apps = _installedAppsFrom(result.structuredContent);
+    final apps = decodeInstalledApps(result.structuredContent);
     final uniqueApps = <String, InstalledApp>{
       for (final app in apps) app.identifier: app,
     };
@@ -169,9 +173,9 @@ class McpClient {
     final result = await callTool('mobile_list_displays', {
       'deviceId': deviceId,
     });
-    return ((result.structuredContent?['displays'] as List?) ?? const [])
-        .map((value) => DesktopDisplay.fromJson(value as Map<String, dynamic>))
-        .toList();
+    return DisplaysPayload.fromJson(
+      result.structuredContent ?? const {},
+    ).displays;
   }
 
   Future<Uint8List> takeScreenshot(
@@ -185,8 +189,8 @@ class McpClient {
       'displayId': ?displayId,
     });
     for (final content in result.content) {
-      if (content['type'] == 'image' && content['data'] is String) {
-        return base64Decode(content['data'] as String);
+      if (content.type == McpContentType.image && content.data != null) {
+        return base64Decode(content.data!);
       }
     }
     throw const McpException(
@@ -211,10 +215,12 @@ class McpClient {
       'annotateElements': true,
     });
     for (final content in result.content) {
-      if (content['type'] == 'image' && content['data'] is String) {
+      if (content.type == McpContentType.image && content.data != null) {
         return (
-          bytes: base64Decode(content['data'] as String),
-          annotated: result.structuredContent?['annotated'] == true,
+          bytes: base64Decode(content.data!),
+          annotated: ScreenshotPayload.fromJson(
+            result.structuredContent ?? const {},
+          ).annotated,
         );
       }
     }
@@ -232,8 +238,7 @@ class McpClient {
       'deviceId': deviceId,
       'sdp': sdp,
     });
-    return result.structuredContent ??
-        Map<String, dynamic>.from(jsonDecode(result.text!) as Map);
+    return result.structuredContent ?? decodeJsonObject(result.text!);
   }
 
   Future<void> stopAndroidStream(String streamId) async {
@@ -251,42 +256,52 @@ class McpClient {
   }
 
   Future<void> sendWebInput(String deviceId, Map<String, dynamic> input) async {
-    switch (input['action']) {
-      case 'tap':
+    final command = LiveInput.fromJson(input);
+    switch (command.action) {
+      case LiveInputAction.tap:
         await callTool('mobile_click_on_screen_at_coordinates', {
           'deviceId': deviceId,
-          'x': input['x'],
-          'y': input['y'],
-          if (input['webContext'] != null) 'webContext': input['webContext'],
+          'x': command.x,
+          'y': command.y,
+          if (command.webContext != null)
+            'webContext': command.webContext!.toJson(),
         });
-      case 'scroll':
+      case LiveInputAction.scroll:
         await callTool('mobile_scroll', {
           'deviceId': deviceId,
-          if (input['webContext'] != null) 'webContext': input['webContext'],
-          for (final key in ['x', 'y', 'deltaX', 'deltaY']) key: input[key],
+          if (command.webContext != null)
+            'webContext': command.webContext!.toJson(),
+          'x': command.x,
+          'y': command.y,
+          'deltaX': command.deltaX,
+          'deltaY': command.deltaY,
         });
-      case 'swipe':
+      case LiveInputAction.swipe:
         await callTool('mobile_swipe_on_screen', {
           'deviceId': deviceId,
-          'startX': input['x'],
-          'startY': input['y'],
-          'endX': input['endX'],
-          'endY': input['endY'],
-          'durationMs': input['durationMs'],
+          'startX': command.x,
+          'startY': command.y,
+          'endX': command.endX,
+          'endY': command.endY,
+          'durationMs': command.durationMs,
         });
-      case 'type':
+      case LiveInputAction.typeText:
         await callTool('mobile_type_keys', {
           'deviceId': deviceId,
-          if (input['webContext'] != null) 'webContext': input['webContext'],
-          'text': input['text'],
+          if (command.webContext != null)
+            'webContext': command.webContext!.toJson(),
+          'text': command.text,
         });
-      case 'clear':
+      case LiveInputAction.clear:
         await callTool('mobile_type_keys', {
           'deviceId': deviceId,
-          if (input['webContext'] != null) 'webContext': input['webContext'],
+          if (command.webContext != null)
+            'webContext': command.webContext!.toJson(),
           'text': '',
           'clear': true,
         });
+      case LiveInputAction.unknown:
+        throw const McpException('Unsupported Live input action.');
     }
   }
 
@@ -389,7 +404,7 @@ class McpClient {
       final response = await _dio
           .postUri<String>(
             _adminUri(deviceId, 'input'),
-            data: jsonEncode(input),
+            data: jsonEncode(LiveInput.fromJson(input)),
             options: Options(
               responseType: ResponseType.plain,
               headers: {
@@ -447,25 +462,9 @@ class McpClient {
     if (maxResults != null) arguments['maxResults'] = maxResults;
     if (includeFrames) arguments['includeFrames'] = true;
     final result = await callTool('mobile_list_elements_on_screen', arguments);
-    final values = (result.structuredContent?['elements'] as List?) ?? const [];
-    return [
-      for (var i = 0; i < values.length; i++)
-        AdminElement.fromJson({
-          ...values[i] as Map<String, dynamic>,
-          'source': result.structuredContent?['source'],
-          'index': (values[i] as Map)['index'] ?? i + 1,
-          'position': values
-              .take(i + 1)
-              .where(
-                (value) =>
-                    ((value as Map)['className'] as String).contains(
-                      (values[i] as Map)['className'] as String,
-                    ) &&
-                    _webIdentity(value) == _webIdentity(values[i] as Map),
-              )
-              .length,
-        }),
-    ];
+    return ElementSnapshotPayload.fromJson(
+      result.structuredContent ?? const {},
+    ).inspectedElements();
   }
 
   /// Use a whole Flutter snapshot when native controls have no labels. Never
@@ -557,36 +556,33 @@ class McpClient {
     if (toolResult.isError) {
       final message = toolResult.text ?? 'MCP tool $name failed.';
       var deviceStatus = toolResult.structuredContent;
-      // Keep the warning usable with a server that returns the stable error code
-      // as text, while newer servers provide structured recovery information.
-      if (deviceStatus?['state'] != 'device_locked' &&
+      var recovery = ToolFailurePayload.fromJson(deviceStatus ?? const {});
+      final target = DeviceTargetArguments.fromJson(arguments);
+      // Older servers expose only the stable error prefix; build the same typed recovery DTO.
+      if (recovery.state != RunnerReadinessState.deviceLocked &&
           message.startsWith('device_locked:')) {
-        deviceStatus = {
-          'state': 'device_locked',
-          'ready': false,
-          'detail': message.substring('device_locked:'.length).trim(),
-          'deviceId': arguments['deviceId'],
-          'diagnostics': {'connected': true, 'screenLocked': true},
-        };
+        deviceStatus = RunnerStatusPayload(
+          state: RunnerReadinessState.deviceLocked,
+          detail: message.substring('device_locked:'.length).trim(),
+          deviceId: target.deviceId,
+          diagnostics: const RunnerDiagnostics(
+            connected: true,
+            screenLocked: true,
+          ).toJson(),
+        ).toJson();
+        recovery = ToolFailurePayload.fromJson(deviceStatus);
       }
-      if (deviceStatus?['state'] == 'device_locked') {
-        final deviceId =
-            deviceStatus?['deviceId'] as String? ??
-            arguments['deviceId'] as String?;
-        if (deviceId != null) {
-          onDeviceReadiness?.call(
-            deviceId,
-            DeviceReadiness.fromJson(deviceStatus!),
-          );
-        }
+      final locked = recovery.state == RunnerReadinessState.deviceLocked;
+      final deviceId = recovery.deviceId ?? target.deviceId;
+      if (locked && deviceId != null) {
+        onDeviceReadiness?.call(
+          deviceId,
+          DeviceReadiness.fromJson(deviceStatus!),
+        );
       }
-      throw McpException(
-        message,
-        deviceStatus: deviceStatus?['state'] == 'device_locked'
-            ? deviceStatus
-            : null,
-      );
+      throw McpException(message, deviceStatus: locked ? deviceStatus : null);
     }
+
     return toolResult;
   }
 
@@ -615,16 +611,17 @@ class McpClient {
           ) ??
           '';
     }
-    final initialized = await _post({
-      'jsonrpc': '2.0',
-      'id': _nextRequestId++,
-      'method': 'initialize',
-      'params': {
-        'protocolVersion': '2025-11-25',
-        'capabilities': <String, dynamic>{},
-        'clientInfo': {'name': 'device-bot-companion', 'version': '0.1.0'},
-      },
-    });
+    final initialized = await _post(
+      McpRpcRequest(
+        id: _nextRequestId++,
+        method: 'initialize',
+        params: {
+          'protocolVersion': '2025-11-25',
+          'capabilities': <String, dynamic>{},
+          'clientInfo': {'name': 'device-bot-companion', 'version': '0.1.0'},
+        },
+      ),
+    );
     _sessionId = initialized.sessionId;
     if (_sessionId == null || _sessionId!.isEmpty) {
       throw const McpException(
@@ -632,10 +629,10 @@ class McpClient {
       );
     }
 
-    await _post({
-      'jsonrpc': '2.0',
-      'method': 'notifications/initialized',
-    }, expectResponse: false);
+    await _post(
+      const McpRpcRequest(method: 'notifications/initialized'),
+      expectResponse: false,
+    );
     await _requestResult('tools/list', const {});
     _initialized = true;
     _record('mcp.session', 'initialized');
@@ -645,12 +642,11 @@ class McpClient {
     String method,
     Map<String, dynamic> params,
   ) async {
-    final body = <String, dynamic>{
-      'jsonrpc': '2.0',
-      'id': _nextRequestId++,
-      'method': method,
-      'params': params,
-    };
+    final body = McpRpcRequest(
+      id: _nextRequestId++,
+      method: method,
+      params: params,
+    );
     _McpResponse response;
     try {
       response = await _post(body);
@@ -663,30 +659,26 @@ class McpClient {
       await _ensureInitialized();
       response = await _post(body);
     }
-    final result = response.body['result'];
-    if (result is! Map) {
+    final result = response.body.result;
+    if (result == null) {
       throw const McpException('MCP response did not contain a result object.');
     }
     return Map<String, dynamic>.from(result);
   }
 
   Future<_McpResponse> _post(
-    Map<String, dynamic> body, {
+    McpRpcRequest body, {
     bool expectResponse = true,
   }) async {
+    final call = body.method == 'tools/call'
+        ? McpToolCall.fromJson(body.params!)
+        : null;
     final preparing =
-        body['method'] == 'tools/call' &&
-        (body['params'] as Map?)?['name'] == 'mobile_get_ui_runner_status' &&
-        ((body['params'] as Map?)?['arguments'] as Map?)?['prepare'] == true;
-    final starting =
-        body['method'] == 'tools/call' &&
-        (body['params'] as Map?)?['name'] == 'mobile_boot_device';
-    final negotiatingVideo =
-        body['method'] == 'tools/call' &&
-        (body['params'] as Map?)?['name'] == 'mobile_start_stream';
-    final runningFlow =
-        body['method'] == 'tools/call' &&
-        (body['params'] as Map?)?['name'] == 'mobile_run_flow';
+        call?.name == 'mobile_get_ui_runner_status' &&
+        RunnerStatusArguments.fromJson(call!.arguments).prepare;
+    final starting = call?.name == 'mobile_boot_device';
+    final negotiatingVideo = call?.name == 'mobile_start_stream';
+    final runningFlow = call?.name == 'mobile_run_flow';
     final timeout = Duration(
       seconds: runningFlow
           ? 650
@@ -716,26 +708,20 @@ class McpClient {
       if ((response.statusCode ?? 0) < 200 ||
           (response.statusCode ?? 0) >= 300) {
         throw McpException(
-          'MCP ${body['method']} failed with HTTP ${response.statusCode}: '
+          'MCP ${body.method} failed with HTTP ${response.statusCode}: '
           '$responseBody',
           httpStatus: response.statusCode,
         );
       }
       if (!expectResponse || responseBody.isEmpty) {
         return _McpResponse(
-          body: const {},
+          body: const McpRpcResponse(),
           sessionId: response.headers.value('mcp-session-id'),
         );
       }
-      final decoded = jsonDecode(responseBody);
-      if (decoded is! Map<String, dynamic>) {
-        throw const McpException('MCP response was not a JSON object.');
-      }
-      if (decoded['error'] is Map) {
-        final error = Map<String, dynamic>.from(decoded['error'] as Map);
-        throw McpException(
-          'MCP error ${error['code']}: ${error['message'] ?? 'unknown error'}',
-        );
+      final decoded = McpRpcResponse.fromJson(decodeJsonObject(responseBody));
+      if (decoded.error case final error?) {
+        throw McpException('MCP error ${error.code}: ${error.message}');
       }
       return _McpResponse(
         body: decoded,
@@ -799,58 +785,10 @@ class McpClient {
   }
 }
 
-List<InstalledApp> _installedAppsFrom(dynamic value) {
-  if (value is List) {
-    return value
-        .whereType<Map>()
-        .map((entry) => InstalledApp.fromJson(Map<String, dynamic>.from(entry)))
-        .toList();
-  }
-  if (value is! Map) return const [];
-
-  for (final key in [
-    'apps',
-    'applications',
-    'installedApps',
-    'result',
-    'data',
-  ]) {
-    if (value.containsKey(key)) {
-      final apps = _installedAppsFrom(value[key]);
-      if (apps.isNotEmpty) return apps;
-    }
-  }
-
-  final entries = <InstalledApp>[];
-  for (final entry in value.entries) {
-    final raw = entry.value;
-    if (raw is! Map) continue;
-    final app = Map<String, dynamic>.from(raw);
-    final hasIdentifier = [
-      'bundleIdentifier',
-      'bundleId',
-      'CFBundleIdentifier',
-      'packageName',
-      'appId',
-      'applicationIdentifier',
-      'id',
-      'path',
-      'sourcePath',
-    ].any(app.containsKey);
-    if (!hasIdentifier && entry.key is String) {
-      app['bundleIdentifier'] = entry.key;
-    }
-    entries.add(InstalledApp.fromJson(app));
-  }
-  return entries;
-}
-
 String _adminError(String body, int status) {
   try {
-    final decoded = jsonDecode(body);
-    if (decoded is Map && decoded['error'] is String) {
-      return decoded['error'] as String;
-    }
+    final error = ApiErrorPayload.fromJson(decodeJsonObject(body)).error;
+    if (error != null) return error;
   } on Object {
     // The body is already the message when it is not the admin JSON shape.
   }
@@ -882,99 +820,46 @@ class AndroidLiveStatus extends AndroidLiveUpdate {
   final String message;
 }
 
-String _webIdentity(Object? value) {
-  if (value is! Map) return '';
-  final context = value['webContext'];
-  if (context is! Map) return '';
-  final page = context['page'];
-  final frames = context['framePath'];
-  return [
-    context['appId'] ?? '',
-    page is Map ? page['url'] ?? '' : '',
-    page is Map ? page['title'] ?? '' : '',
-    if (frames is List)
-      for (final frame in frames)
-        frame is Map
-            ? '${frame['css']}|${frame['name']}|${frame['url']}|${frame['position']}'
-            : '',
-  ].join('\n');
-}
-
-/// One SSE event from `GET /admin/devices/{id}/live`.
 AndroidLiveUpdate? decodeAndroidLiveEvent(String name, String data) {
-  final Object? decoded;
+  final Map<String, dynamic>? json;
   try {
-    decoded = jsonDecode(data);
-  } on Object {
+    json = decodeJsonObjectOrNull(data);
+  } on FormatException {
     return AndroidLiveStatus('Live mirror sent an unreadable $name event.');
   }
-  if (decoded is! Map) return null;
-  final json = Map<String, dynamic>.from(decoded);
-  switch (name) {
-    case 'frame':
-      final png = json['png'];
-      if (png is! String || png.isEmpty) return null;
-      try {
-        return AndroidLiveFrame(base64Decode(png));
-      } on Object {
-        return const AndroidLiveStatus(
-          'Live mirror sent a frame that is not base64.',
-        );
-      }
-    case 'elements':
-      final values = (json['elements'] as List?) ?? const [];
-      final source = json['source'] as String?;
-      final elements = <AdminElement>[];
-      for (var i = 0; i < values.length; i++) {
-        if (values[i] is! Map) continue;
-        try {
-          elements.add(
-            AdminElement.fromJson({
-              ...Map<String, dynamic>.from(values[i] as Map),
-              'index': i + 1,
-              'source': ?source,
-            }),
-          );
-        } on Object {
-          continue;
-        }
-      }
-      return AndroidLiveElements(elements: elements, source: source);
-    case 'error':
-      return AndroidLiveStatus(
-        json['error']?.toString() ?? 'Live mirror error',
-      );
-    default:
-      return null;
-  }
-}
-
-class McpToolResult {
-  const McpToolResult({
-    required this.content,
-    required this.structuredContent,
-    required this.isError,
-  });
-
-  factory McpToolResult.fromJson(Map<String, dynamic> json) => McpToolResult(
-    content: ((json['content'] as List?) ?? const [])
-        .map((value) => Map<String, dynamic>.from(value as Map))
-        .toList(),
-    structuredContent: json['structuredContent'] is Map
-        ? Map<String, dynamic>.from(json['structuredContent'] as Map)
-        : null,
-    isError: json['isError'] == true,
+  if (json == null) return null;
+  final type = LiveEventType.values.firstWhere(
+    (value) => value.name == name,
+    orElse: () => LiveEventType.unknown,
   );
-
-  final List<Map<String, dynamic>> content;
-  final Map<String, dynamic>? structuredContent;
-  final bool isError;
-
-  String? get text => content
-      .where((value) => value['type'] == 'text')
-      .map((value) => value['text'])
-      .whereType<String>()
-      .join('\n');
+  try {
+    switch (type) {
+      case LiveEventType.frame:
+        final png = LiveFramePayload.fromJson(json).png;
+        if (png == null || png.isEmpty) return null;
+        try {
+          return AndroidLiveFrame(base64Decode(png));
+        } catch (_) {
+          return const AndroidLiveStatus(
+            'Live mirror sent a frame that is not base64.',
+          );
+        }
+      case LiveEventType.elements:
+        final snapshot = LiveElementsPayload.fromJson(json);
+        return AndroidLiveElements(
+          elements: snapshot.liveElements(),
+          source: snapshot.source,
+        );
+      case LiveEventType.error:
+        return AndroidLiveStatus(
+          ApiErrorPayload.fromJson(json).error ?? 'Live mirror error',
+        );
+      case LiveEventType.unknown:
+        return null;
+    }
+  } catch (_) {
+    return AndroidLiveStatus('Live mirror sent an unreadable $name event.');
+  }
 }
 
 class McpException implements Exception {
@@ -991,6 +876,6 @@ class McpException implements Exception {
 class _McpResponse {
   const _McpResponse({required this.body, required this.sessionId});
 
-  final Map<String, dynamic> body;
+  final McpRpcResponse body;
   final String? sessionId;
 }

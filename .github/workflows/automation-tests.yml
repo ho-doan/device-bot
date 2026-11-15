@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - 'server/**'
+      - 'packages/device_bot_flutter/**'
       - 'scripts/**'
       - '.github/actions/setup-release-flutter/**'
       - '.github/workflows/automation-tests.yml'
@@ -12,6 +13,7 @@ on:
   pull_request:
     paths:
       - 'server/**'
+      - 'packages/device_bot_flutter/**'
       - 'scripts/**'
       - '.github/actions/setup-release-flutter/**'
       - '.github/workflows/automation-tests.yml'
@@ -32,6 +34,14 @@ jobs:
       - uses: ./.github/actions/setup-release-flutter
         with:
           platform: web
+      - name: Generate and test Flutter bridge protocol
+        working-directory: packages/device_bot_flutter
+        run: |
+          flutter pub get
+          dart run build_runner build
+          git diff --exit-code -- lib
+          flutter analyze
+          flutter test
       - name: Analyze and test QC
         working-directory: server/flutter_app
         run: |

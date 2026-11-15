@@ -1,3 +1,4 @@
+import 'package:mobile_mcp_companion/core/models/flow_report.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../cubit/flow_run_cubit.dart';
 import 'dart:math' as math;
@@ -5,26 +6,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 /// One-line summary of a `mobile_run_flow` report for the QC dialogs.
-String formatFlowReport(Map<String, dynamic> report) {
-  final status = report['status']?.toString() ?? 'finished';
-  final error = report['error']?.toString();
-  final steps = report['steps'];
-  var failed = 0;
-  if (steps is List) {
-    for (final step in steps) {
-      if (step is Map && step['status'] == 'failed') failed++;
-    }
-  }
-  final directory = report['artifactDirectory']?.toString();
-  return [
-    'Run $status',
-    if (failed > 0) '$failed failed step${failed == 1 ? '' : 's'}',
-    if (error != null && error.isNotEmpty) error,
-    if (directory != null && directory.isNotEmpty) directory,
-  ].join('\n');
-}
+String formatFlowReport(Map<String, dynamic> report) =>
+    FlowReport.fromJson(report).summary;
 
-/// Preview an exported flow file, then run that YAML on the connected device.
 class FlowYamlRunDialog extends StatefulWidget {
   const FlowYamlRunDialog({
     required this.fileName,

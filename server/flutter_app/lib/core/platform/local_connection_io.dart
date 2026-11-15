@@ -1,4 +1,5 @@
-import 'dart:convert';
+import '../models/json_value.dart';
+import '../models/local_connection_profile.dart';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -21,22 +22,19 @@ Future<String?> localBearerToken(Uri endpoint, {String? directory}) async {
         ];
   for (final root in roots) {
     try {
-      final value = jsonDecode(
-        await File('$root/connection-${endpoint.port}.json').readAsString(),
+      final value = LocalConnectionProfile.fromJson(
+        decodeJsonObject(
+          await File('$root/connection-${endpoint.port}.json').readAsString(),
+        ),
       );
-      if (value is! Map ||
-          value['url'] is! String ||
-          value['bearerToken'] is! String) {
-        continue;
-      }
-      final stored = Uri.tryParse(value['url'] as String);
+      final stored = Uri.tryParse(value.url);
       if (stored == null ||
           !localHosts.contains(stored.host) ||
           stored.port != endpoint.port ||
           stored.scheme != endpoint.scheme) {
         continue;
       }
-      final token = (value['bearerToken'] as String).trim();
+      final token = value.bearerToken.trim();
       if (token.isNotEmpty) return token;
     } on Object {
       // An absent/inaccessible profile is expected before the local server starts.

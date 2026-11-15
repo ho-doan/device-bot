@@ -131,14 +131,16 @@ void main() {
       final old = Completer<InspectionData>();
       final latest = InspectionData(image: Uint8List(0), elements: const []);
       final cubit = InspectorCubit(
-        (source) => source == 'native' ? old.future : Future.value(latest),
+        (source) => source == InspectorTreeSource.native
+            ? old.future
+            : Future.value(latest),
       );
       addTearDown(cubit.close);
-      final first = cubit.load('native');
-      await cubit.load('flutter');
+      final first = cubit.load(InspectorTreeSource.native);
+      await cubit.load(InspectorTreeSource.flutter);
       old.complete(InspectionData(image: Uint8List(1), elements: const []));
       await first;
-      expect(cubit.state.source, 'flutter');
+      expect(cubit.state.source, InspectorTreeSource.flutter);
       expect(cubit.state.data, same(latest));
     },
   );

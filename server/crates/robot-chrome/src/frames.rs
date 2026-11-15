@@ -153,54 +153,6 @@ pub(crate) fn frame_ids(root: &FrameNode) -> HashSet<String> {
     ids
 }
 
-/// An iframe target is usable only when its root frame belongs to the owned page tree
-/// and its parent session is the page or an already authorized descendant.
-#[cfg(test)]
-#[derive(Clone, Debug)]
-pub(crate) struct AttachedTarget {
-    pub session_id: String,
-    pub parent_session_id: Option<String>,
-    pub target_type: String,
-    pub root_frame_id: String,
-}
-
-#[cfg(test)]
-pub(crate) fn authorize_frames(
-    page_session: &str,
-    owned_frames: &HashSet<String>,
-    attached: &[AttachedTarget],
-) -> Vec<AuthorizedFrame> {
-    let mut authorized_sessions = HashSet::from([page_session.to_owned()]);
-    let mut accepted = Vec::new();
-    let mut remaining: Vec<&AttachedTarget> = attached.iter().collect();
-    loop {
-        let before = remaining.len();
-        remaining.retain(|target| {
-            let parent_ok = target
-                .parent_session_id
-                .as_deref()
-                .is_some_and(|parent| authorized_sessions.contains(parent));
-            let frame_ok = target.target_type == "iframe"
-                && owned_frames.contains(&target.root_frame_id)
-                && !target.session_id.is_empty();
-            if parent_ok && frame_ok {
-                authorized_sessions.insert(target.session_id.clone());
-                accepted.push(AuthorizedFrame {
-                    session_id: target.session_id.clone(),
-                    frame_id: target.root_frame_id.clone(),
-                });
-                false
-            } else {
-                true
-            }
-        });
-        if remaining.len() == before {
-            break;
-        }
-    }
-    accepted
-}
-
 pub(crate) fn context_for_frame(
     root: &FrameNode,
     frame_id: &str,
@@ -507,46 +459,6 @@ mod tests {
                 unsupported_transform: false,
             },
         ]
-    }
-
-    #[test]
-    fn cross_origin_target_must_belong_to_the_owned_frame_tree() {
-        let owned = frame_ids(&tree());
-        let page = "page-session";
-        let attached = vec![
-            AttachedTarget {
-                session_id: "child".into(),
-                parent_session_id: Some(page.into()),
-                target_type: "iframe".into(),
-                root_frame_id: "pay-b".into(),
-            },
-            AttachedTarget {
-                session_id: "stranger".into(),
-                parent_session_id: Some(page.into()),
-                target_type: "iframe".into(),
-                root_frame_id: "other-page".into(),
-            },
-            AttachedTarget {
-                session_id: "nested".into(),
-                parent_session_id: Some("child".into()),
-                target_type: "iframe".into(),
-                root_frame_id: "nested".into(),
-            },
-            AttachedTarget {
-                session_id: "worker".into(),
-                parent_session_id: Some(page.into()),
-                target_type: "service_worker".into(),
-                root_frame_id: "pay-b".into(),
-            },
-        ];
-        let authorized = authorize_frames(page, &owned, &attached);
-        assert_eq!(
-            authorized
-                .iter()
-                .map(|frame| frame.frame_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["pay-b", "nested"]
-        );
     }
 
     #[test]

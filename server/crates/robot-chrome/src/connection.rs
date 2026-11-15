@@ -438,10 +438,7 @@ impl BrowserSession {
                         .and_then(|child| child.parent_id.as_ref())
                         .is_some_and(|parent| owned.contains(parent))
                 {
-                    if let Some(child_tree) = child_tree
-                        .as_ref()
-                        .and_then(|value| crate::frames::parse_frame_tree(value).ok())
-                    {
+                    if let Some(child_tree) = parsed_child {
                         crate::frames::merge_frame_tree(&mut tree, &child_tree);
                         owned = crate::frames::frame_ids(&tree);
                     }

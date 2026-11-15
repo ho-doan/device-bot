@@ -1479,3 +1479,6 @@ mod tests {
 
 #[cfg(test)]
 mod connection_tests;
+
+#[cfg(test)]
+mod frame_discovery_tests;

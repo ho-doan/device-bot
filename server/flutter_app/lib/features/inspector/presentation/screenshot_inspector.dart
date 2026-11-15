@@ -1,3 +1,4 @@
+import '../cubit/element_flow_editor_cubit.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:mobile_mcp_companion/features/inspector/domain/inspector_yaml.dart';
 
@@ -71,16 +72,16 @@ class ScreenshotInspectorDialog extends StatefulWidget {
 
 class _ScreenshotDialogState extends State<ScreenshotInspectorDialog> {
   late final TextEditingController _yamlController;
-  int? _selectedIndex;
-  int _flowSequence = 0;
+  int? get _selectedIndex => _cubit.state.selectedIndex;
   late final InspectorCubit _cubit;
   String get _treeSource => _cubit.state.source;
 
   @override
   void initState() {
     super.initState();
-    _yamlController = TextEditingController(text: _initialYaml());
-    _cubit = InspectorCubit(widget.loadInspection);
+    _cubit = InspectorCubit(widget.loadInspection, initialYaml: _initialYaml());
+    _yamlController = TextEditingController(text: _cubit.state.yaml);
+    _yamlController.addListener(() => _cubit.editYaml(_yamlController.text));
     unawaited(_cubit.load('auto'));
   }
 
@@ -102,7 +103,7 @@ steps:
 ''';
 
   void _selectElement(int index) {
-    setState(() => _selectedIndex = index);
+    _cubit.selectElement(index);
   }
 
   Future<void> _addSelectedElementToFlow(List<AdminElement> elements) async {
@@ -115,21 +116,7 @@ steps:
     );
     if (!mounted || draft == null) return;
 
-    final snippet = buildInspectorFlowYaml(
-      element: element,
-      action: draft.action,
-      sequence: ++_flowSequence,
-      inputText: draft.inputText,
-      elements: elements,
-    );
-    final current = _yamlController.text.trimRight();
-    final next = '$current\n$snippet\n';
-    setState(() {
-      _yamlController.value = TextEditingValue(
-        text: next,
-        selection: TextSelection.collapsed(offset: next.length),
-      );
-    });
+    _cubit.appendElement(element, draft.action, draft.inputText, elements);
   }
 
   Future<void> _copyYaml() async {
@@ -142,8 +129,16 @@ steps:
 
   @override
   Widget build(BuildContext context) =>
-      BlocBuilder<InspectorCubit, InspectorState>(
+      BlocConsumer<InspectorCubit, InspectorState>(
         bloc: _cubit,
+        listener: (context, state) {
+          if (state.yaml != _yamlController.text) {
+            _yamlController.value = TextEditingValue(
+              text: state.yaml,
+              selection: TextSelection.collapsed(offset: state.yaml.length),
+            );
+          }
+        },
         builder: (context, state) => _buildDialog(context),
       );
 
@@ -163,10 +158,7 @@ steps:
             ],
             onChanged: (source) {
               if (source == null || source == _treeSource) return;
-              setState(() {
-                _selectedIndex = null;
-                unawaited(_cubit.load(source));
-              });
+              unawaited(_cubit.load(source));
             },
           ),
           IconButton(
@@ -175,10 +167,7 @@ steps:
               Icons.refresh,
               semanticLabel: 'Recapture screenshot and elements',
             ),
-            onPressed: () => setState(() {
-              _selectedIndex = null;
-              unawaited(_cubit.load(_treeSource));
-            }),
+            onPressed: () => unawaited(_cubit.load(_treeSource)),
           ),
           Tooltip(
             message: 'Screenshot is captured before finding all elements',
@@ -508,36 +497,40 @@ class _ElementFlowEditorDialog extends StatefulWidget {
 class _ElementFlowEditorDialogState extends State<_ElementFlowEditorDialog> {
   late final TextEditingController _inputController;
   late final List<InspectorFlowAction> _actions;
-  late InspectorFlowAction _action;
-  bool _inputError = false;
+  late final ElementFlowEditorCubit _editor;
+  InspectorFlowAction get _action => _editor.state.action;
+  bool get _inputError => _editor.state.inputError;
 
   @override
   void initState() {
     super.initState();
     _inputController = TextEditingController();
     _actions = _inspectorFlowActions(widget.element);
-    _action = _actions.first;
+    _editor = ElementFlowEditorCubit(_actions.first);
   }
 
   @override
   void dispose() {
+    unawaited(_editor.close());
     _inputController.dispose();
     super.dispose();
   }
 
   void _submit() {
     final inputText = _inputController.text;
-    if (_action == InspectorFlowAction.typeText && inputText.trim().isEmpty) {
-      setState(() => _inputError = true);
-      return;
-    }
+    if (!_editor.validate(inputText)) return;
     Navigator.of(
       context,
     ).pop(_ElementFlowDraft(action: _action, inputText: inputText));
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      BlocBuilder<ElementFlowEditorCubit, ElementFlowEditorState>(
+        bloc: _editor,
+        builder: (context, state) => _buildEditor(context),
+      );
+  Widget _buildEditor(BuildContext context) {
     final kind = _inspectorElementKind(widget.element);
     return AlertDialog(
       title: const Text('Add element to flow'),
@@ -584,7 +577,7 @@ class _ElementFlowEditorDialogState extends State<_ElementFlowEditorDialog> {
                     ),
                 ],
                 onChanged: (action) {
-                  if (action != null) setState(() => _action = action);
+                  if (action != null) _editor.selectAction(action);
                 },
               ),
               if (_action == InspectorFlowAction.typeText) ...[
@@ -594,9 +587,7 @@ class _ElementFlowEditorDialogState extends State<_ElementFlowEditorDialog> {
                   autofocus: true,
                   minLines: 1,
                   maxLines: 4,
-                  onChanged: (_) {
-                    if (_inputError) setState(() => _inputError = false);
-                  },
+                  onChanged: _editor.enterText,
                   decoration: InputDecoration(
                     labelText: 'Text to enter',
                     hintText: 'Example: qa@example.com',

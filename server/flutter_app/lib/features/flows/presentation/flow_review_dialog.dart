@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../cubit/recording_review_cubit.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -21,22 +24,17 @@ class LiveRecordingReview extends StatefulWidget {
 }
 
 class _LiveRecordingReviewState extends State<LiveRecordingReview> {
-  bool _busy = false;
-  String? _runSummary;
-
-  Future<void> _run(Future<void> Function() action) async {
-    setState(() => _busy = true);
-    try {
-      await action();
-    } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+  late final _cubit = RecordingReviewCubit(
+    recording: widget.recording,
+    onExport: widget.onExport,
+    onRun: widget.onRun,
+  );
+  bool get _busy => _cubit.state.busy;
+  String? get _runSummary => _cubit.state.summary;
+  @override
+  void dispose() {
+    unawaited(_cubit.close());
+    super.dispose();
   }
 
   String _title(String step) {
@@ -55,7 +53,19 @@ class _LiveRecordingReviewState extends State<LiveRecordingReview> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      BlocConsumer<RecordingReviewCubit, RecordingReviewState>(
+        bloc: _cubit,
+        listener: (context, state) {
+          if (state.error != null) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(state.error.toString())));
+          }
+        },
+        builder: (context, state) => _buildDialog(context),
+      );
+  Widget _buildDialog(BuildContext context) {
     final recording = widget.recording;
     final steps = recording.steps;
     return DefaultTabController(
@@ -106,8 +116,7 @@ class _LiveRecordingReviewState extends State<LiveRecordingReview> {
                                 tooltip: 'Delete step ${index + 1}',
                                 onPressed: _busy
                                     ? null
-                                    : () =>
-                                          _run(() => recording.removeAt(index)),
+                                    : () => _cubit.removeStep(index),
                                 icon: Icon(
                                   Icons.delete_outline,
                                   semanticLabel: 'Delete step ${index + 1}',
@@ -170,12 +179,7 @@ class _LiveRecordingReviewState extends State<LiveRecordingReview> {
                         key: const Key('recording-run-yaml'),
                         onPressed:
                             !_busy && recording.count > 0 && recording.canExport
-                            ? () => _run(() async {
-                                final summary = await widget.onRun!();
-                                if (mounted) {
-                                  setState(() => _runSummary = summary);
-                                }
-                              })
+                            ? _cubit.run
                             : null,
                         icon: const Icon(Icons.play_arrow),
                         label: const Text('Run on device'),
@@ -186,7 +190,7 @@ class _LiveRecordingReviewState extends State<LiveRecordingReview> {
                       key: const Key('recording-export-file'),
                       onPressed:
                           !_busy && recording.count > 0 && recording.canExport
-                          ? () => _run(widget.onExport)
+                          ? _cubit.export
                           : null,
                       icon: const Icon(Icons.save_alt),
                       label: const Text('Export YAML'),

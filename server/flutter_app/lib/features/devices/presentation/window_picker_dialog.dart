@@ -1,9 +1,11 @@
+import 'dart:async';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../cubit/window_picker_cubit.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 /// A Live session always names a specific process and native window.
-String windowsLiveDeviceId(AppWindow window) =>
-    'windows:${window.processId}:${window.windowId}';
+export '../domain/window_coordinates.dart';
 
 class WindowsLiveTargetDialog extends StatefulWidget {
   const WindowsLiveTargetDialog({
@@ -23,40 +25,25 @@ class WindowsLiveTargetDialog extends StatefulWidget {
 }
 
 class _WindowsLiveTargetDialogState extends State<WindowsLiveTargetDialog> {
-  int? _processId;
-  AppWindow? _window;
-  List<AppWindow> _windows = const [];
-  bool _loading = false;
-  String? _error;
-  int _windowRequest = 0;
-
-  Future<void> _selectApp(int processId) async {
-    final request = ++_windowRequest;
-    setState(() {
-      _processId = processId;
-      _window = null;
-      _windows = const [];
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final windows = await widget.windowsFor(processId);
-      if (!mounted || request != _windowRequest) return;
-      setState(() {
-        _windows = windows.where((w) => w.processId == processId).toList();
-        _loading = false;
-      });
-    } on Object catch (error) {
-      if (!mounted || request != _windowRequest) return;
-      setState(() {
-        _loading = false;
-        _error = 'Could not list windows: $error';
-      });
-    }
+  late final _cubit = WindowPickerCubit(widget.windowsFor);
+  int? get _processId => _cubit.state.processId;
+  AppWindow? get _window => _cubit.state.window;
+  List<AppWindow> get _windows => _cubit.state.windows;
+  bool get _loading => _cubit.state.loading;
+  String? get _error => _cubit.state.error;
+  @override
+  void dispose() {
+    unawaited(_cubit.close());
+    super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) =>
+      BlocBuilder<WindowPickerCubit, WindowPickerState>(
+        bloc: _cubit,
+        builder: (context, state) => _buildDialog(context),
+      );
+  Widget _buildDialog(BuildContext context) => AlertDialog(
     title: Text(widget.title),
     content: SizedBox(
       width: 480,
@@ -94,7 +81,7 @@ class _WindowsLiveTargetDialogState extends State<WindowsLiveTargetDialog> {
                       ),
                   ],
                   onChanged: (value) {
-                    if (value != null) _selectApp(value);
+                    if (value != null) _cubit.selectApp(value);
                   },
                 );
               },
@@ -126,11 +113,7 @@ class _WindowsLiveTargetDialogState extends State<WindowsLiveTargetDialog> {
                       ),
                     ),
                 ],
-                onChanged: (value) => setState(
-                  () => _window = _windows
-                      .where((w) => w.windowId == value)
-                      .firstOrNull,
-                ),
+                onChanged: _cubit.selectWindow,
               ),
           ],
         ),
@@ -149,57 +132,4 @@ class _WindowsLiveTargetDialogState extends State<WindowsLiveTargetDialog> {
       ),
     ],
   );
-}
-
-(int, int) _windowOrigin(Map<String, dynamic> context) {
-  final x = context['originX'];
-  final y = context['originY'];
-  if (x is! num || y is! num || !x.isFinite || !y.isFinite) {
-    throw StateError('Windows Live did not return a valid window origin.');
-  }
-  return (x.round(), y.round());
-}
-
-/// UIA bounds are desktop coordinates; the video contains only this window.
-List<AdminElement> windowElementsForVideo(
-  List<AdminElement> elements,
-  Map<String, dynamic> context,
-) {
-  final (x, y) = _windowOrigin(context);
-  return [
-    for (final element in elements)
-      AdminElement(
-        className: element.className,
-        resourceId: element.resourceId,
-        text: element.text,
-        contentDescription: element.contentDescription,
-        bounds: AdminBounds(
-          left: element.bounds.left - x,
-          top: element.bounds.top - y,
-          right: element.bounds.right - x,
-          bottom: element.bounds.bottom - y,
-        ),
-        clickable: element.clickable,
-        enabled: element.enabled,
-        source: element.source,
-        index: element.index,
-        position: element.position,
-        focused: element.focused,
-        elementType: element.elementType,
-      ),
-  ];
-}
-
-Map<String, dynamic> windowInputForDesktop(
-  Map<String, dynamic> input,
-  Map<String, dynamic> context,
-) {
-  final (x, y) = _windowOrigin(context);
-  return {
-    ...input,
-    for (final key in ['x', 'endX'])
-      if (input[key] is num) key: (input[key] as num) + x,
-    for (final key in ['y', 'endY'])
-      if (input[key] is num) key: (input[key] as num) + y,
-  };
 }

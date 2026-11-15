@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../cubit/desktop_capture_cubit.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
@@ -38,65 +41,42 @@ class _DesktopCaptureDialogState extends State<DesktopCaptureDialog> {
   late final TextEditingController _app = TextEditingController(
     text: widget.previous?.appId,
   );
-  String? _displayId;
-  int? _processId;
-  String? _windowId;
-  List<AppWindow> _windows = const [];
-  bool _activating = false;
-  String? _activateError;
-
+  late final _cubit = DesktopCaptureCubit(
+    appId: widget.previous?.appId ?? '',
+    displayId: widget.previous?.display.id,
+    processId: widget.previous?.processId,
+    windowId: widget.previous?.windowId,
+    windowsFor: widget.windowsFor,
+    onActivate: widget.onActivate,
+  );
+  String? get _displayId => _cubit.state.displayId;
+  int? get _processId => _cubit.state.processId;
+  String? get _windowId => _cubit.state.windowId;
+  List<AppWindow> get _windows => _cubit.state.windows;
+  bool get _activating => _cubit.state.activating;
+  String? get _activateError => _cubit.state.error;
   @override
   void initState() {
     super.initState();
-    _processId = widget.previous?.processId;
-    _windowId = widget.previous?.windowId;
-    if (_processId != null) {
-      _loadWindows(_processId!);
-    }
-  }
-
-  Future<void> _loadWindows(int processId) async {
-    final loader = widget.windowsFor;
-    if (loader == null) return;
-    try {
-      final windows = await loader(processId);
-      if (!mounted || _processId != processId) return;
-      setState(() {
-        _windows = windows;
-        if (!_windows.any((window) => window.windowId == _windowId)) {
-          _windowId = _windows.firstOrNull?.windowId;
-        }
-      });
-    } on Object catch (error) {
-      if (mounted) setState(() => _activateError = error.toString());
-    }
-  }
-
-  Future<void> _activate() async {
-    final processId = _processId;
-    final activate = widget.onActivate;
-    if (processId == null || activate == null || _activating) return;
-    setState(() {
-      _activating = true;
-      _activateError = null;
-    });
-    try {
-      await activate(processId, _windowId);
-    } on Object catch (error) {
-      if (mounted) setState(() => _activateError = error.toString());
-    } finally {
-      if (mounted) setState(() => _activating = false);
-    }
+    if (_processId != null) unawaited(_cubit.loadWindows(_processId!));
   }
 
   @override
   void dispose() {
+    unawaited(_cubit.close());
     _app.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => FutureBuilder<List<DesktopDisplay>>(
+  Widget build(BuildContext context) =>
+      BlocBuilder<DesktopCaptureCubit, DesktopCaptureState>(
+        bloc: _cubit,
+        builder: (context, state) => _buildDialog(context),
+      );
+  Widget _buildDialog(
+    BuildContext context,
+  ) => FutureBuilder<List<DesktopDisplay>>(
     future: widget.displays,
     builder: (context, snapshot) {
       final displays = snapshot.data ?? const <DesktopDisplay>[];
@@ -163,13 +143,8 @@ class _DesktopCaptureDialogState extends State<DesktopCaptureDialog> {
                                 final selected = apps.firstWhere(
                                   (app) => app.processId == value,
                                 );
-                                setState(() {
-                                  _processId = value;
-                                  _windowId = null;
-                                  _windows = const [];
-                                  _app.text = selected.name;
-                                });
-                                _loadWindows(value);
+                                _app.text = selected.name;
+                                unawaited(_cubit.selectApp(selected));
                               },
                             ),
                           if (_windows.isNotEmpty) ...[
@@ -197,8 +172,7 @@ class _DesktopCaptureDialogState extends State<DesktopCaptureDialog> {
                                     ),
                                   )
                                   .toList(),
-                              onChanged: (value) =>
-                                  setState(() => _windowId = value),
+                              onChanged: (value) => _cubit.selectWindow(value),
                             ),
                           ],
                           if (widget.onActivate != null) ...[
@@ -207,7 +181,7 @@ class _DesktopCaptureDialogState extends State<DesktopCaptureDialog> {
                               key: const Key('activate-target'),
                               onPressed: _processId == null || _activating
                                   ? null
-                                  : _activate,
+                                  : _cubit.activate,
                               icon: const Icon(Icons.front_hand_outlined),
                               label: Text(
                                 _activating ? 'Activating…' : 'Activate',
@@ -252,7 +226,8 @@ class _DesktopCaptureDialogState extends State<DesktopCaptureDialog> {
                                 .toList(),
                             onChanged: (value) {
                               if (value != null) {
-                                setState(() => _app.text = value);
+                                _app.text = value;
+                                _cubit.enterApp(value);
                               }
                             },
                           ),
@@ -266,7 +241,7 @@ class _DesktopCaptureDialogState extends State<DesktopCaptureDialog> {
                           decoration: const InputDecoration(
                             labelText: 'App name or executable path',
                           ),
-                          onChanged: (_) => setState(() {}),
+                          onChanged: _cubit.enterApp,
                         ),
                       ],
                     );
@@ -301,7 +276,7 @@ class _DesktopCaptureDialogState extends State<DesktopCaptureDialog> {
                           ),
                         )
                         .toList(),
-                    onChanged: (value) => setState(() => _displayId = value),
+                    onChanged: (value) => _cubit.selectDisplay(value),
                   ),
                 if (snapshot.connectionState == ConnectionState.done &&
                     !snapshot.hasError &&

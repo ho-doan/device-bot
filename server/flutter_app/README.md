@@ -37,8 +37,9 @@ The companion connects to an existing server and does not start or stop it.
 
 ## Project structure
 
-The app uses Cubit from `flutter_bloc` for connection, inspector loading and
-flow execution state. Dio owns HTTP requests and cancellation. Wire models use
+The app uses Cubit from `flutter_bloc` for connection, device dialogs, inspector
+selection and YAML drafts, flow execution/review and Live state. Dio owns HTTP
+requests and cancellation. Wire models use
 `json_serializable`, generated with `build_runner`.
 
 ```text
@@ -51,21 +52,25 @@ lib/
     platform/                # Platform-specific local connection discovery
   features/
     connection/              # ConnectionCubit and companion page
-    devices/presentation/    # Dashboard and device/app/window dialogs
+    devices/                 # Dialog Cubits, coordinate helpers, dashboard/UI
     inspector/               # InspectorCubit, snapshots, YAML helpers, UI
     flows/                   # FlowRunCubit, execution and review dialogs
-    live/                    # WebRTC, recording storage and Live controls
+    live/                    # LiveCubit, WebRTC, recording storage and UI
 ```
 
-Widgets retain rendering resources, text controllers and gesture state.
-Cubits own asynchronous requests and prevent stale responses from replacing a
-new connection or inspector selection. The connection Cubit uses a separate
+Widgets retain rendering resources, text/scroll controllers and gesture
+coordinates. State changes render through BlocBuilder/BlocConsumer; application
+code does not call `setState`. Cubits own asynchronous requests and prevent stale
+responses from replacing a new connection, process or inspector selection.
+The connection Cubit uses a separate
 health session so readiness polling can continue during long tool calls.
-Live widgets own media resources and dispose them when their dialog closes.
+LiveCubit owns stream subscriptions, video sessions, reconnect timers, element
+selection and the input queue. Closing it cancels subscriptions, releases video
+resources and prevents queued input from starting.
 
 ```mermaid
 flowchart LR
-  UI[QC widgets] --> C[Connection / Inspector / Flow Cubits]
+  UI[QC widgets] --> C[Feature Cubits]
   C --> M[MCP client]
   M --> D[Dio]
   D --> API[Device Bot MCP and admin endpoints]

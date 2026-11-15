@@ -1,3 +1,6 @@
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../cubit/live_cubit.dart';
+import '../domain/live_geometry.dart';
 import 'dart:convert';
 import 'package:file_selector/file_selector.dart';
 import 'package:mobile_mcp_companion/features/flows/presentation/flow_run_dialog.dart';
@@ -15,69 +18,9 @@ import 'package:mobile_mcp_companion/features/live/data/video_session.dart';
 
 import 'package:mobile_mcp_companion/core/network/mcp_client.dart';
 import 'package:mobile_mcp_companion/core/models/admin_models.dart';
-import 'package:mobile_mcp_companion/features/devices/presentation/window_picker_dialog.dart';
 
 /// Where a fitted screenshot sits inside the mirror viewport.
-Rect fittedScreenshotRect({required Size viewport, required Size image}) {
-  if (viewport.isEmpty || image.width <= 0 || image.height <= 0) {
-    return Rect.zero;
-  }
-  final scale = math.min(
-    viewport.width / image.width,
-    viewport.height / image.height,
-  );
-  final width = image.width * scale;
-  final height = image.height * scale;
-  return Rect.fromLTWH(
-    (viewport.width - width) / 2,
-    (viewport.height - height) / 2,
-    width,
-    height,
-  );
-}
-
-/// Maps a pointer in the mirror viewport to input coordinates. The decoded
-/// frame can have a different size/aspect from the driver's coordinate space.
-Offset? devicePointForLocal({
-  required Offset local,
-  required Size viewport,
-  required Size image,
-  Size? frameSize,
-}) {
-  if (image.isEmpty) return null;
-  final fitted = fittedScreenshotRect(
-    viewport: viewport,
-    image: frameSize ?? image,
-  );
-  if (fitted.isEmpty || !fitted.contains(local)) return null;
-  return Offset(
-    (local.dx - fitted.left) / fitted.width * image.width,
-    (local.dy - fitted.top) / fitted.height * image.height,
-  );
-}
-
-AdminElement? elementAtDevicePoint(List<AdminElement> elements, Offset point) {
-  for (final element in elements.reversed) {
-    if (element.webContext?.appId != null) continue;
-    final bounds = element.bounds;
-    if (point.dx >= bounds.left &&
-        point.dx <= bounds.right &&
-        point.dy >= bounds.top &&
-        point.dy <= bounds.bottom) {
-      return element;
-    }
-  }
-  return null;
-}
-
-/// Blank space and disabled/non-actionable nodes never generate device taps.
-AdminElement? actionableElementAtDevicePoint(
-  List<AdminElement> elements,
-  Offset point,
-) => elementAtDevicePoint(
-  elements.where((element) => element.clickable && element.enabled).toList(),
-  point,
-);
+export '../domain/live_geometry.dart';
 
 class AndroidLiveDialog extends StatefulWidget {
   const AndroidLiveDialog({
@@ -108,230 +51,46 @@ class AndroidLiveDialog extends StatefulWidget {
 }
 
 class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
-  late final LiveRecording _recording;
-  final TextEditingController _text = TextEditingController();
-  final ScrollController _elementScroll = ScrollController();
+  late final LiveCubit _cubit;
+  LiveRecording get _recording => _cubit.recording;
+  final _text = TextEditingController();
+  final _elementScroll = ScrollController();
   static const _elementHeight = 48.0;
-  StreamSubscription<AndroidLiveUpdate>? _subscription;
-  Future<void> _inputs = Future<void>.value();
-  AndroidVideoSession? _video;
-  String? _videoError;
-  bool _terminatingApps = false;
-  bool _tappingSelected = false;
-  List<AdminElement> _elements = const [];
-  String? _source;
-  String? _status;
-  int? _selectedIndex;
-  AdminElement? _deviceFocus;
-  bool _stopped = false;
-  bool _openingVideo = false;
-  Timer? _reconnectTimer;
-  int _reconnectAttempts = 0;
-  Timer? _inspectionTimer;
-  int _inspectionAttempts = 0;
-  int _inspectionGeneration = 0;
-  String? _inspectionError;
-  bool get _isWindowLive => ['windows', 'macos'].contains(widget.platform);
+  Offset? _panOrigin, _panLatest;
   bool get _isNativeLive =>
       ['windows', 'macos', 'ios'].contains(widget.platform);
-  InspectorFlowAction _yamlAction = InspectorFlowAction.assertVisible;
-  Offset? _panOrigin;
-  Offset? _panLatest;
+  AndroidVideoSession? get _video => _cubit.state.video;
+  String? get _videoError => _cubit.state.videoError;
+  bool get _terminatingApps => _cubit.state.terminatingApps;
+  bool get _tappingSelected => _cubit.state.tappingSelected;
+  List<AdminElement> get _elements => _cubit.state.elements;
+  String? get _source => _cubit.state.source;
+  String? get _status => _cubit.state.status;
+  int? get _selectedIndex => _cubit.state.selectedIndex;
+  bool get _stopped => _cubit.state.stopped;
+  String? get _inspectionError => _cubit.state.inspectionError;
 
+  InspectorFlowAction get _yamlAction => _cubit.state.yamlAction;
   @override
   void initState() {
     super.initState();
-    _recording =
-        widget.recording ??
-        LiveRecording(deviceId: 'selected', platform: widget.platform);
-    if (widget.openVideo != null) unawaited(_openVideo());
-    if (widget.openVideo == null) {
-      _connectInspection();
-    }
-  }
-
-  void _connectInspection() {
-    final generation = ++_inspectionGeneration;
-    _subscription = widget.connect().listen(
-      (update) {
-        if (generation == _inspectionGeneration) _onUpdate(update);
-      },
-      onError: (Object error) {
-        if (!mounted || generation != _inspectionGeneration) return;
-        _inspectionTimer?.cancel();
-        final retry = _inspectionAttempts < 3;
-        final seconds = 1 << _inspectionAttempts;
-        if (retry) _inspectionAttempts++;
-        setState(() {
-          _stopped = true;
-          _elements = const [];
-          _selectedIndex = null;
-          _deviceFocus = null;
-          _inspectionError =
-              'Inspection unavailable: $error'
-              '${retry ? ' Retrying inspection in $seconds s ($_inspectionAttempts/3)…' : ''}';
-        });
-        if (retry) {
-          _inspectionTimer = Timer(Duration(seconds: seconds), () {
-            if (mounted) unawaited(_retryInspection());
-          });
-        }
-      },
-      onDone: () {
-        if (mounted && generation == _inspectionGeneration) {
-          setState(() => _stopped = true);
-        }
-      },
+    _cubit = LiveCubit(
+      connect: widget.connect,
+      onInput: widget.onInput,
+      openVideo: widget.openVideo,
+      onTerminateApps: widget.onTerminateApps,
+      recording: widget.recording,
+      platform: widget.platform,
     );
-  }
-
-  Future<void> _retryInspection({bool manual = false}) async {
-    _inspectionTimer?.cancel();
-    if (manual) _inspectionAttempts = 0;
-    final generation = ++_inspectionGeneration;
-    final previous = _subscription;
-    _subscription = null;
-    await previous?.cancel().catchError((Object _) {});
-    if (!mounted || generation != _inspectionGeneration) return;
-    _connectInspection();
+    _cubit.start();
   }
 
   @override
   void dispose() {
-    _reconnectTimer?.cancel();
-    _inspectionTimer?.cancel();
-    _inspectionGeneration++;
-    unawaited(_subscription?.cancel());
+    unawaited(_cubit.close());
     _text.dispose();
     _elementScroll.dispose();
-    _video?.removeListener(_videoChanged);
-    unawaited(_video?.close().catchError((Object _) {}));
     super.dispose();
-  }
-
-  int? _matchingElement(AdminElement? previous, List<AdminElement> elements) {
-    if (previous == null) return null;
-    final candidates = elements.indexed.where(
-      (entry) =>
-          entry.$2.className == previous.className &&
-          entry.$2.source == previous.source &&
-          (entry.$2.webContext?.identity ?? '') ==
-              (previous.webContext?.identity ?? ''),
-    );
-    final id = previous.resourceId?.trim();
-    if (id != null && id.isNotEmpty) {
-      final matches = candidates
-          .where((entry) => entry.$2.resourceId?.trim() == id)
-          .toList();
-      if (matches.length == 1) return matches.single.$1;
-    }
-    final described = candidates
-        .where(
-          (entry) =>
-              entry.$2.text == previous.text &&
-              entry.$2.contentDescription == previous.contentDescription,
-        )
-        .toList();
-    // Scroll moves controls farther than the jitter threshold. A unique named
-    // control keeps its identity even after its bounds have moved by 50+ px.
-    if (previous.hasLabel && described.length == 1) return described.single.$1;
-    final exact = described
-        .where((entry) => _boundsDelta(entry.$2.bounds, previous.bounds) == 0)
-        .firstOrNull;
-    if (exact != null) return exact.$1;
-    // A live refresh shifts bounds by a few pixels. Keep the same node.
-    return _closest(described, previous.bounds, 48) ??
-        _closest(candidates, previous.bounds, 24);
-  }
-
-  bool _sameFocus(AdminElement? previous, AdminElement next) {
-    if (previous == null) return false;
-    if (previous.className != next.className ||
-        previous.source != next.source) {
-      return false;
-    }
-    final id = previous.resourceId?.trim();
-    if (id != null && id.isNotEmpty) return id == next.resourceId?.trim();
-    if (previous.contentDescription != next.contentDescription) return false;
-    return _boundsDelta(previous.bounds, next.bounds) <= 48;
-  }
-
-  int _boundsDelta(AdminBounds a, AdminBounds b) {
-    final left = (a.left - b.left).abs();
-    final top = (a.top - b.top).abs();
-    final right = (a.right - b.right).abs();
-    final bottom = (a.bottom - b.bottom).abs();
-    return [left, top, right, bottom].reduce((x, y) => x > y ? x : y);
-  }
-
-  int? _closest(
-    Iterable<(int, AdminElement)> candidates,
-    AdminBounds bounds,
-    int maxDelta,
-  ) {
-    (int, int)? best;
-    for (final entry in candidates) {
-      final distance = _boundsDelta(entry.$2.bounds, bounds);
-      if (distance > maxDelta) continue;
-      if (best == null || distance < best.$2) best = (entry.$1, distance);
-    }
-    return best?.$1;
-  }
-
-  void _onUpdate(AndroidLiveUpdate update) {
-    if (!mounted) return;
-    switch (update) {
-      case AndroidLiveFrame():
-        break;
-      case AndroidLiveElements(elements: var elements, :final source):
-        if (_isWindowLive) {
-          final context = _video?.recordingContext;
-          if (context == null) return;
-          try {
-            elements = windowElementsForVideo(elements, context);
-          } on Object catch (error) {
-            setState(() {
-              _status = error.toString();
-              _stopped = true;
-            });
-            return;
-          }
-        }
-        final previous = _selectedIndex == null
-            ? null
-            : _elements[_selectedIndex!];
-        final focused = elements.indexWhere((e) => e.focused == true);
-        final nextFocus = focused < 0 ? null : elements[focused];
-        final focusMoved =
-            nextFocus != null && !_sameFocus(_deviceFocus, nextFocus);
-        // A refresh that first reports the already-focused field must not
-        // replace a row the operator just selected.
-        final followFocus =
-            focusMoved && (_selectedIndex == null || _deviceFocus != null);
-        final selection = followFocus
-            ? focused
-            : _matchingElement(previous, elements);
-        final reveal =
-            selection != null && (followFocus || selection != _selectedIndex);
-        setState(() {
-          _inspectionTimer?.cancel();
-          _inspectionAttempts = 0;
-          _inspectionError = null;
-          _stopped = false;
-          _elements = elements;
-          _source = source;
-          _selectedIndex = selection;
-          if (nextFocus != null) _deviceFocus = nextFocus;
-        });
-        if (reveal) _revealSelected();
-      case AndroidLiveStatus(:final message):
-        setState(() => _status = message);
-    }
-  }
-
-  void _inspect(int? index) {
-    setState(() => _selectedIndex = index);
-    _revealSelected();
   }
 
   /// Brings the selected row into view. A live update can arrive before the
@@ -364,220 +123,19 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     });
   }
 
-  Future<void> _openVideo() async {
-    if (_openingVideo || !mounted) return;
-    _openingVideo = true;
-    _reconnectTimer?.cancel();
-    final previous = _video;
-    previous?.removeListener(_videoChanged);
-    setState(() {
-      _video = null;
-      _videoError = null;
-      _status = null;
-      if (widget.openVideo != null) {
-        _elements = const [];
-        _selectedIndex = null;
-        _deviceFocus = null;
-      }
-    });
-    try {
-      if (widget.openVideo != null) {
-        _inspectionGeneration++;
-        _inspectionTimer?.cancel();
-        _inspectionAttempts = 0;
-        _inspectionError = null;
-        await _subscription?.cancel();
-        _subscription = null;
-        _stopped = false;
-      }
-      await previous?.close();
-      if (!mounted) return;
-      final video = await widget.openVideo!();
-      if (!mounted) {
-        await video.close();
-        return;
-      }
-      _video = video;
-      // A retained recording may have first connected on about:blank. Refresh
-      // it after navigation, while preserving the entry URL of existing actions.
-      if (_recording.context.isEmpty ||
-          _recording.count == 0 ||
-          !_recording.canExport) {
-        _recording.context = {..._recording.context, ...video.recordingContext};
-      }
-      _reconnectAttempts = 0;
-      video.addListener(_videoChanged);
-      _connectInspection();
-      setState(() {});
-    } on Object catch (error) {
-      if (mounted) {
-        setState(() {
-          _videoError = error.toString();
-          _status = _videoError;
-        });
-        _scheduleReconnect();
-      }
-    } finally {
-      _openingVideo = false;
-    }
-  }
-
-  void _videoChanged() {
-    if (mounted) {
-      setState(() {
-        _videoError = _video?.status;
-        _status = _videoError;
-      });
-      if (_videoError != null) _scheduleReconnect();
-    }
-  }
-
-  void _retryVideo() {
-    _reconnectAttempts = 0;
-    unawaited(_openVideo());
-  }
-
-  void _scheduleReconnect() {
-    if (!mounted ||
-        widget.openVideo == null ||
-        _reconnectTimer?.isActive == true ||
-        _reconnectAttempts >= 3) {
-      return;
-    }
-    final error = (_videoError ?? '').toLowerCase();
-    if ([
-      'notallowederror',
-      'permission denied',
-      'permission dismissed',
-      'sharing denied',
-      'moved or resized',
-      'restore the selected',
-      'select an app',
-    ].any(error.contains)) {
-      return;
-    }
-    final seconds = 1 << _reconnectAttempts;
-    _reconnectAttempts++;
-    setState(
-      () => _status =
-          'Connection lost. Reconnecting in $seconds s ($_reconnectAttempts/3)…',
-    );
-    _reconnectTimer = Timer(Duration(seconds: seconds), () {
-      if (mounted) unawaited(_openVideo());
-    });
-  }
-
-  void _terminateApps(bool all) {
-    if (_terminatingApps || widget.onTerminateApps == null) return;
-    setState(() => _terminatingApps = true);
-    _inputs = _inputs.then((_) async {
-      if (!mounted) return;
-      try {
-        final message = await widget.onTerminateApps!(all);
-        if (mounted) {
-          setState(() {
-            _status = message;
-            _selectedIndex = null;
-            _deviceFocus = null;
-          });
-        }
-      } on Object catch (error) {
-        if (mounted) setState(() => _status = error.toString());
-      } finally {
-        if (mounted) setState(() => _terminatingApps = false);
-      }
-    });
-  }
-
-  Future<void> _send(Map<String, dynamic> input) {
-    final queuedVideo = _video;
-    final snapshot = List<AdminElement>.of(_elements);
-    final selected = _selectedIndex == null ? null : snapshot[_selectedIndex!];
-    if (input['action'] == 'type' || input['action'] == 'clear') {
-      final focused = snapshot
-          .where((element) => element.focused == true)
-          .toList();
-      final field = selected?.webContext != null
-          ? selected
-          : focused.length == 1
-          ? focused.single
-          : null;
-      if (field?.webContext != null) {
-        input = {...input, 'webContext': field!.webContext!.toJson()};
-      }
-    }
-    // Resolve the selector at click time. Reserve the sequence inside the queue.
-    _inputs = _inputs
-        .then((_) async {
-          if (!mounted) return;
-          if (widget.openVideo != null) {
-            final video = _video;
-            if (!mounted ||
-                video == null ||
-                !identical(video, queuedVideo) ||
-                video.status != null ||
-                _stopped) {
-              throw StateError(
-                'Wait for Live to reconnect before sending input.',
-              );
-            }
-          }
-          if (_isNativeLive) {
-            await widget.onInput(
-              _isWindowLive
-                  ? windowInputForDesktop(input, _video!.recordingContext)
-                  : input,
-            );
-          } else {
-            final step = _recording.prepare(
-              input,
-              snapshot,
-              input['action'] == 'tap' ? selected : null,
-            );
-            await widget.onInput(input);
-            await _recording.commit(step);
-          }
-          if (mounted) setState(() {});
-        })
-        .catchError((Object error) {
-          if (mounted) setState(() => _status = error.toString());
-        });
-    return _inputs;
-  }
-
-  void _scroll50(double delta) {
-    final selected = _selectedIndex == null ? null : _elements[_selectedIndex!];
-    final size = _video?.deviceSize;
-    final bounds = selected?.bounds;
-    final width =
-        size?.width ??
-        _elements
-            .map((e) => e.bounds.right.toDouble())
-            .fold<double>(0, math.max);
-    final height =
-        size?.height ??
-        _elements
-            .map((e) => e.bounds.bottom.toDouble())
-            .fold<double>(0, math.max);
-    final x = bounds != null ? (bounds.left + bounds.right) / 2 : width / 2;
-    // Android translates wheel deltas to a swipe; keep both endpoints on screen.
-    final y = (bounds != null ? (bounds.top + bounds.bottom) / 2 : height / 2)
-        .clamp(math.min(51.0, height / 2), math.max(height - 51, height / 2));
-    if (x <= 0 || y <= 0) return;
-    _send({
-      'action': 'scroll',
-      'x': x,
-      'y': y,
-      'deltaX': 0,
-      'deltaY': delta,
-      if (selected?.webContext != null)
-        'webContext': selected!.webContext!.toJson(),
-    });
-  }
+  Future<void> _send(Map<String, dynamic> input) => _cubit.send(input);
+  void _inspect(int? index) => _cubit.inspect(index);
+  void _scroll50(double delta) => _cubit.scroll50(delta);
+  void _terminateApps(bool all) => _cubit.terminateApps(all);
+  Future<void> _tapSelected() => _cubit.tapSelected();
+  void _retryVideo() => _cubit.retryVideo();
+  Future<void> _retryInspection({bool manual = false}) =>
+      _cubit.retryInspection(manual: manual);
+  String _yamlFor(AdminElement element) => _cubit.yamlFor(element);
 
   Future<void> _exportRecording() async {
     try {
-      await _inputs;
+      await _cubit.waitForInputs();
       final yaml = _recording.toYaml();
       final location = await getSaveLocation(
         suggestedName: '${_recording.name}.yaml',
@@ -601,7 +159,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         );
       }
     } on Object catch (error) {
-      if (mounted) setState(() => _status = error.toString());
+      if (mounted) _cubit.reportError(error);
     }
   }
 
@@ -611,12 +169,12 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   }
 
   Future<String> _runRecording() async {
-    await _inputs;
+    await _cubit.waitForInputs();
     return formatFlowReport(await widget.onRunFlow!(_recording.toYaml()));
   }
 
   Future<void> _reviewRecording() async {
-    await _inputs;
+    await _cubit.waitForInputs();
     if (!mounted) return;
     await showDialog<void>(
       context: context,
@@ -626,40 +184,8 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         onRun: widget.onRunFlow == null ? null : _runRecording,
       ),
     );
-    if (mounted) setState(() {});
+    if (mounted) _cubit.recordingChanged();
   }
-
-  Future<void> _tapSelected() async {
-    if (_tappingSelected) return;
-    final index = _selectedIndex;
-    if (index == null || index >= _elements.length) return;
-    final element = _elements[index];
-    if (!element.enabled || !element.clickable) return;
-    final bounds = element.bounds;
-    setState(() {
-      _tappingSelected = true;
-      _status = null;
-    });
-    try {
-      await _send({
-        'action': 'tap',
-        if (element.webContext != null)
-          'webContext': element.webContext!.toJson(),
-        'x': ((bounds.left + bounds.right) / 2).round(),
-        'y': ((bounds.top + bounds.bottom) / 2).round(),
-      });
-    } finally {
-      if (mounted) setState(() => _tappingSelected = false);
-    }
-  }
-
-  String _yamlFor(AdminElement element) => buildInspectorFlowYaml(
-    element: element,
-    elements: _elements,
-    action: _yamlAction,
-    sequence: 1,
-    inputText: _text.text,
-  );
 
   Future<void> _copyYaml(AdminElement element) async {
     await Clipboard.setData(ClipboardData(text: _yamlFor(element)));
@@ -671,7 +197,14 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => BlocConsumer<LiveCubit, LiveState>(
+    bloc: _cubit,
+    listenWhen: (previous, current) =>
+        previous.selectionRevision != current.selectionRevision,
+    listener: (context, state) => _revealSelected(),
+    builder: (context, state) => _buildDialog(context),
+  );
+  Widget _buildDialog(BuildContext context) {
     final video = _video;
     final selected =
         _selectedIndex != null && _selectedIndex! < _elements.length
@@ -1041,9 +574,8 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                                     ],
                                                     onChanged: (action) {
                                                       if (action != null) {
-                                                        setState(
-                                                          () => _yamlAction =
-                                                              action,
+                                                        _cubit.selectYamlAction(
+                                                          action,
                                                         );
                                                       }
                                                     },
@@ -1166,7 +698,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                     labelText: 'Text for focused field',
                                     isDense: true,
                                   ),
-                                  onChanged: (_) => setState(() {}),
+                                  onChanged: _cubit.setText,
                                   onSubmitted: (_) => _submitText(),
                                 ),
                               ),
@@ -1250,7 +782,8 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     final text = _text.text;
     if (text.isEmpty) return;
     _send({'action': 'type', 'text': text});
-    setState(_text.clear);
+    _text.clear();
+    _cubit.setText('');
   }
 }
 

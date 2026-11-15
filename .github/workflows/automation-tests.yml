@@ -75,6 +75,8 @@ jobs:
           path: server/flutter_app/build/web
       - name: Test automation harness
         run: python -m unittest discover -s server/automation_test -p "test_*.py" -v
+      - name: Test browser fixture setup
+        run: node --test server/automation_test/file_chooser.test.cjs
       - name: Test capture and input drivers
         run: cargo test --manifest-path server/Cargo.toml --locked -p robot-chrome -p robot-windows -p robot-android -- --test-threads=1
       - name: Build the backend and flow runner under test

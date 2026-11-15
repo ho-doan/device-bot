@@ -7,6 +7,22 @@ const clients = new Map();
 let stopping = false;
 process.on('SIGTERM', () => { stopping = true; for (const socket of clients.values()) socket.close(); });
 
+async function configurePage(call, fixture, downloads) {
+  // Each flow owns an incognito context. Configure that context without requiring
+  // Page.enable, which can fail while an old page is being detached.
+  if (downloads) {
+    const { targetInfo } = await call('Target.getTargetInfo');
+    await call('Browser.setDownloadBehavior', {
+      behavior: 'allow', downloadPath: downloads,
+      ...(targetInfo.browserContextId ? { browserContextId: targetInfo.browserContextId } : {}),
+    });
+  }
+  if (fixture) {
+    await call('Page.enable');
+    await call('Page.setInterceptFileChooserDialog', { enabled: true });
+  }
+}
+
 function attach(target) {
   if (clients.has(target.id) || !target.webSocketDebuggerUrl) return;
   const socket = new WebSocket(target.webSocketDebuggerUrl);
@@ -38,10 +54,12 @@ function attach(target) {
   };
   socket.onopen = async () => {
     try {
-      await call('Page.enable');
-      await call('Page.setInterceptFileChooserDialog', { enabled: true });
-      if (downloads) await call('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
-    } catch (error) { console.error(`File chooser setup failed: ${error.message}`); }
+      await configurePage(call, fixture, downloads);
+      if (downloads) console.log(JSON.stringify({ event: 'downloads-ready', target: target.id }));
+    } catch (error) {
+      console.error(`File chooser setup failed: ${error.message}`);
+      socket.close(); // Let the watcher retry transient attachment failures.
+    }
   };
   socket.onerror = () => {};
   socket.onclose = () => {
@@ -50,7 +68,7 @@ function attach(target) {
   };
 }
 
-(async () => {
+async function watch() {
   while (!stopping) {
     try {
       const port = Number(fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0]);
@@ -59,4 +77,9 @@ function attach(target) {
     } catch (_) { /* Chrome starts when the first YAML step boots it. */ }
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-})().catch(error => { console.error(error.message); process.exitCode = 1; });
+}
+
+if (require.main === module) {
+  watch().catch(error => { console.error(error.message); process.exitCode = 1; });
+}
+module.exports = { configurePage };

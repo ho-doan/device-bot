@@ -1,4 +1,4 @@
-## 0.1.19 — 2026-11-15
+## 0.1.20 — 2026-11-15
 
 * Align Live video, element overlays and pointer mapping with the decoded frame
   when its aspect ratio differs from the driver's input coordinate space. Keep
@@ -23,6 +23,8 @@
   explicit bearer token, including pasting from the clipboard.
 * Keep Windows Android discovery and media helpers from opening consoles, and
   include the matching web assets in every native release bundle.
+* Share one Rust release version across all three CLI tools and check manifest
+  and built-binary versions before compiling QC, preventing mixed-version bundles.
 
 ## 0.1.18 — 2026-11-14
 

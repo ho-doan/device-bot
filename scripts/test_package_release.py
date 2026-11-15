@@ -119,6 +119,23 @@ esac
             manifest = json.load(bundle.extractfile('bundle.json'))
             self.assertEqual(manifest['binaries'], ['device-bot', 'robot-flow', 'robot-report'])
 
+    def test_release_versions_can_be_inherited_from_one_workspace_version(self):
+        (self.repo / 'server/Cargo.toml').write_text('[workspace.package]\nversion = "0.1.4"\n')
+        for crate in ('mcp-server', 'robot-flow', 'robot-report'):
+            path = self.repo / f'server/crates/{crate}/Cargo.toml'
+            path.write_text(path.read_text().replace('version = "0.1.4"', 'version.workspace = true'))
+        archive = self.package()
+        self.assertTrue(archive.is_file())
+
+    def test_release_preflight_checks_the_built_companion_versions(self):
+        def version(command, **kwargs):
+            tool = Path(command[0]).stem
+            actual = '0.1.3' if tool == 'robot-flow' else self.version
+            return subprocess.CompletedProcess(command, 0, stdout=f'{actual} dev\n', stderr='')
+        with patch.object(release, 'ROOT', self.repo), patch.object(release.subprocess, 'run', version):
+            with self.assertRaisesRegex(ValueError, 'robot-flow binary version 0.1.3'):
+                release.validate_release_versions(self.version, self.bins)
+
     def test_windows_bundle_contains_all_executables(self):
         with zipfile.ZipFile(self.package('x86_64-pc-windows-msvc')) as bundle:
             for name in ['device-bot.exe', 'robot-flow.exe', 'robot-report.exe', 'bundle.json']:
@@ -143,7 +160,7 @@ esac
         with self.assertRaisesRegex(ValueError, 'Missing release binary'):
             self.package()
         self.setup_version('0.1.4')
-        (self.repo / 'server/crates/robot-flow/Cargo.toml').write_text('version = "0.1.0"\n')
+        (self.repo / 'server/crates/robot-flow/Cargo.toml').write_text('[package]\nversion = "0.1.0"\n')
         with self.assertRaisesRegex(ValueError, 'does not match tag'):
             self.package()
 

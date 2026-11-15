@@ -79,9 +79,13 @@ jobs:
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile("$PWD/scripts/install.ps1", [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors.Count -gt 0) { $errors | Write-Error; exit 1 }
+      - name: Validate release manifest versions
+        run: python -c "import os; from scripts.package_release import validate_release_versions; validate_release_versions(os.environ['ARCHIVE_VERSION'].removeprefix('v'))"
       - run: python scripts/test_package_release.py
       - name: Build Rust release tools
         run: cargo build --manifest-path server/Cargo.toml --release --locked -p device-bot -p robot-flow -p robot-report --target ${{ matrix.target }}
+      - name: Validate built CLI versions before building QC
+        run: python -c "import os; from scripts.package_release import validate_release_versions; validate_release_versions(os.environ['ARCHIVE_VERSION'].removeprefix('v'), 'server/target/${{ matrix.target }}/release')"
       - name: Set up release Flutter
         uses: ./.github/actions/setup-release-flutter
         with:

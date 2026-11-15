@@ -63,7 +63,7 @@ jobs:
           import subprocess
           import sys
           import tomllib
-          version = tomllib.loads(Path('server/crates/mcp-server/Cargo.toml').read_text())['package']['version']
+          version = tomllib.loads(Path('server/Cargo.toml').read_text())['workspace']['package']['version']
           subprocess.run([
               sys.executable, 'scripts/package_release.py',
               '--binary', 'server/target/x86_64-pc-windows-msvc/release/device-bot.exe',

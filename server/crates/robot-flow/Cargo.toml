@@ -1,6 +1,6 @@
 [package]
 name = "robot-flow"
-version = "0.1.18"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

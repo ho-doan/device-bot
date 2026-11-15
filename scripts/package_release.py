@@ -2,15 +2,39 @@
 """Create a native tools archive with the CLI suite and tracked XCTest assets."""
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
+import tomllib
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def validate_release_versions(version, binary_directory=None):
+    """Fail before packaging/building Flutter when any CLI version is stale."""
+    for tool, crate in [('device-bot', 'mcp-server'), ('robot-flow', 'robot-flow'), ('robot-report', 'robot-report')]:
+        manifest = tomllib.loads((ROOT / f'server/crates/{crate}/Cargo.toml').read_text())
+        declared = manifest.get('package', {}).get('version')
+        if isinstance(declared, dict) and declared.get('workspace') is True:
+            workspace = tomllib.loads((ROOT / 'server/Cargo.toml').read_text())
+            declared = workspace.get('workspace', {}).get('package', {}).get('version')
+        if declared != version:
+            raise ValueError(f'{tool} version {declared} does not match tag {version}')
+        if binary_directory is not None:
+            suffix = '.exe' if os.name == 'nt' else ''
+            binary = Path(binary_directory) / (tool + suffix)
+            result = subprocess.run([str(binary), '--version'], check=True,
+                                    capture_output=True, text=True, timeout=10)
+            match = re.search(r'\b\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b', result.stdout)
+            actual = match[0] if match else result.stdout.strip()
+            if actual != version:
+                raise ValueError(f'{tool} binary version {actual} does not match tag {version}')
+            print(f'{tool}: {actual}')
 
 
 def stage_qc(stage, target, qc):
@@ -33,20 +57,13 @@ def stage_qc(stage, target, qc):
 
 
 def package(binary, target, version, output, qc=None, qc_web=None):
-    expected = re.search(r'^version\s*=\s*"([^"]+)"',
-                         (ROOT / 'server/crates/mcp-server/Cargo.toml').read_text(), re.M)[1]
-    if version != expected:
-        raise ValueError(f'Tag version {version} does not match Cargo version {expected}')
+    validate_release_versions(version)
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as temp:
         stage = Path(temp)
         suffix = '.exe' if 'windows' in target else ''
         binaries = ['device-bot', 'robot-flow', 'robot-report']
-        for tool, crate in [('device-bot', 'mcp-server'), ('robot-flow', 'robot-flow'), ('robot-report', 'robot-report')]:
-            tool_version = re.search(r'^version\s*=\s*"([^"]+)"',
-                                    (ROOT / f'server/crates/{crate}/Cargo.toml').read_text(), re.M)[1]
-            if tool_version != version:
-                raise ValueError(f'{tool} version {tool_version} does not match tag {version}')
+        for tool in binaries:
             source = binary if tool == 'device-bot' else binary.parent / (tool + suffix)
             if not source.is_file():
                 raise ValueError(f'Missing release binary: {source}')

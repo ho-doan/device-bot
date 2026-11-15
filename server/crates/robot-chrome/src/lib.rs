@@ -264,6 +264,35 @@ impl ChromeRobot {
         })?
     }
 
+    async fn cdp_many(
+        &self,
+        target: &ChromeTarget,
+        method: &str,
+        params: Vec<Value>,
+    ) -> Result<Vec<Value>, RobotError> {
+        let mut session = self.browser_session.lock().await;
+        if let Some(session) = session.as_mut() {
+            return session.page_requests(target, method, params).await;
+        }
+        let endpoint = target.web_socket_debugger_url.as_deref().ok_or_else(|| {
+            RobotError::CommandFailed(format!(
+                "Chrome target {} has no debugger endpoint",
+                target.id
+            ))
+        })?;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut connection = connection::BrowserConnection::connect(endpoint).await?;
+            connection.request_many(method, params, None).await
+        })
+        .await
+        .map_err(|_| {
+            RobotError::CommandFailed(format!(
+                "Chrome command {method} timed out after 5 seconds on target {}",
+                target.id
+            ))
+        })?
+    }
+
     async fn cdp_request(
         &self,
         target: &ChromeTarget,
@@ -670,10 +699,18 @@ impl ChromeRobot {
         self.cdp(target, "Page.bringToFront", json!({})).await?;
         self.dispatch_mouse(target, "mouseMoved", point, None)
             .await?;
-        self.dispatch_mouse(target, "mousePressed", point, Some("left"))
-            .await?;
-        self.dispatch_mouse(target, "mouseReleased", point, Some("left"))
-            .await
+        // Queue release before awaiting press: a native popup can defer the
+        // press acknowledgement until it receives the matching mouseup.
+        self.cdp_many(
+            target,
+            "Input.dispatchMouseEvent",
+            vec![
+                Self::mouse_event_params("mousePressed", point, Some("left")),
+                Self::mouse_event_params("mouseReleased", point, Some("left")),
+            ],
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn dispatch_mouse(
@@ -683,6 +720,16 @@ impl ChromeRobot {
         point: Point,
         button: Option<&str>,
     ) -> Result<(), RobotError> {
+        self.cdp(
+            target,
+            "Input.dispatchMouseEvent",
+            Self::mouse_event_params(event_type, point, button),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    fn mouse_event_params(event_type: &str, point: Point, button: Option<&str>) -> Value {
         let mut params = json!({ "type": event_type, "x": point.x, "y": point.y,
             "buttons": if button.is_some() && event_type != "mouseReleased" { 1 } else { 0 } });
         if let Some(button) = button {
@@ -692,9 +739,7 @@ impl ChromeRobot {
             params["buttons"] = json!(if event_type == "mouseReleased" { 0 } else { 1 });
             params["clickCount"] = json!(1);
         }
-        self.cdp(target, "Input.dispatchMouseEvent", params)
-            .await
-            .map(|_| ())
+        params
     }
 
     async fn capture_screenshot(&self, target: &ChromeTarget) -> Result<Vec<u8>, RobotError> {
@@ -1356,9 +1401,14 @@ mod tests {
                         "Input.dispatchMouseEvent",
                     ]
                 };
+                let mut current_socket = None;
                 for (index, method) in expected.iter().enumerate() {
-                    let (stream, _) = listener.accept().await.unwrap();
-                    let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    if index != 3 {
+                        let (stream, _) = listener.accept().await.unwrap();
+                        current_socket =
+                            Some(tokio_tungstenite::accept_async(stream).await.unwrap());
+                    }
+                    let socket = current_socket.as_mut().unwrap();
                     let request: Value = serde_json::from_str(
                         &socket.next().await.unwrap().unwrap().into_text().unwrap(),
                     )

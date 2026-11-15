@@ -29,23 +29,44 @@ impl BrowserConnection {
         params: Value,
         session: Option<String>,
     ) -> Result<Value, RobotError> {
+        self.request_many(method, vec![params], session)
+            .await
+            .map(|mut responses| responses.remove(0))
+    }
+
+    /// Send related events before awaiting their acknowledgements. Native mouse
+    /// popups may hold the press acknowledgement until release is delivered.
+    pub async fn request_many(
+        &mut self,
+        method: &str,
+        params: Vec<Value>,
+        session: Option<String>,
+    ) -> Result<Vec<Value>, RobotError> {
         if self.poisoned {
             return Err(RobotError::CommandFailed("Chrome connection is closed after a previous transport failure; start a new MCP session".into()));
         }
-        let id = REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let mut request = json!({"id":id,"method":method,"params":params});
-        if let Some(session) = session {
-            request["sessionId"] = json!(session);
+        if params.is_empty() {
+            return Ok(Vec::new());
         }
+        let mut pending = HashMap::new();
+        let mut responses = vec![Value::Null; params.len()];
         let result = tokio::time::timeout(Duration::from_secs(5), async {
-            self.socket
-                .send(Message::Text(request.to_string().into()))
-                .await
-                .map_err(|e| {
-                    RobotError::CommandFailed(format!(
-                        "could not send Chrome command {method}: {e}"
-                    ))
-                })?;
+            for (index, params) in params.into_iter().enumerate() {
+                let id = REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+                pending.insert(id, index);
+                let mut request = json!({"id":id,"method":method,"params":params});
+                if let Some(session) = &session {
+                    request["sessionId"] = json!(session);
+                }
+                self.socket
+                    .send(Message::Text(request.to_string().into()))
+                    .await
+                    .map_err(|e| {
+                        RobotError::CommandFailed(format!(
+                            "could not send Chrome command {method}: {e}"
+                        ))
+                    })?;
+            }
             while let Some(frame) = self.socket.next().await {
                 let frame = frame.map_err(|e| {
                     RobotError::CommandFailed(format!(
@@ -71,15 +92,18 @@ impl BrowserConnection {
                     self.record_event(response);
                     continue;
                 }
-                if response["id"].as_u64() != Some(id) {
+                let Some(index) = response["id"].as_u64().and_then(|id| pending.remove(&id)) else {
                     continue;
-                }
+                };
                 if let Some(error) = response.get("error") {
                     return Err(RobotError::CommandFailed(format!(
                         "Chrome command {method} failed: {error}"
                     )));
                 }
-                return Ok(response.get("result").cloned().unwrap_or(Value::Null));
+                responses[index] = response.get("result").cloned().unwrap_or(Value::Null);
+                if pending.is_empty() {
+                    return Ok(responses);
+                }
             }
             self.poisoned = true;
             Err(RobotError::CommandFailed(format!(
@@ -275,6 +299,17 @@ impl BrowserSession {
         method: &str,
         params: Value,
     ) -> Result<Value, RobotError> {
+        self.page_requests(target, method, vec![params])
+            .await
+            .map(|mut responses| responses.remove(0))
+    }
+
+    pub async fn page_requests(
+        &mut self,
+        target: &ChromeTarget,
+        method: &str,
+        params: Vec<Value>,
+    ) -> Result<Vec<Value>, RobotError> {
         // Validate ownership before attaching; caller-supplied IDs cannot escape the context.
         if !self.targets().await?.iter().any(|t| t.id == target.id) {
             return Err(RobotError::DeviceNotFound(format!(
@@ -301,7 +336,11 @@ impl BrowserSession {
             self.sessions.insert(target.id.clone(), session.clone());
             session
         };
-        self.request(method, params, Some(session)).await
+        self.connection
+            .lock()
+            .await
+            .request_many(method, params, Some(session))
+            .await
     }
 
     pub async fn session_request(

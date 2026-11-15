@@ -7,6 +7,9 @@ struct BrowserState {
     next_context: u64,
     connections: u64,
     methods: Vec<String>,
+    mouse_events: Vec<Value>,
+    hold_mouse_press_until_release: bool,
+    reject_mouse_release: bool,
 }
 struct Fixture {
     robot: ChromeRobot,
@@ -41,6 +44,7 @@ async fn fixture() -> Fixture {
                     s.connections
                 };
                 let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let mut held_press = None;
                 while let Some(Ok(frame)) = socket.next().await {
                     if frame.is_close() {
                         break;
@@ -96,6 +100,9 @@ async fn fixture() -> Fixture {
                             }
                             "Page.bringToFront" | "Input.dispatchMouseEvent" => {
                                 assert!(request["sessionId"].is_string());
+                                if method == "Input.dispatchMouseEvent" {
+                                    s.mouse_events.push(request["params"].clone());
+                                }
                                 json!({})
                             }
                             "Runtime.evaluate" => {
@@ -107,16 +114,43 @@ async fn fixture() -> Fixture {
                             }
                         }
                     };
+                    let (hold_press, reject_release) = {
+                        let s = state.lock().unwrap();
+                        (s.hold_mouse_press_until_release, s.reject_mouse_release)
+                    };
+                    let mouse = request["method"] == "Input.dispatchMouseEvent";
+                    if mouse && request["params"]["type"] == "mousePressed" && hold_press {
+                        held_press = Some(request["id"].clone());
+                        continue;
+                    }
+                    let response = if mouse
+                        && request["params"]["type"] == "mouseReleased"
+                        && reject_release
+                    {
+                        json!({"id":request["id"],"error":{"code":-32000,"message":"release fixture rejected"}})
+                    } else {
+                        json!({"id":request["id"],"result":result})
+                    };
                     if socket
-                        .send(Message::Text(
-                            json!({"id":request["id"],"result":result})
-                                .to_string()
-                                .into(),
-                        ))
+                        .send(Message::Text(response.to_string().into()))
                         .await
                         .is_err()
                     {
                         break;
+                    }
+                    if mouse && request["params"]["type"] == "mouseReleased" {
+                        if let Some(id) = held_press.take() {
+                            // Native popup input may acknowledge mouseup before
+                            // returning the deferred mousedown acknowledgement.
+                            let event =
+                                json!({"method":"Page.loadEventFired","params":{"timestamp":1}});
+                            let _ = socket.send(Message::Text(event.to_string().into())).await;
+                            let _ = socket
+                                .send(Message::Text(
+                                    json!({"id":id,"result":{}}).to_string().into(),
+                                ))
+                                .await;
+                        }
                     }
                 }
                 state
@@ -161,6 +195,70 @@ async fn fixture() -> Fixture {
         tasks: vec![ws, http],
         artifacts,
     }
+}
+
+#[tokio::test]
+async fn click_releases_a_native_popup_before_waiting_for_press_acknowledgement() {
+    let f = fixture().await;
+    f.state.lock().unwrap().hold_mouse_press_until_release = true;
+    f.robot.boot_device("chrome:browser").await.unwrap();
+    let id = f.robot.list_devices().await.unwrap()[0].id.clone();
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        f.robot.tap(&id, Point { x: 10., y: 20. }),
+    )
+    .await
+    .expect("mouseup must be sent while the native popup holds the mousedown acknowledgement")
+    .unwrap();
+    let events = f.state.lock().unwrap().mouse_events.clone();
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["mouseMoved", "mousePressed", "mouseReleased"]
+    );
+    assert_eq!(events[1]["buttons"], 1);
+    assert_eq!(events[2]["buttons"], 0);
+    let connection = f.robot.browser_connection.lock().await.clone().unwrap();
+    let browser_events = connection
+        .lock()
+        .await
+        .collect_events(Duration::from_millis(1))
+        .await
+        .unwrap();
+    assert!(
+        browser_events
+            .iter()
+            .any(|event| event["method"] == "Page.loadEventFired")
+    );
+    assert_eq!(f.robot.take_screenshot(&id).await.unwrap(), b"png");
+    f.robot.close_session().await.unwrap();
+}
+
+#[tokio::test]
+async fn pipelined_click_still_reports_mouse_release_errors() {
+    let f = fixture().await;
+    {
+        let mut state = f.state.lock().unwrap();
+        state.hold_mouse_press_until_release = true;
+        state.reject_mouse_release = true;
+    }
+    f.robot.boot_device("chrome:browser").await.unwrap();
+    let id = f.robot.list_devices().await.unwrap()[0].id.clone();
+    let error = tokio::time::timeout(
+        Duration::from_secs(1),
+        f.robot.tap(&id, Point { x: 10., y: 20. }),
+    )
+    .await
+    .expect("mouseup must not wait for the held mousedown acknowledgement")
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("release fixture rejected"),
+        "{error}"
+    );
+    assert_eq!(f.robot.take_screenshot(&id).await.unwrap(), b"png");
+    f.robot.close_session().await.unwrap();
 }
 
 #[tokio::test]

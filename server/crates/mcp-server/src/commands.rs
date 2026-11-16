@@ -7,7 +7,32 @@ pub(super) async fn execute(command: Command) -> std::io::Result<()> {
     match command {
         Command::Launch { open_qc } => launcher::start(open_qc),
         Command::Qc => qc::open(),
-        Command::Run(arguments) => launcher::run(arguments.into_iter()),
+        Command::Run(arguments) => launcher::run(arguments).await,
+        Command::InitProject(path) => {
+            let manifest = robot_project::init(std::path::Path::new(&path))?;
+            println!(
+                "Created {}\nRun: device-bot run {}",
+                manifest.display(),
+                path
+            );
+            Ok(())
+        }
+        Command::ProjectReport(path) => {
+            robot_project::ensure_report(std::path::Path::new(&path)).map(|_| ())
+        }
+        Command::ProjectFixture { start, app, state } => {
+            if start {
+                robot_project::windows_fixture::start(
+                    std::path::Path::new(&app),
+                    std::path::Path::new(&state),
+                )
+            } else {
+                robot_project::windows_fixture::stop(
+                    std::path::Path::new(&app),
+                    std::path::Path::new(&state),
+                )
+            }
+        }
         Command::Help => {
             println!("{}", flavor::help());
             Ok(())

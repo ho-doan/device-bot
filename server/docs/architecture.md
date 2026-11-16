@@ -13,6 +13,7 @@ mcp-server (binary + connection orchestration)
         │
         ├── mcp-protocol (wire types only)
         ├── admin-api (local operator read models + SSE only)
+        ├── robot-project (project/env/resource orchestration)
         ├── robot-flow / robot-report (flow execution + persistent history)
         ├── robot-stream (Live session / WebRTC infrastructure)
         └── robot-core (device contracts only)

@@ -522,6 +522,7 @@ dependencies = [
  "robot-ios-real",
  "robot-ios-sim",
  "robot-macos",
+ "robot-project",
  "robot-report",
  "robot-stream",
  "robot-windows",
@@ -562,6 +563,12 @@ dependencies = [
  "quote",
  "syn 3.0.6",
 ]
+
+[[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "dtls"
@@ -1792,6 +1799,20 @@ dependencies = [
  "robot-flutter-bridge",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "robot-project"
+version = "0.1.24"
+dependencies = [
+ "dotenvy",
+ "libc",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

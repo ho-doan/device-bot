@@ -13,6 +13,7 @@ members = [
     "crates/robot-macos",
     "crates/robot-windows",
     "crates/robot-flow",
+    "crates/robot-project",
     "crates/robot-report",
     "crates/automation-test-harness",
 ]

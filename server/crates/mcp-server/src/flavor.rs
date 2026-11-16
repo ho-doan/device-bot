@@ -123,7 +123,10 @@ device-bot start                   Ensure the background web app is running
 device-bot qc                      Open the QC desktop app and ensure local MCP is running
 device-bot mcp                     Run the MCP server over stdio
 device-bot mcp --listen HOST:PORT  Run the MCP server over HTTP (default listen is 0.0.0.0)
-device-bot run <scenario.yaml> ... Run scenarios (see: device-bot run --help)
+device-bot init <directory>        Create a minimal YAML project
+device-bot run <project|flow> ...  Run a project or scenarios (see: device-bot run --help)
+device-bot project ensure-report DIR  Preserve setup/evidence error JUnit
+device-bot project windows-fixture start|stop APP_PATH STATE_PATH
 device-bot -v, --version
 device-bot -h, --help
 device-bot --configure-ios-signing  Detect the signing team and update the iOS helper project

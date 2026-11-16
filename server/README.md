@@ -37,6 +37,8 @@ device-bot                       # Start the web app if needed, then open the br
 device-bot start                 # Ensure the background web app is running
 device-bot qc                    # Open the QC desktop app; ensure local MCP is running
 device-bot run scenario.yaml     # Run a YAML scenario
+device-bot init my-project       # Create a minimal YAML project with .env
+device-bot run my-project        # Run the project's declared flows
 device-bot mcp                   # MCP over stdio, for MCP clients
 device-bot mcp --listen 0.0.0.0:3337
 ```

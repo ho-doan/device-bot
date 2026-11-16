@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 async-trait.workspace = true
 robot-flow = { path = "../robot-flow" }
+robot-project = { path = "../robot-project" }
 robot-stream = { path = "../robot-stream" }
 axum.workspace = true
 base64 = "0.22.1"

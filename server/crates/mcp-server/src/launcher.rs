@@ -23,8 +23,27 @@ fn sibling(name: &str) -> io::Result<PathBuf> {
     Ok(path)
 }
 
-pub fn run(arguments: impl Iterator<Item = String>) -> io::Result<()> {
-    let mut command = Command::new(sibling("robot-flow")?);
+pub async fn run(arguments: Vec<String>) -> io::Result<()> {
+    let runner = sibling("robot-flow")?;
+    if arguments.iter().any(|arg| arg == "--help" || arg == "-h") {
+        println!(
+            "Projects: device-bot init <directory>; device-bot run <directory|project.yaml> [flow options]\nProject paths, .env and artifacts resolve from the project directory.\n"
+        );
+    } else if let Some((project, forwarded)) = robot_project::invocation(&arguments)? {
+        let code = robot_project::run(
+            &project,
+            &forwarded,
+            &runner,
+            &std::env::current_exe()?,
+            &crate::flavor::reports_dir()?,
+        )
+        .await?;
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return Ok(());
+    }
+    let mut command = Command::new(runner);
     command.args(arguments);
     if std::env::var_os("DEVICE_BOT_BIN").is_none() {
         command.env("DEVICE_BOT_BIN", std::env::current_exe()?);

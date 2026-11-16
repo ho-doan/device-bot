@@ -1928,3 +1928,37 @@ async fn invalid_positions_fail_before_any_action() {
         assert!(state.lock().unwrap().calls.is_empty());
     }
 }
+
+#[tokio::test]
+async fn observation_redaction_secrets_do_not_enter_expanded_flow_snapshot() {
+    // Exercise the ordinary process-environment path without modifying it.
+    let name = "PATH";
+    let secret = std::env::var(name).expect("PATH is needed to run the test suite");
+    assert!(!secret.is_empty());
+    let scenario = flow(&format!(
+        "  - call_tool:\n      name: mobile_start_observation\n      arguments:\n        deviceId: device-1\n        redact: ['${{env:{name}}}', literal-private-token]\n"
+    ));
+    let state = Arc::new(Mutex::new(State {
+        schemas: Some(vec![
+            json!({"name":"mobile_list_available_devices","inputSchema":{}}),
+            json!({"name":"mobile_start_observation","inputSchema":{}}),
+        ]),
+        ..State::default()
+    }));
+    let tmp = Temp::new();
+    let report = FlowRunner::new(Some(Box::new(Fake(state.clone()))), tmp.0.clone())
+        .run(&scenario, &Profile::default(), &[], Duration::from_secs(3))
+        .await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    let snapshot = std::fs::read_to_string(tmp.0.join("expanded-flow.yaml")).unwrap();
+    assert!(!snapshot.contains(&secret));
+    assert!(!snapshot.contains("literal-private-token"));
+    assert!(snapshot.contains("<REDACTED>"));
+    let calls = state.lock().unwrap();
+    let args = &calls
+        .calls
+        .iter()
+        .find(|call| call["params"]["name"] == "mobile_start_observation")
+        .unwrap()["params"]["arguments"];
+    assert_eq!(args["redact"][0], secret);
+}

@@ -32,6 +32,25 @@ pub struct UiRunnerStatus {
 /// Async, platform-independent device control boundary.
 #[async_trait]
 pub trait Robot: Send + Sync {
+    async fn start_observation(
+        &self,
+        id: &str,
+        _options: crate::ObservationOptions,
+    ) -> Result<String, RobotError> {
+        Err(RobotError::Unsupported(format!("observation for {id}")))
+    }
+    async fn poll_observation(
+        &self,
+        id: &str,
+        _observation: &str,
+        _after: u64,
+        _limit: usize,
+    ) -> Result<crate::ObservationBatch, RobotError> {
+        Err(RobotError::Unsupported(format!("observation for {id}")))
+    }
+    async fn stop_observation(&self, id: &str, _observation: &str) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported(format!("observation for {id}")))
+    }
     async fn scroll_in_context(
         &self,
         id: &str,

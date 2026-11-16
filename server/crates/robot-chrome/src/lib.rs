@@ -41,6 +41,7 @@ mod frames;
 mod iframe_smoke_tests;
 mod live;
 mod managed;
+mod observation;
 #[cfg(test)]
 mod qc_smoke_tests;
 mod screencast;
@@ -61,6 +62,7 @@ pub struct ChromeRobot {
     artifact_dir: PathBuf,
     ffmpeg_path: String,
     recordings: Arc<Mutex<HashMap<String, ActiveRecording>>>,
+    observers: Arc<Mutex<HashMap<String, observation::Observer>>>,
     boot_lock: Arc<Mutex<()>>,
     browser_session: Arc<Mutex<Option<connection::BrowserSession>>>,
     browser_connection: Arc<Mutex<Option<Arc<Mutex<connection::BrowserConnection>>>>>,
@@ -89,6 +91,7 @@ impl ChromeRobot {
             artifact_dir: "artifacts".into(),
             ffmpeg_path: "ffmpeg".into(),
             recordings: Arc::new(Mutex::new(HashMap::new())),
+            observers: Arc::default(),
             boot_lock: Arc::default(),
             browser_session: Arc::default(),
             browser_connection: Arc::default(),
@@ -781,6 +784,25 @@ fn value_i32(value: &Value, key: &str) -> i32 {
 
 #[async_trait]
 impl Robot for ChromeRobot {
+    async fn start_observation(
+        &self,
+        id: &str,
+        options: robot_core::ObservationOptions,
+    ) -> Result<String, RobotError> {
+        self.begin_observer(id, options).await
+    }
+    async fn poll_observation(
+        &self,
+        id: &str,
+        observation: &str,
+        after: u64,
+        limit: usize,
+    ) -> Result<robot_core::ObservationBatch, RobotError> {
+        self.read_observer(id, observation, after, limit).await
+    }
+    async fn stop_observation(&self, id: &str, observation: &str) -> Result<(), RobotError> {
+        self.end_observer(id, observation).await
+    }
     async fn scroll_in_context(
         &self,
         id: &str,
@@ -889,6 +911,7 @@ impl Robot for ChromeRobot {
         Some(Arc::new(robot))
     }
     async fn close_session(&self) -> Result<(), RobotError> {
+        self.end_all_observers().await;
         let recordings: Vec<_> = self
             .recordings
             .lock()

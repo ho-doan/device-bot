@@ -6,6 +6,7 @@ pub(super) struct BrowserConnection {
     pub(super) socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
     pub poisoned: bool,
     events: Vec<Value>,
+    dropped_events: u64,
     frame_attachments: HashMap<String, Value>,
 }
 
@@ -19,6 +20,7 @@ impl BrowserConnection {
             socket,
             poisoned: false,
             events: Vec::new(),
+            dropped_events: 0,
             frame_attachments: HashMap::new(),
         })
     }
@@ -203,8 +205,13 @@ impl BrowserConnection {
         }
         if self.events.len() >= 1024 {
             self.events.remove(0);
+            self.dropped_events += 1;
         }
         self.events.push(event);
+    }
+
+    pub(super) fn dropped_events(&self) -> u64 {
+        self.dropped_events
     }
 }
 

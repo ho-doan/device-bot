@@ -48,6 +48,34 @@ impl RobotRegistry {
 
 #[async_trait]
 impl Robot for RobotRegistry {
+    async fn start_observation(
+        &self,
+        id: &str,
+        options: crate::ObservationOptions,
+    ) -> Result<String, RobotError> {
+        self.driver_for(id)
+            .await?
+            .start_observation(id, options)
+            .await
+    }
+    async fn poll_observation(
+        &self,
+        id: &str,
+        observation: &str,
+        after: u64,
+        limit: usize,
+    ) -> Result<crate::ObservationBatch, RobotError> {
+        self.driver_for(id)
+            .await?
+            .poll_observation(id, observation, after, limit)
+            .await
+    }
+    async fn stop_observation(&self, id: &str, observation: &str) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .stop_observation(id, observation)
+            .await
+    }
     async fn scroll_in_context(
         &self,
         id: &str,

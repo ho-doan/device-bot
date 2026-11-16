@@ -148,3 +148,34 @@ helpers also compile under tests on other hosts. Keep this distinction when
 moving native code so Linux/Windows builds remain useful for portable tests.
 Run `cargo test -p robot-macos --lib` for automated regressions and use a Linux
 target check to verify the non-macOS configuration.
+
+### Browser observation
+
+Event names and fields follow the Chrome DevTools Protocol
+[Runtime](https://chromedevtools.github.io/devtools-protocol/tot/Runtime/) and
+[Network](https://chromedevtools.github.io/devtools-protocol/tot/Network/) domains.
+
+`mobile_start_observation` attaches an independent CDP connection to a page in
+the current Chrome case context. Start it before the action; poll using
+`mobile_poll_observation` and an `afterSequence` cursor, then stop with
+`mobile_stop_observation`. Each observer retains at most 1,024 records and the
+batch reports cumulative `dropped` records and whether its connection closed.
+Each session owns at most 16 observers, which are stopped when it closes.
+Sequence and elapsed milliseconds are local to the observer. A frame ID is
+included when CDP supplies one or associates an execution context with a frame;
+it can be absent. Redirects appear as request events with `redirectStatus`.
+
+Capture currently covers the attached page target only, not out-of-process iframe
+or worker targets. Events may be missed before start, on disconnect, or when the
+ring overflows; native device network observation is unsupported. Network events
+include request/response metadata, failures, WebSocket frame direction/encoded
+payload size (binary payloads are represented as base64 by CDP), and
+SSE message size, but no headers or bodies. Console and exceptions contain
+metadata by default. `includeText` explicitly enables bounded console string
+arguments and exception descriptions; `redact` supplies up to 64 exact secrets
+to replace in all emitted event-data strings. This is not comprehensive secret detection: callers
+must supply all relevant secrets and opt in only when appropriate. URLs omit
+user info, query and fragment. No response body or native HTTPS interception is
+provided. Poll exposes records for future wait/assert logic; it does not assert.
+On disconnect, `closed` and `terminalReason` report that collection ended;
+they do not quantify events lost after disconnect.

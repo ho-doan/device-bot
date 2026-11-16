@@ -8,6 +8,7 @@ mod device;
 mod flow;
 mod input;
 mod navigation;
+mod observation;
 mod recording;
 mod runner_status;
 mod screen;
@@ -52,6 +53,7 @@ impl ToolRegistry {
         definitions.extend(recording::definitions());
         definitions.extend(stream::definitions());
         definitions.extend(screen::definitions());
+        definitions.extend(observation::definitions());
         definitions.push(flow::definition());
         definitions
     }
@@ -61,6 +63,9 @@ impl ToolRegistry {
         params: CallToolParams,
     ) -> Result<ToolResult, device_mcp_protocol::RpcError> {
         let mut result = match params.name.as_str() {
+            observation::START | observation::POLL | observation::STOP => {
+                observation::call(&self.robot, &params.name, &params.arguments).await
+            }
             flow::NAME => Box::pin(flow::run(&self.robot, &params.arguments)).await,
             stream::START_NAME => {
                 stream::start(&self.robot, &self.streams, &params.arguments).await

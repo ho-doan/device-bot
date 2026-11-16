@@ -10,6 +10,11 @@ struct BrowserState {
     mouse_events: Vec<Value>,
     hold_mouse_press_until_release: bool,
     reject_mouse_release: bool,
+    close_observer: bool,
+    observer_events: Option<tokio::sync::mpsc::UnboundedSender<Value>>,
+    pause_action: bool,
+    action_started: Arc<tokio::sync::Notify>,
+    release_action: Arc<tokio::sync::Notify>,
 }
 struct Fixture {
     robot: ChromeRobot,
@@ -45,7 +50,17 @@ async fn fixture() -> Fixture {
                 };
                 let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
                 let mut held_press = None;
-                while let Some(Ok(frame)) = socket.next().await {
+                let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+                loop {
+                    let frame = tokio::select! {
+                        frame = socket.next() => match frame { Some(Ok(frame)) => frame, _ => break },
+                        event = event_rx.recv() => {
+                            if let Some(event) = event {
+                                if socket.send(Message::Text(event.to_string().into())).await.is_err() { break; }
+                            }
+                            continue;
+                        }
+                    };
                     if frame.is_close() {
                         break;
                     }
@@ -53,6 +68,21 @@ async fn fixture() -> Fixture {
                         continue;
                     }
                     let request: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                    if request["method"] == "Network.enable" {
+                        state.lock().unwrap().observer_events = Some(event_tx.clone());
+                    }
+                    let gate = {
+                        let s = state.lock().unwrap();
+                        if s.pause_action && request["method"] == "Page.bringToFront" {
+                            Some((s.action_started.clone(), s.release_action.clone()))
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some((started, release)) = gate {
+                        started.notify_one();
+                        release.notified().await;
+                    }
                     let result = {
                         let mut s = state.lock().unwrap();
                         let method = request["method"].as_str().unwrap();
@@ -109,6 +139,7 @@ async fn fixture() -> Fixture {
                                 assert!(request["sessionId"].is_string());
                                 json!({"result":{"value":[{"className":"input","elementType":"textField","value":""}]}})
                             }
+                            "Runtime.enable" | "Network.enable" => json!({}),
                             other => {
                                 panic!("unexpected command {other}; no Browser.close is permitted")
                             }
@@ -137,6 +168,19 @@ async fn fixture() -> Fixture {
                         .is_err()
                     {
                         break;
+                    }
+                    if request["method"] == "Network.enable" {
+                        let session = request["sessionId"].clone();
+                        for event in [
+                            json!({"sessionId":session,"method":"Runtime.executionContextCreated","params":{"context":{"id":7,"auxData":{"frameId":"frame-1"}}}}),
+                            json!({"sessionId":session,"method":"Runtime.consoleAPICalled","params":{"type":"log","executionContextId":7,"args":[{"value":"hello secret"}]}}),
+                            json!({"sessionId":session,"method":"Network.requestWillBeSent","params":{"frameId":"frame-1","requestId":"request-1","request":{"method":"GET","url":"https://user:pw@example.test/path?token=secret"}}}),
+                        ] {
+                            let _ = socket.send(Message::Text(event.to_string().into())).await;
+                        }
+                        if state.lock().unwrap().close_observer {
+                            break;
+                        }
                     }
                     if mouse && request["params"]["type"] == "mouseReleased" {
                         if let Some(id) = held_press.take() {
@@ -423,4 +467,176 @@ async fn restart_replaces_only_the_requesting_case_context() {
     assert_eq!(fixture.state.lock().unwrap().contexts.len(), 2);
     first.close_session().await.unwrap();
     second.close_session().await.unwrap();
+}
+
+#[tokio::test]
+async fn observation_reads_its_own_socket_and_cleans_up() {
+    let f = fixture().await;
+    f.robot.boot_device("chrome:browser").await.unwrap();
+    let id = f.robot.list_devices().await.unwrap()[0].id.clone();
+    let observer = f
+        .robot
+        .start_observation(
+            &id,
+            robot_core::ObservationOptions {
+                include_text: true,
+                redact: vec!["secret".into()],
+            },
+        )
+        .await
+        .unwrap();
+    f.robot.tap(&id, Point { x: 1., y: 2. }).await.unwrap();
+    let batch = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let batch = f
+                .robot
+                .poll_observation(&id, &observer, 0, 100)
+                .await
+                .unwrap();
+            if batch.records.len() >= 2 {
+                break batch;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(batch.records[0].frame_id.as_deref(), Some("frame-1"));
+    let serialized = serde_json::to_string(&batch).unwrap();
+    assert!(serialized.contains("[redacted]"));
+    assert!(!serialized.contains("secret"));
+    assert!(!serialized.contains("user:pw"));
+    assert!(serialized.contains("https://example.test/path"));
+    assert!(
+        f.robot
+            .poll_observation("chrome:other", &observer, 0, 10)
+            .await
+            .is_err()
+    );
+    f.robot.stop_observation(&id, &observer).await.unwrap();
+    assert!(
+        f.robot
+            .poll_observation(&id, &observer, 0, 10)
+            .await
+            .is_err()
+    );
+    f.robot.close_session().await.unwrap();
+}
+
+#[tokio::test]
+async fn observation_disconnect_is_reported_and_sessions_are_isolated() {
+    let f = fixture().await;
+    let second = f.robot.fork_session().unwrap();
+    f.robot.boot_device("chrome:browser").await.unwrap();
+    second.boot_device("chrome:browser").await.unwrap();
+    let first_id = f.robot.list_devices().await.unwrap()[0].id.clone();
+    let second_id = second.list_devices().await.unwrap()[0].id.clone();
+    f.state.lock().unwrap().close_observer = true;
+    let obs = f
+        .robot
+        .start_observation(&first_id, Default::default())
+        .await
+        .unwrap();
+    assert!(
+        second
+            .poll_observation(&first_id, &obs, 0, 1)
+            .await
+            .is_err()
+    );
+    assert!(
+        f.robot
+            .poll_observation(&second_id, &obs, 0, 1)
+            .await
+            .is_err()
+    );
+    let batch = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let batch = f
+                .robot
+                .poll_observation(&first_id, &obs, 0, 10)
+                .await
+                .unwrap();
+            if batch.closed {
+                break batch;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(batch.terminal_reason.is_some());
+    f.robot.close_session().await.unwrap();
+    assert!(
+        f.robot
+            .poll_observation(&first_id, &obs, 0, 1)
+            .await
+            .is_err()
+    );
+    assert!(!second.list_devices().await.unwrap().is_empty());
+    second.close_session().await.unwrap();
+}
+
+#[tokio::test]
+async fn observer_receives_post_start_events_during_action_and_idle() {
+    let f = fixture().await;
+    f.robot.boot_device("chrome:browser").await.unwrap();
+    let id = f.robot.list_devices().await.unwrap()[0].id.clone();
+    let observer = f
+        .robot
+        .start_observation(
+            &id,
+            robot_core::ObservationOptions {
+                include_text: true,
+                redact: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let (sender, started, release) = {
+        let mut state = f.state.lock().unwrap();
+        state.pause_action = true;
+        (
+            state.observer_events.clone().unwrap(),
+            state.action_started.clone(),
+            state.release_action.clone(),
+        )
+    };
+    let actor = f.robot.clone();
+    let action_id = id.clone();
+    let action = tokio::spawn(async move { actor.tap(&action_id, Point { x: 1., y: 2. }).await });
+    tokio::time::timeout(Duration::from_secs(2), started.notified())
+        .await
+        .unwrap();
+    let session = format!("session-{}", id.strip_prefix("chrome:").unwrap());
+    let emit = |marker: &str| {
+        sender.send(json!({"sessionId":session,"method":"Runtime.consoleAPICalled","params":{"type":"log","executionContextId":7,"args":[{"value":marker}]}})).unwrap()
+    };
+    emit("during-action-marker");
+    let robot = &f.robot;
+    let id_ref = &id;
+    let observer_ref = &observer;
+    let wait_for = |marker: &'static str| async move {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let batch = robot
+                    .poll_observation(id_ref, observer_ref, 0, 100)
+                    .await
+                    .unwrap();
+                if serde_json::to_string(&batch).unwrap().contains(marker) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    };
+    wait_for("during-action-marker").await;
+    assert!(!action.is_finished());
+    release.notify_one();
+    action.await.unwrap().unwrap();
+    emit("idle-marker");
+    wait_for("idle-marker").await;
+    f.robot.stop_observation(&id, &observer).await.unwrap();
+    f.robot.close_session().await.unwrap();
 }

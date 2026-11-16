@@ -132,6 +132,23 @@ pub(super) fn write(path: &Path, bytes: &[u8]) -> Result<()> {
 pub(super) fn collect_secrets(value: &Value, out: &mut Vec<String>) {
     match value {
         Value::Object(map) => {
+            if let Some(call) = map.get("call_tool").and_then(Value::as_object) {
+                if call.get("name").and_then(Value::as_str) == Some("mobile_start_observation") {
+                    if let Some(values) = call
+                        .get("arguments")
+                        .and_then(|v| v.get("redact"))
+                        .and_then(Value::as_array)
+                    {
+                        out.extend(
+                            values
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_owned),
+                        );
+                    }
+                }
+            }
             for key in ["text", "expected"] {
                 if let Some(s) = map.get(key).and_then(Value::as_str) {
                     if !s.is_empty() {

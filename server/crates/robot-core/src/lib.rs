@@ -8,6 +8,7 @@ mod device;
 mod elements;
 mod error;
 mod input;
+mod observation;
 mod registry;
 mod robot;
 mod web;
@@ -25,6 +26,7 @@ pub use elements::{
 };
 pub use error::RobotError;
 pub use input::{ImeAction, UiAction};
+pub use observation::{ObservationBatch, ObservationOptions, ObservationRecord};
 pub use registry::RobotRegistry;
 pub use robot::{Robot, UiRunnerStatus};
 pub use video::{NativeVideoStream, VideoFrame, VideoStream};

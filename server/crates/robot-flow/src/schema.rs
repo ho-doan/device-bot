@@ -25,6 +25,8 @@ pub struct Step {
     pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource: Option<String>,
     #[serde(default)]
     pub id: Option<String>,
     #[serde(flatten)]
@@ -572,8 +574,25 @@ fn expand(
                 Ok(platform.to_owned())
             })
             .transpose()?;
+        let resource = step
+            .resource
+            .as_ref()
+            .map(|value| {
+                let resolved = resolve(&json!(value), vars)?;
+                let name = resolved.as_str().ok_or("step resource must be a string")?;
+                if name.trim().is_empty() || name.trim() != name {
+                    return Err(crate::FlowError::from(format!(
+                        "{id}: step resource must be a nonempty stable name"
+                    )));
+                }
+                Ok(name.to_owned())
+            })
+            .transpose()?;
+        if platform.is_some() && resource.is_some() {
+            return Err(format!("{id}: step cannot specify both platform and resource").into());
+        }
         let (action, raw) = step.action.iter().next().unwrap();
-        if action == "select_device" && platform.is_some() {
+        if action == "select_device" && (platform.is_some() || resource.is_some()) {
             return Err(format!(
                 "{id}: use select_device.platform for persistent device selection"
             )
@@ -617,8 +636,9 @@ fn expand(
                 if child.note.is_none() {
                     child.note = step.note.clone();
                 }
-                if child.platform.is_none() {
+                if child.platform.is_none() && child.resource.is_none() {
                     child.platform = platform.clone();
+                    child.resource = resource.clone();
                 }
             }
             result.extend(expanded);
@@ -738,6 +758,7 @@ fn expand(
         result.push(Step {
             note: step.note.clone(),
             platform,
+            resource,
             id: Some(id),
             action: BTreeMap::from([(action.clone(), args)]),
         });

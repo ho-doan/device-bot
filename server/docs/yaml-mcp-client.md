@@ -144,6 +144,29 @@ Recording cleanup always uses the device that started recording, even after a
 platform override or an error. An explicitly scoped `stop_screen_recording` must
 match that recording device.
 
+Project runtimes can also bind stable resource names to normalized device
+objects and pass them to `FlowRunner::set_named_resources`. Use `resource` beside
+an action to route that step to a binding, including distinct Chrome actors:
+
+```yaml
+steps:
+  - resource: alice
+    tap_element: {label: Enable notifications}
+  - resource: desktop
+    tap_element: {label: Allow}
+  - resource: alice
+    assert_element: {label: Notifications enabled}
+  - resource: bob
+    tap_element: {label: Messages}
+```
+
+A resource scope follows the same inheritance and restoration rules as platform
+scope, including recipes, conditional branches, and `call_tool`. A step cannot
+specify both `resource` and `platform`. All referenced names, including those
+in unchosen branches, must be bound to devices with an ID and supported platform
+before any flow tool action executes. Resource names do not create actors or
+devices; the calling runtime prepares and owns those resources.
+
 See the Chrome + macOS and Chrome + Windows notification templates in
 [`../examples/chrome_macos_notifications.yaml`](../examples/chrome_macos_notifications.yaml)
 and [`../examples/chrome_windows_notifications.yaml`](../examples/chrome_windows_notifications.yaml).

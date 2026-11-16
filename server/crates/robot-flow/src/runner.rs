@@ -58,6 +58,7 @@ pub struct FlowRunner {
     profile: Profile,
     device: Option<Value>,
     step_device: Option<Value>,
+    named_resources: BTreeMap<String, Value>,
     recording_device: Option<String>,
     directory: PathBuf,
     values: BTreeMap<String, String>,
@@ -82,6 +83,7 @@ impl FlowRunner {
             profile: Profile::default(),
             device: None,
             step_device: None,
+            named_resources: BTreeMap::new(),
             recording_device: None,
             directory,
             values: BTreeMap::new(),
@@ -97,6 +99,11 @@ impl FlowRunner {
             video_overlay: None,
             execution_snapshot: None,
         }
+    }
+
+    /// Set stable resource names to normalized device objects for scoped steps.
+    pub fn set_named_resources(&mut self, resources: BTreeMap<String, Value>) {
+        self.named_resources = resources;
     }
 
     pub async fn run(
@@ -143,6 +150,8 @@ impl FlowRunner {
             self.execute_steps(&steps).await
         };
         let outcome = tokio::select! {result=timeout(case_timeout,result)=>result,_=interrupted()=>Ok(Err(FlowError::new(ErrorKind::Interrupted, "runner interrupted")))};
+        // A case deadline can drop nested step futures before their normal restoration.
+        self.step_device = None;
         let mut error = match outcome {
             Ok(Ok(())) => None,
             Ok(Err(e)) => Some(if self.steps.is_empty() {
@@ -233,7 +242,9 @@ impl FlowRunner {
                             .unwrap_or(120_000),
                     ),
                     async {
-                        if let Some(platform) = &step.platform {
+                        if let Some(resource) = &step.resource {
+                            self.step_device = Some(self.named_resources[resource].clone());
+                        } else if let Some(platform) = &step.platform {
                             if self.client.is_some() {
                                 self.step_device = Some(self.device_for_platform(platform).await?);
                             }

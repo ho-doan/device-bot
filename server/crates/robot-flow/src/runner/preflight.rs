@@ -20,7 +20,26 @@ impl FlowRunner {
         for step in steps {
             let (action, args) = step.action.iter().next().ok_or("empty action")?;
             let mut calls = Vec::new();
-            let scoped = inherited_platform || step.platform.is_some();
+            let scoped = inherited_platform || step.platform.is_some() || step.resource.is_some();
+            if let Some(name) = &step.resource {
+                let device = self
+                    .named_resources
+                    .get(name)
+                    .ok_or_else(|| format!("unknown step resource {name}"))?;
+                if device
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_none_or(|v| v.trim().is_empty())
+                    || device
+                        .get("platform")
+                        .and_then(Value::as_str)
+                        .is_none_or(|v| {
+                            !["android", "ios", "macos", "windows", "chrome"].contains(&v)
+                        })
+                {
+                    return Err(format!("invalid device binding for resource {name}: expected nonempty id and supported platform").into());
+                }
+            }
             if scoped && action == "select_device" {
                 return Err(
                     "select_device cannot change the default device inside a platform-scoped step"

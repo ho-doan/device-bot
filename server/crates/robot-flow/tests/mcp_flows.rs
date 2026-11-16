@@ -6,7 +6,7 @@ use robot_flow::{
 };
 use serde_json::{Value, json};
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -115,6 +115,147 @@ async fn run(flow: &FlowDocument, p: &Profile, state: Arc<Mutex<State>>) -> robo
     FlowRunner::new(Some(Box::new(Fake(state))), tmp.0.clone())
         .run(flow, p, &[], Duration::from_secs(3))
         .await
+}
+
+fn bindings() -> BTreeMap<String, Value> {
+    BTreeMap::from([
+        (
+            "alice".into(),
+            json!({"id":"chrome-alice","platform":"chrome"}),
+        ),
+        ("bob".into(), json!({"id":"chrome-bob","platform":"chrome"})),
+        ("desktop".into(), json!({"id":"native","platform":"macos"})),
+    ])
+}
+
+#[tokio::test]
+async fn named_resources_route_nested_scopes_and_restore_default() {
+    let state = Arc::new(Mutex::new(State {
+        queries: VecDeque::from([json!([node("ready")])]),
+        ..State::default()
+    }));
+    let profile: Profile = serde_yaml::from_str("selectors:\n  ready: {label: ready}\nrecipes:\n  nested:\n    - tap: {x: 1, y: 1}\n    - resource: desktop\n      tap: {x: 2, y: 2}\n    - tap: {x: 3, y: 3}\n").unwrap();
+    let f = flow(
+        "  - resource: alice\n    if_element:\n      target: ready\n      then:\n        - resource: alice\n          run: {recipe: nested}\n        - resource: bob\n          tap: {x: 4, y: 4}\n        - tap: {x: 5, y: 5}\n  - tap: {x: 6, y: 6}\n",
+    );
+    let tmp = Temp::new();
+    let mut runner = FlowRunner::new(Some(Box::new(Fake(state.clone()))), tmp.0.clone());
+    runner.set_named_resources(bindings());
+    let report = runner.run(&f, &profile, &[], Duration::from_secs(3)).await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    assert_eq!(report.selected_device.unwrap()["id"], "device-1");
+    let s = state.lock().unwrap();
+    let ids: Vec<_> = s
+        .calls
+        .iter()
+        .filter(|c| c["params"]["name"] == "mobile_click_on_screen_at_coordinates")
+        .map(|c| c["params"]["arguments"]["deviceId"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "chrome-alice",
+            "native",
+            "chrome-alice",
+            "chrome-bob",
+            "chrome-alice",
+            "device-1"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn missing_resource_in_unreachable_branch_fails_before_actions() {
+    let state = Arc::new(Mutex::new(State::default()));
+    let profile: Profile = serde_yaml::from_str("selectors:\n  ready: {label: ready}\n").unwrap();
+    let f = flow(
+        "  - if_element:\n      target: ready\n      then: []\n      else:\n        - resource: missing\n          tap: {x: 1, y: 1}\n",
+    );
+    let tmp = Temp::new();
+    let mut runner = FlowRunner::new(Some(Box::new(Fake(state.clone()))), tmp.0.clone());
+    runner.set_named_resources(bindings());
+    let report = runner.run(&f, &profile, &[], Duration::from_secs(3)).await;
+    assert!(
+        report
+            .error
+            .unwrap()
+            .contains("unknown step resource missing")
+    );
+    assert!(
+        !state
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .any(|c| c["method"] == "tools/call")
+    );
+}
+
+#[tokio::test]
+async fn deadline_cleans_recording_on_originating_resource() {
+    let tmp = Temp::new();
+    std::fs::create_dir_all(&tmp.0).unwrap();
+    let video = tmp.0.join("source.mp4");
+    std::fs::write(&video, b"video").unwrap();
+    let state = Arc::new(Mutex::new(State {
+        video_path: Some(video),
+        ..State::default()
+    }));
+    let f = flow(
+        "  - resource: alice\n    start_screen_recording: {}\n  - resource: desktop\n    wait: {ms: 500}\n",
+    );
+    let mut runner = FlowRunner::new(Some(Box::new(Fake(state.clone()))), tmp.0.join("artifacts"));
+    runner.set_named_resources(bindings());
+    let report = runner
+        .run(&f, &Profile::default(), &[], Duration::from_millis(100))
+        .await;
+    assert_eq!(report.error_kind.as_deref(), Some("timeout"));
+    assert_eq!(report.selected_device.unwrap()["id"], "device-1");
+    let s = state.lock().unwrap();
+    let stop = s
+        .calls
+        .iter()
+        .find(|c| c["params"]["name"] == "mobile_stop_screen_recording")
+        .unwrap();
+    assert_eq!(stop["params"]["arguments"]["deviceId"], "chrome-alice");
+}
+
+#[tokio::test]
+async fn scoped_action_failure_cleans_recording_on_originating_resource() {
+    let tmp = Temp::new();
+    std::fs::create_dir_all(&tmp.0).unwrap();
+    let video = tmp.0.join("source.mp4");
+    std::fs::write(&video, b"video").unwrap();
+    let state = Arc::new(Mutex::new(State {
+        video_path: Some(video),
+        fail: Some("mobile_click_on_screen_at_coordinates".into()),
+        ..State::default()
+    }));
+    let f = flow(
+        "  - resource: alice\n    start_screen_recording: {}\n  - resource: desktop\n    tap: {x: 1, y: 2}\n",
+    );
+    let mut runner = FlowRunner::new(Some(Box::new(Fake(state.clone()))), tmp.0.join("artifacts"));
+    runner.set_named_resources(bindings());
+    let report = runner
+        .run(&f, &Profile::default(), &[], Duration::from_secs(3))
+        .await;
+    assert_eq!(report.status, "FAIL");
+    assert_eq!(report.selected_device.unwrap()["id"], "device-1");
+    let s = state.lock().unwrap();
+    let stop = s
+        .calls
+        .iter()
+        .find(|c| c["params"]["name"] == "mobile_stop_screen_recording")
+        .unwrap();
+    assert_eq!(stop["params"]["arguments"]["deviceId"], "chrome-alice");
+}
+
+#[test]
+fn resource_metadata_rejects_conflicts_and_invalid_names() {
+    for metadata in ["resource: ''", "resource: alice\n    platform: chrome"] {
+        let f = flow(&format!("  - {metadata}\n    tap: {{x: 1, y: 1}}\n"));
+        assert!(schema::compile(&f, &Profile::default()).is_err());
+    }
 }
 
 #[tokio::test]

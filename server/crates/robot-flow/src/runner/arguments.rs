@@ -7,8 +7,9 @@ use crate::{
 use serde_json::{Value, json};
 
 pub(super) fn query_arguments(s: &Selector, device: &str) -> Value {
-    let mut args =
-        json!({"deviceId":device,"maxResults":s.max_results.unwrap_or(100),"timeoutMs":60000});
+    // The runner owns step/case deadlines and the transport owns its RPC deadline.
+    // A separate fixed query limit would cut explicitly longer YAML waits short.
+    let mut args = json!({"deviceId":device,"maxResults":s.max_results.unwrap_or(100)});
     if let Some(filter) = s
         .filter
         .as_ref()

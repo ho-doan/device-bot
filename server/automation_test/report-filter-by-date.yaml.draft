@@ -1,0 +1,5 @@
+version: 2
+name: report_filter_by_date
+description: "EC-46: Filter by date range"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,5 @@
+version: 2
+name: android_app_foreground
+description: "Control app in foreground state"
+steps:
+  - screenshot: {path: placeholder.png}

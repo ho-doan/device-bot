@@ -1,0 +1,5 @@
+version: 2
+name: android_input_ime_gboard
+description: "Input with Gboard IME"
+steps:
+  - screenshot: {path: placeholder.png}

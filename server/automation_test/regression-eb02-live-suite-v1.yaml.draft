@@ -1,0 +1,5 @@
+version: 2
+name: regression_eb02_live_suite_v1
+description: "EB-02: Live sequential run 1"
+steps:
+  - screenshot: {path: placeholder.png}

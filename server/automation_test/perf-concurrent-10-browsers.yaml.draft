@@ -1,0 +1,5 @@
+version: 2
+name: perf_concurrent_10_browsers
+description: "10+ concurrent browser tabs"
+steps:
+  - screenshot: {path: placeholder.png}

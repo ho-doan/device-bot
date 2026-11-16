@@ -1,0 +1,5 @@
+version: 2
+name: regression_selector_geometry
+description: "Fixed: Selector geometry variance"
+steps:
+  - screenshot: {path: placeholder.png}

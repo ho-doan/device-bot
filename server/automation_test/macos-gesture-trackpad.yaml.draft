@@ -1,0 +1,5 @@
+version: 2
+name: macos_gesture_trackpad
+description: "Trackpad multi-touch gesture"
+steps:
+  - screenshot: {path: placeholder.png}

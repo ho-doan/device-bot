@@ -1,0 +1,50 @@
+# Track A: QC Live Extensions (18 cases)
+
+qc-live-unicode-cjk.yaml: Record CJK text (Chinese/Japanese/Korean) → verify YAML capture → replay
+qc-live-unicode-rtl.yaml: Record RTL text (Arabic/Hebrew) → verify YAML capture → replay
+qc-live-unicode-combining.yaml: Record combining characters (accents, diacritics) → verify YAML capture
+qc-live-unicode-emoji-skin-tones.yaml: Record emoji with skin tone modifiers → verify YAML capture
+qc-live-text-empty.yaml: Record empty text (just clear/tap) → verify YAML handles 0-action scenario
+qc-live-text-whitespace-only.yaml: Record whitespace-only input → verify YAML captures literal spaces
+qc-live-text-very-long.yaml: Record 10KB+ continuous text input → verify performance + YAML size
+qc-live-text-quotes-escapes.yaml: Record text with quotes, backslashes, newlines → verify escaping
+qc-live-element-disabled.yaml: Try to tap disabled element → verify error handling
+qc-live-element-hidden.yaml: Try to tap hidden/off-screen element → verify timeout + error
+qc-live-element-overlapped.yaml: Tap overlapped elements → verify correct element selected
+qc-live-element-dynamic-id.yaml: Element ID changes between replay → verify selector fallback
+qc-live-scroll-bottom.yaml: Scroll to bottom of page → verify scroll limit reached
+qc-live-scroll-rapid.yaml: Rapid back-and-forth scrolls → verify no frame drops or memory leak
+qc-live-100-actions.yaml: Record 100+ actions → verify YAML serialization + replay performance
+qc-live-evidence-rapid-toggle.yaml: Rapidly open/close evidence dialog → verify state consistency
+qc-live-autosave-recovery.yaml: Record → simulate crash → reopen QC → verify autosaved step count
+qc-live-selection-multiline.yaml: Select multi-line text element → verify text capture
+
+# Track B: Import/Export Extensions (6 cases)
+
+qc-import-nested-recipes.yaml: Import YAML with nested recipes (recipe calls recipe) → verify execution
+qc-import-1kb.yaml: Import minimal YAML (1KB) → verify immediate run
+qc-import-100kb.yaml: Import large YAML (100KB, many steps) → verify performance + memory
+qc-import-1mb.yaml: Import very large YAML (1MB) → verify handling or rejection
+qc-export-minified.yaml: Export recording → verify minified (no-comments) option
+qc-import-export-round-trip.yaml: Import YAML → Export → Re-import → verify content identical
+
+# Track C: Report/Persistence (8 cases)
+
+report-1-case.yaml: Project with 1 case → verify minimal report works
+report-10-cases.yaml: Project with 10 cases → verify listing
+report-100-cases.yaml: Project with 100 cases → verify pagination + search performance
+report-filter-by-date.yaml: Filter history by date range → verify results
+report-filter-by-status.yaml: Filter by PASS/FAIL/SKIP → verify accuracy
+report-orphaned-evidence.yaml: Missing PNG files but history intact → verify graceful handling
+report-concurrent-publish.yaml: 2 runners → same project simultaneously → verify atomic writes
+report-history-backup.yaml: Corrupt database → restore backup → verify recovery
+
+# Track D: Web/Auth Extensions (7 cases)
+
+qc-auth-expired-token.yaml: Token expired mid-session → verify refresh or re-login required
+qc-auth-revoked-token.yaml: Token revoked by server → verify disconnection + error
+qc-auth-2fa.yaml: 2FA enabled → verify OTP input flow
+qc-endpoint-localhost-alt.yaml: Connect to 127.0.0.1:3337 vs localhost:3337 → verify interchangeable
+qc-endpoint-domain-tls.yaml: Connect to HTTPS domain → verify TLS cert validation
+qc-multi-tab-hijacking.yaml: Tab A connects → Tab B steals session → verify Tab A disconnects
+qc-device-add-mid-session.yaml: New device appears in device list → refresh → verify immediately available

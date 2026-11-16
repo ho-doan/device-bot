@@ -1,0 +1,14 @@
+version: 2
+name: qc_live_unicode_cjk
+description: "EC-21: CJK text input (Chinese/Japanese/Korean)"
+steps:
+  - run: {recipe: open_qc_live}
+  - run: {recipe: select_live_search}
+  - run: {recipe: send_live_text, with: {text: '日本語テスト 中文测试 한글 테스트'}}
+  - assert_element: {label: 'Review YAML (1)', element_type: button, source: flutter}
+  - tap_element: {label: 'Review YAML (1)', element_type: button, source: flutter}
+  - tap_element: {label: YAML, source: flutter}
+  - assert_element: {resource_id: recording-yaml-preview, filter: '日本語テスト', source: flutter}
+  - tap_element: {label: 'Run on device', element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: 'Run PASS', source: flutter, timeout_ms: 60000}

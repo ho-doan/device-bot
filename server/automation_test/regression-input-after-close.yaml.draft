@@ -1,0 +1,5 @@
+version: 2
+name: regression_input_after_close
+description: "Fixed: Input after dialog close"
+steps:
+  - screenshot: {path: placeholder.png}

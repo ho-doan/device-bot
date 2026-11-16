@@ -1,0 +1,5 @@
+version: 2
+name: android_gesture_pinch
+description: "Record pinch zoom gesture"
+steps:
+  - screenshot: {path: placeholder.png}

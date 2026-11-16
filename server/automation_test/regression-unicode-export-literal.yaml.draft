@@ -1,0 +1,5 @@
+version: 2
+name: regression_unicode_export_literal
+description: "Fixed: Unicode literal export"
+steps:
+  - screenshot: {path: placeholder.png}

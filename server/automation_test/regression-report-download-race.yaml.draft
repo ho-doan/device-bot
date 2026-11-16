@@ -1,0 +1,5 @@
+version: 2
+name: regression_report_download_race
+description: "Fixed: Report download race"
+steps:
+  - screenshot: {path: placeholder.png}

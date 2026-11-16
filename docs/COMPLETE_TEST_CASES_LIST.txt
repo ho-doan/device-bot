@@ -1,0 +1,260 @@
+================================================================================
+COMPLETE TEST CASE INVENTORY (200 cases)
+================================================================================
+
+
+PHASE 0: Existing Base Cases
+--------------------------------------------------------------------------------
+    1. qc-desktop
+    2. qc-import-bad-version
+    3. qc-import-cancel
+    4. qc-import-empty
+    5. qc-import-fail
+    6. qc-import-invalid
+    7. qc-import-pass
+    8. qc-import-syntax-error
+    9. qc-live-export-cancel
+   10. qc-live-record-replay
+   11. qc-live-reopen
+   12. qc-live-review-edit
+   13. qc-live-selection
+   14. qc-url-validation
+   15. qc-web
+   16. qc-web-recovery
+   17. qc-web-reload
+   18. qc-web-token-whitespace
+   19. report-download
+   20. report-empty-search
+   21. report-persistence
+   22. report-web
+Total: 22
+
+PHASE 1a: Edge Cases (EC-01 to EC-20)
+--------------------------------------------------------------------------------
+    1. qc-desktop-minimize
+    2. qc-import-reimport
+    3. qc-live-export-save
+    4. qc-live-long-recording
+    5. qc-live-replay-changed-target
+    6. qc-live-step-reorder
+    7. qc-live-suite-stability
+    8. qc-live-unicode
+    9. qc-url-validation-schemes
+   10. qc-web-disconnect-midrun
+   11. qc-web-multi-device
+   12. qc-web-multi-tab
+   13. report-download-cancel
+   14. report-download-original-image
+   15. report-empty-project
+   16. report-truncation
+Total: 16
+
+PHASE 1b: QC Live Extensions
+--------------------------------------------------------------------------------
+    1. qc-live-100-actions
+    2. qc-live-autosave-recovery
+    3. qc-live-element-disabled
+    4. qc-live-element-dynamic-id
+    5. qc-live-element-hidden
+    6. qc-live-element-overlapped
+    7. qc-live-evidence-rapid-toggle
+    8. qc-live-scroll-bottom
+    9. qc-live-scroll-rapid
+   10. qc-live-selection-multiline
+   11. qc-live-text-empty
+   12. qc-live-text-quotes-escapes
+   13. qc-live-text-very-long
+   14. qc-live-text-whitespace-only
+   15. qc-live-unicode-cjk
+   16. qc-live-unicode-combining
+   17. qc-live-unicode-emoji-skin-tones
+   18. qc-live-unicode-rtl
+Total: 18
+
+PHASE 1c: Import/Export Extensions
+--------------------------------------------------------------------------------
+    1. qc-export-minified
+    2. qc-import-100kb
+    3. qc-import-1kb
+    4. qc-import-export-round-trip
+    5. qc-import-nested-recipes
+Total: 5
+
+PHASE 1d: Report Extensions
+--------------------------------------------------------------------------------
+    1. report-10-cases
+    2. report-100-cases
+    3. report-concurrent-publish
+    4. report-filter-by-date
+    5. report-filter-by-status
+    6. report-history-backup
+    7. report-orphaned-evidence
+Total: 7
+
+PHASE 1e: Web/Auth Extensions
+--------------------------------------------------------------------------------
+    1. qc-auth-2fa
+    2. qc-auth-expired-token
+    3. qc-auth-revoked-token
+    4. qc-device-add-mid-session
+    5. qc-endpoint-domain-tls
+    6. qc-endpoint-localhost-alt
+    7. qc-multi-tab-hijacking
+Total: 7
+
+PHASE 2: Multi-Platform Support
+--------------------------------------------------------------------------------
+    1. android-app-background
+    2. android-app-foreground
+    3. android-device-real-boot
+    4. android-device-simulator-boot
+    5. android-gesture-long-press
+    6. android-gesture-pinch
+    7. android-gesture-swipe
+    8. android-input-ime-gboard
+    9. android-input-ime-swiftkey
+   10. android-screen-rotate
+   11. ios-app-background
+   12. ios-app-foreground
+   13. ios-device-usb
+   14. ios-device-wifi
+   15. ios-gesture-long-press
+   16. ios-gesture-swipe
+   17. ios-input-keyboard
+   18. ios-simulator-boot
+   19. ios-web-safari
+   20. macos-accessibility-voice-control
+   21. macos-gesture-trackpad
+   22. macos-keyboard-navigation
+   23. macos-native-app
+   24. macos-screenshot-api
+   25. macos-universal-binary
+   26. windows-chrome-remote
+   27. windows-desktop-app
+   28. windows-input-ime-chinese
+   29. windows-input-keyboard-dvorak
+   30. windows-multimonitor
+   31. windows-performance-baseline
+   32. windows-window-minimize
+   33. windows-window-snap
+Total: 33
+
+PHASE 2: Performance/Load
+--------------------------------------------------------------------------------
+    1. perf-cache-eviction
+    2. perf-concurrent-10-browsers
+    3. perf-concurrent-5-devices
+    4. perf-concurrent-report-query
+    5. perf-connection-pool-stability
+    6. perf-dom-10000-elements
+    7. perf-history-writes-atomic
+    8. perf-large-flow-1000-steps
+    9. perf-large-project-1000-cases
+   10. perf-memory-leak-detection
+   11. perf-network-flapping-1h
+   12. perf-soak-24h-recording
+   13. perf-soak-24h-replay
+   14. perf-text-input-10kb
+   15. perf-video-recording-1gb
+Total: 15
+
+PHASE 2: Accessibility
+--------------------------------------------------------------------------------
+    1. a11y-color-blind-deuteranopia
+    2. a11y-color-blind-protanopia
+    3. a11y-color-blind-tritanopia
+    4. a11y-high-contrast-mode
+    5. a11y-keyboard-enter-confirm
+    6. a11y-keyboard-esc-close
+    7. a11y-keyboard-navigation
+    8. a11y-keyboard-tab-order
+    9. a11y-large-text-200p
+   10. a11y-large-text-300p
+   11. a11y-screen-reader-jaws
+   12. a11y-screen-reader-nvda
+   13. a11y-screen-reader-voiceover
+   14. a11y-zoom-400p
+   15. a11y-zoom-50p
+Total: 15
+
+PHASE 2: Localization
+--------------------------------------------------------------------------------
+    1. l10n-arabic-rtl
+    2. l10n-chinese-ime
+    3. l10n-date-time-formatting
+    4. l10n-number-formatting
+    5. l10n-vietnamese-ui
+Total: 5
+
+PHASE 2: Integration/CI
+--------------------------------------------------------------------------------
+    1. ci-artifact-retention
+    2. ci-artifact-upload
+    3. ci-backend-recovery
+    4. ci-chocolatey-install
+    5. ci-coverage-report
+    6. ci-custom-backend-port
+    7. ci-custom-report-store
+    8. ci-docker-container
+    9. ci-flaky-test-detection
+   10. ci-github-actions-matrix
+   11. ci-homebrew-install
+   12. ci-mcp-protocol-version
+   13. ci-offline-installation
+   14. ci-performance-regression
+   15. ci-proxy-http
+   16. ci-proxy-https
+   17. ci-proxy-socks
+   18. ci-report-store-recovery
+   19. ci-version-compat-cli
+   20. ci-version-compat-old-server
+   21. ci-version-compat-old-web
+Total: 21
+
+PHASE 2: Regression Suite
+--------------------------------------------------------------------------------
+    1. regression-auth-bearer-delete
+    2. regression-auth-endpoint-scoping
+    3. regression-auth-missing
+    4. regression-auth-wrong
+    5. regression-chrome-frame-replace
+    6. regression-eb01-summary-bad-version
+    7. regression-eb01-summary-syntax-error
+    8. regression-eb01-summary-unknown-action
+    9. regression-eb02-live-suite-v1
+   10. regression-eb02-live-suite-v2
+   11. regression-eb02-live-suite-v3
+   12. regression-evidence-case-routing
+   13. regression-evidence-url-encoding
+   14. regression-fixture-orbit-avatar
+   15. regression-fixture-orbit-material
+   16. regression-fixture-orbit-password
+   17. regression-fixture-orbit-sign-out
+   18. regression-input-after-close
+   19. regression-input-kill-app
+   20. regression-report-download-race
+   21. regression-report-download-retry
+   22. regression-selector-disabled
+   23. regression-selector-duplicates
+   24. regression-selector-fallback-position
+   25. regression-selector-geometry
+   26. regression-selector-truncation
+   27. regression-step-reconnect-limit
+   28. regression-step-timeout-deadline
+   29. regression-unicode-export-escape
+   30. regression-unicode-export-literal
+   31. regression-webrtc-cleanup-race
+   32. regression-webrtc-ice-completion
+   33. regression-webrtc-ice-timeout
+   34. regression-webrtc-renderer-dispose
+Total: 34
+
+FINAL: Milestone Cases
+--------------------------------------------------------------------------------
+    1. final-milestone-regression-complete
+    2. final-milestone-smoke-test
+Total: 2
+
+================================================================================
+GRAND TOTAL: 200 test cases
+================================================================================

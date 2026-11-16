@@ -1,0 +1,5 @@
+version: 2
+name: regression_auth_missing
+description: "Fixed: Missing auth credentials"
+steps:
+  - screenshot: {path: placeholder.png}

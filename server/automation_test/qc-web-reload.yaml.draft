@@ -1,0 +1,13 @@
+version: 2
+name: qc_web_reload
+description: Reload the QC web page after connecting and verify it can reconnect.
+steps:
+  - run: {recipe: open_qc_web}
+  - call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/qc/'}
+  - assert_element: {label: Bearer token, element_type: textField, timeout_ms: 30000}
+  - type_text: {text: '${env:DEVICE_BOT_AUTH}', sensitive: true}
+  - tap_element: {label: Refresh, element_type: button}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 60000}
+  - screenshot: {path: qc-web-reloaded.png}

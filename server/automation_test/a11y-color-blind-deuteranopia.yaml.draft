@@ -1,0 +1,5 @@
+version: 2
+name: a11y_color_blind_deuteranopia
+description: "Deuteranopia color blindness"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,5 @@
+version: 2
+name: ios_web_safari
+description: "Safari WebDriver control"
+steps:
+  - screenshot: {path: placeholder.png}

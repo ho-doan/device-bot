@@ -1,0 +1,5 @@
+version: 2
+name: qc_endpoint_domain_tls
+description: "EC-55: Domain TLS"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,5 @@
+version: 2
+name: regression_fixture_orbit_avatar
+description: "Fixed: Orbit fixture avatar key"
+steps:
+  - screenshot: {path: placeholder.png}

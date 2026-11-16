@@ -1,0 +1,5 @@
+version: 2
+name: report_filter_by_status
+description: "EC-47: Filter by status"
+steps:
+  - screenshot: {path: placeholder.png}

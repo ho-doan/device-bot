@@ -1,0 +1,5 @@
+version: 2
+name: a11y_zoom_400p
+description: "Zoom level 400%"
+steps:
+  - screenshot: {path: placeholder.png}

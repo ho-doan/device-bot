@@ -1,0 +1,5 @@
+version: 2
+name: qc_device_add_mid_session
+description: "EC-57: Device add mid-session"
+steps:
+  - screenshot: {path: placeholder.png}

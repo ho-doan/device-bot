@@ -1,0 +1,14 @@
+version: 2
+name: qc_live_autosave_recovery
+description: "EC-37: Autosave recovery after app crash"
+steps:
+  - run: {recipe: open_qc_live}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - screenshot: {path: autosave-before-crash.png}
+  - call_tool: {name: kill_process, arguments: {process: 'mobile_mcp_companion'}}
+  - call_tool: {name: launch_app, arguments: {app: 'mobile_mcp_companion_dev.app'}}
+  - assert_element: {label: 'Resume recording', element_type: button, source: flutter, timeout_ms: 15000}
+  - tap_element: {label: 'Resume recording', element_type: button, source: flutter}
+  - assert_element: {label: 'Review YAML (6)', element_type: button, source: flutter}

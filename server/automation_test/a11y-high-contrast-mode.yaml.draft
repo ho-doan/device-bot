@@ -1,0 +1,5 @@
+version: 2
+name: a11y_high_contrast_mode
+description: "High contrast display mode"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,5 @@
+version: 2
+name: perf_video_recording_1gb
+description: "4K@60fps video >1GB file"
+steps:
+  - screenshot: {path: placeholder.png}

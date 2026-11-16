@@ -1,0 +1,5 @@
+version: 2
+name: qc_export_minified
+description: "EC-42: Export minified YAML"
+steps:
+  - screenshot: {path: placeholder.png}

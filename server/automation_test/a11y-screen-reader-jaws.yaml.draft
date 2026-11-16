@@ -1,0 +1,5 @@
+version: 2
+name: a11y_screen_reader_jaws
+description: "JAWS screen reader support"
+steps:
+  - screenshot: {path: placeholder.png}

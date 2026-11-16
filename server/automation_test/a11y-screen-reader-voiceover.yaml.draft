@@ -1,0 +1,5 @@
+version: 2
+name: a11y_screen_reader_voiceover
+description: "VoiceOver (macOS/iOS)"
+steps:
+  - screenshot: {path: placeholder.png}

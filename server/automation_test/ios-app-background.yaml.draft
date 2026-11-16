@@ -1,0 +1,5 @@
+version: 2
+name: ios_app_background
+description: "iOS app backgrounded recovery"
+steps:
+  - screenshot: {path: placeholder.png}

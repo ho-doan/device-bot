@@ -1,0 +1,5 @@
+version: 2
+name: ci_custom_backend_port
+description: "Custom backend port configuration"
+steps:
+  - screenshot: {path: placeholder.png}

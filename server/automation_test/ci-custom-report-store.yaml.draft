@@ -1,0 +1,5 @@
+version: 2
+name: ci_custom_report_store
+description: "Custom report store path"
+steps:
+  - screenshot: {path: placeholder.png}

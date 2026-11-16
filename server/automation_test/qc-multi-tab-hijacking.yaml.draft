@@ -1,0 +1,5 @@
+version: 2
+name: qc_multi_tab_hijacking
+description: "EC-56: Session hijacking"
+steps:
+  - screenshot: {path: placeholder.png}

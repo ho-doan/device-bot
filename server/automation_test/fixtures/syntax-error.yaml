@@ -1,0 +1,7 @@
+version: 2
+name: syntax_error_test
+description: Malformed YAML for import error testing
+steps:
+  - call_tool
+      name: mobile_boot_device  # indent error — should fail to parse
+      arguments: {deviceId: 'chrome:browser'}

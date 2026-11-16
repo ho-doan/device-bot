@@ -1,0 +1,27 @@
+version: 2
+name: report_download_cancel
+description: |
+  EC-19: Cancel report JSON download mid-transfer.
+  Click "Download Report JSON" → monitor download → cancel mid-way → verify no crash/orphan files.
+steps:
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser'}
+  - select_device: {platform: chrome, state: available}
+  - call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/reports/'}
+  - assert_element: {label: Làm mới, element_type: button, timeout_ms: 30000}
+  - tap_element: {filter: 'QC self-test fixture', element_type: button, timeout_ms: 15000}
+  - call_tool:
+      name: mobile_scroll
+      arguments: {deviceId: '<selected>', x: 400, y: 600, deltaX: 0, deltaY: 450}
+  - tap_element: {label: Tải báo cáo JSON, element_type: link}
+  - screenshot: {path: download-started.png}
+  # Monitor and cancel download
+  - call_tool:
+      name: fixture_file_chooser
+      arguments: {action: cancel_download, delay_ms: 500}
+  - screenshot: {path: download-cancelled.png}
+  # Verify app is still responsive (not crashed)
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 10000}

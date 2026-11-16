@@ -1,0 +1,5 @@
+version: 2
+name: regression_chrome_frame_replace
+description: "Fixed: Chrome frame replacement"
+steps:
+  - screenshot: {path: placeholder.png}

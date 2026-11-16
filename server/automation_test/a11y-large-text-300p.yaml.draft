@@ -1,0 +1,5 @@
+version: 2
+name: a11y_large_text_300p
+description: "Text magnification 300%"
+steps:
+  - screenshot: {path: placeholder.png}

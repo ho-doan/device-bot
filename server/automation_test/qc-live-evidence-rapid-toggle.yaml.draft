@@ -1,0 +1,15 @@
+version: 2
+name: qc_live_evidence_rapid_toggle
+description: "EC-36: Rapidly open/close evidence dialog"
+steps:
+  - run: {recipe: open_qc_live}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - tap_element: {filter: 'Evidence, button, clickable', element_type: button, source: flutter}
+  - tap_element: {label: 'Tap selected', element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - tap_element: {label: 'Tap selected', element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - tap_element: {label: 'Tap selected', element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {label: 'Review YAML', element_type: button, source: flutter}

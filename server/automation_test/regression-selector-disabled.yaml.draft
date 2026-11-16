@@ -1,0 +1,5 @@
+version: 2
+name: regression_selector_disabled
+description: "Fixed: Disabled element selector"
+steps:
+  - screenshot: {path: placeholder.png}

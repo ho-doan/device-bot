@@ -1,0 +1,5 @@
+version: 2
+name: windows_input_keyboard_dvorak
+description: "Dvorak keyboard layout"
+steps:
+  - screenshot: {path: placeholder.png}

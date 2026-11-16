@@ -1,0 +1,5 @@
+version: 2
+name: report_history_backup
+description: "EC-50: History backup/recovery"
+steps:
+  - screenshot: {path: placeholder.png}

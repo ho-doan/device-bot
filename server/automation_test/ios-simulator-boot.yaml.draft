@@ -1,0 +1,5 @@
+version: 2
+name: ios_simulator_boot
+description: "Boot iOS simulator"
+steps:
+  - screenshot: {path: placeholder.png}

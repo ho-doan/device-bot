@@ -1,0 +1,5 @@
+version: 2
+name: ios_app_foreground
+description: "iOS app in foreground control"
+steps:
+  - screenshot: {path: placeholder.png}

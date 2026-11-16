@@ -1,0 +1,5 @@
+version: 2
+name: android_gesture_long_press
+description: "Record long-press action"
+steps:
+  - screenshot: {path: placeholder.png}

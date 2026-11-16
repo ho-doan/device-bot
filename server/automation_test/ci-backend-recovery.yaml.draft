@@ -1,0 +1,5 @@
+version: 2
+name: ci_backend_recovery
+description: "Backend crash recovery"
+steps:
+  - screenshot: {path: placeholder.png}

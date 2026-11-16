@@ -1,0 +1,5 @@
+version: 2
+name: regression_selector_fallback_position
+description: "Fixed: Selector fallback position"
+steps:
+  - screenshot: {path: placeholder.png}

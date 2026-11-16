@@ -1,0 +1,5 @@
+version: 2
+name: windows_performance_baseline
+description: "CPU/memory baseline measurement"
+steps:
+  - screenshot: {path: placeholder.png}

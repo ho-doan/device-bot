@@ -1,0 +1,36 @@
+version: 2
+name: qc_web_multi_tab
+description: |
+  EC-17: Concurrent QC web tabs.
+  Open QC web in tab 1 → connect → open QC web in tab 2 (same Chrome session) → connect →
+  verify both tabs work independently → close tab 1 → verify tab 2 still works.
+steps:
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser'}
+  - select_device: {platform: chrome, state: available}
+  # Open QC in tab 1
+  - call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/qc/'}
+  - assert_element: {filter: Device, element_type: button, timeout_ms: 30000, source: flutter}
+  - screenshot: {path: multi-tab-1-loaded.png}
+  # Open second tab with QC (new page in same Chrome session)
+  - call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/qc/', target: 'new_tab'}
+  - select_device: {platform: chrome, state: available}
+  - assert_element: {filter: Device, element_type: button, timeout_ms: 30000, source: flutter}
+  - screenshot: {path: multi-tab-2-loaded.png}
+  # Both tabs should be connected; verify tab 2 can import
+  - tap_element: {label: Import flow, element_type: button}
+  - assert_element: {filter: Run imported flow, source: flutter, timeout_ms: 15000}
+  - screenshot: {path: multi-tab-2-import.png}
+  - tap_element: {label: Back, element_type: button, source: flutter}
+  # Close tab 2, switch back to tab 1
+  - call_tool:
+      name: mobile_close_tab
+      arguments: {deviceId: '<selected>'}
+  - select_device: {platform: chrome, state: available, tab: 1}
+  - assert_element: {filter: Device, element_type: button, timeout_ms: 30000, source: flutter}
+  - screenshot: {path: multi-tab-1-still-active.png}

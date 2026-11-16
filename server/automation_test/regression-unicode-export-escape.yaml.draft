@@ -1,0 +1,5 @@
+version: 2
+name: regression_unicode_export_escape
+description: "Fixed: Unicode escape handling"
+steps:
+  - screenshot: {path: placeholder.png}

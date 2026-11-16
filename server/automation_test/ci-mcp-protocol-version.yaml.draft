@@ -1,0 +1,5 @@
+version: 2
+name: ci_mcp_protocol_version
+description: "MCP protocol version negotiation"
+steps:
+  - screenshot: {path: placeholder.png}

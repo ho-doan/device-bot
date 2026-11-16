@@ -1,0 +1,36 @@
+version: 2
+name: report_truncation_large_project
+description: |
+  EC-01: Test report selector with 10+ project groups.
+  Verify that selector falls back gracefully when query reaches max_results;
+  specifically, verify "Close Evidence" button can be found and clicked despite truncation.
+steps:
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser'}
+  - select_device: {platform: chrome, state: available}
+  - call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/reports/'}
+  - assert_element: {label: Làm mới, element_type: button, timeout_ms: 30000}
+  # Select large project fixture (10+ groups created by harness seed_report_large)
+  - tap_element: {filter: QC large project, element_type: button, timeout_ms: 15000}
+  - assert_element: {resource_id: search, element_type: textField, timeout_ms: 15000}
+  - screenshot: {path: report-large-project-list.png}
+  # Scroll down to find "Close Evidence" button for a case
+  - call_tool:
+      name: mobile_scroll
+      arguments: {deviceId: '<selected>', x: 400, y: 600, deltaX: 0, deltaY: 450}
+  - tap_element: {filter: 'large-case', element_type: button}
+  - tap_element: {resource_id: tab-evidence, filter: Evidence, element_type: button}
+  - call_tool:
+      name: mobile_scroll
+      arguments: {deviceId: '<selected>', x: 900, y: 600, deltaX: 0, deltaY: 350}
+  # This should NOT fall back to position-based selector when truncated
+  - tap_element: {filter: 'fixture.png', element_type: button, stable_samples: 2}
+  - assert_element: {label: Đóng ảnh, element_type: button, timeout_ms: 10000}
+  - screenshot: {path: report-evidence-open.png}
+  # Verify Close Evidence button works despite truncation
+  - tap_element: {label: Đóng ảnh, element_type: button}
+  - assert_absent: {label: Đóng ảnh, element_type: button, timeout_ms: 10000}
+  - screenshot: {path: report-evidence-closed.png}

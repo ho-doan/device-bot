@@ -1,0 +1,5 @@
+version: 2
+name: ci_chocolatey_install
+description: "Chocolatey package (Windows)"
+steps:
+  - screenshot: {path: placeholder.png}

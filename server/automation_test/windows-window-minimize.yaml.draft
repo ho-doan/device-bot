@@ -1,0 +1,5 @@
+version: 2
+name: windows_window_minimize
+description: "Window minimize/restore"
+steps:
+  - screenshot: {path: placeholder.png}

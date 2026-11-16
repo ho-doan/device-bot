@@ -1,0 +1,5 @@
+version: 2
+name: android_screen_rotate
+description: "Device rotate during recording"
+steps:
+  - screenshot: {path: placeholder.png}

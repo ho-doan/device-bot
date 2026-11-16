@@ -1,0 +1,5 @@
+version: 2
+name: qc_auth_revoked_token
+description: "EC-52: Revoked token"
+steps:
+  - screenshot: {path: placeholder.png}

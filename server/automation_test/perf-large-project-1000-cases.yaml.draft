@@ -1,0 +1,5 @@
+version: 2
+name: perf_large_project_1000_cases
+description: "Project with 1000+ cases"
+steps:
+  - screenshot: {path: placeholder.png}

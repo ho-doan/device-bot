@@ -1,0 +1,5 @@
+version: 2
+name: regression_eb01_summary_syntax_error
+description: "EB-01: Summary render (syntax error)"
+steps:
+  - screenshot: {path: placeholder.png}

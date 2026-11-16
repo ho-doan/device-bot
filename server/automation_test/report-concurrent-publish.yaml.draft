@@ -1,0 +1,5 @@
+version: 2
+name: report_concurrent_publish
+description: "EC-49: Concurrent publish"
+steps:
+  - screenshot: {path: placeholder.png}

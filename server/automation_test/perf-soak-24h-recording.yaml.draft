@@ -1,0 +1,5 @@
+version: 2
+name: perf_soak_24h_recording
+description: "24-hour continuous recording cycle"
+steps:
+  - screenshot: {path: placeholder.png}

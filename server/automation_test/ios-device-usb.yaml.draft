@@ -1,0 +1,5 @@
+version: 2
+name: ios_device_usb
+description: "Connect real iPhone via USB"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,5 @@
+version: 2
+name: a11y_keyboard_esc_close
+description: "Esc key closes modal"
+steps:
+  - screenshot: {path: placeholder.png}

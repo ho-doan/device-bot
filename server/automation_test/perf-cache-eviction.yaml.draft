@@ -1,0 +1,5 @@
+version: 2
+name: perf_cache_eviction
+description: "LRU cache under memory pressure"
+steps:
+  - screenshot: {path: placeholder.png}

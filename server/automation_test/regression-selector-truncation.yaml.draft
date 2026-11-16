@@ -1,0 +1,5 @@
+version: 2
+name: regression_selector_truncation
+description: "Fixed: Report selector truncation"
+steps:
+  - screenshot: {path: placeholder.png}

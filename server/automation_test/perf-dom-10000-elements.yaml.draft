@@ -1,0 +1,5 @@
+version: 2
+name: perf_dom_10000_elements
+description: "10,000-element DOM selector query"
+steps:
+  - screenshot: {path: placeholder.png}

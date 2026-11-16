@@ -1,0 +1,5 @@
+version: 2
+name: windows_window_snap
+description: "Window snap to half-screen"
+steps:
+  - screenshot: {path: placeholder.png}

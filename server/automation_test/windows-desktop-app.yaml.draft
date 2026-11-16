@@ -1,0 +1,5 @@
+version: 2
+name: windows_desktop_app
+description: "Windows desktop app control"
+steps:
+  - screenshot: {path: placeholder.png}

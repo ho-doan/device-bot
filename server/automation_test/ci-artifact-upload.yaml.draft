@@ -1,0 +1,5 @@
+version: 2
+name: ci_artifact_upload
+description: "Artifact upload to storage"
+steps:
+  - screenshot: {path: placeholder.png}

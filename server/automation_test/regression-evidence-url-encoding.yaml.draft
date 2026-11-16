@@ -1,0 +1,5 @@
+version: 2
+name: regression_evidence_url_encoding
+description: "Fixed: Evidence URL encoding"
+steps:
+  - screenshot: {path: placeholder.png}

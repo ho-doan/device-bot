@@ -1,0 +1,5 @@
+version: 2
+name: ci_coverage_report
+description: "Code coverage aggregation"
+steps:
+  - screenshot: {path: placeholder.png}

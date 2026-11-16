@@ -1,0 +1,5 @@
+version: 2
+name: perf_history_writes_atomic
+description: "Concurrent writes to history (atomicity)"
+steps:
+  - screenshot: {path: placeholder.png}

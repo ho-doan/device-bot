@@ -1,0 +1,5 @@
+version: 2
+name: windows_multimonitor
+description: "Multi-monitor setup support"
+steps:
+  - screenshot: {path: placeholder.png}

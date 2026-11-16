@@ -1,0 +1,18 @@
+version: 2
+name: qc_desktop_minimize
+description: |
+  EC-18: Minimize/restore QC desktop window.
+  Launch QC desktop → connect → minimize window → restore → verify connection remains active.
+steps:
+  - run: {recipe: open_qc_desktop}
+  - assert_element: {filter: Devices (1), source: flutter, timeout_ms: 30000}
+  - screenshot: {path: minimize-connected.png}
+  - call_tool:
+      name: mobile_minimize_window
+      arguments: {window: 'mobile_mcp_companion'}
+  - screenshot: {path: minimize-window.png}
+  - call_tool:
+      name: mobile_restore_window
+      arguments: {window: 'mobile_mcp_companion'}
+  - assert_element: {filter: Devices (1), source: flutter, timeout_ms: 30000}
+  - screenshot: {path: minimize-restored.png}

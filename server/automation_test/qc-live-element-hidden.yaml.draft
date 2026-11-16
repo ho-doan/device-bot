@@ -1,0 +1,8 @@
+version: 2
+name: qc_live_element_hidden
+description: "EC-30: Tap hidden/off-screen element"
+steps:
+  - run: {recipe: open_qc_live}
+  - tap_element: {filter: 'Hidden, hidden, button', element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: 'Run failed.*not found', source: flutter, timeout_ms: 60000}

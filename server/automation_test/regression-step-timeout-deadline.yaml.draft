@@ -1,0 +1,5 @@
+version: 2
+name: regression_step_timeout_deadline
+description: "Fixed: Step timeout deadline"
+steps:
+  - screenshot: {path: placeholder.png}

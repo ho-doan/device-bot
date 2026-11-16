@@ -1,0 +1,5 @@
+version: 2
+name: perf_large_flow_1000_steps
+description: "Single flow with 1000 steps"
+steps:
+  - screenshot: {path: placeholder.png}

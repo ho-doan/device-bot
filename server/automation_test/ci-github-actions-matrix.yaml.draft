@@ -1,0 +1,5 @@
+version: 2
+name: ci_github_actions_matrix
+description: "GitHub Actions multi-platform matrix"
+steps:
+  - screenshot: {path: placeholder.png}

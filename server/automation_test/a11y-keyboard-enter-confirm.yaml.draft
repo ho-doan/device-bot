@@ -1,0 +1,5 @@
+version: 2
+name: a11y_keyboard_enter_confirm
+description: "Enter key confirms action"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,5 @@
+version: 2
+name: l10n_number_formatting
+description: "Locale decimal/thousand separator"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,5 @@
+version: 2
+name: ci_version_compat_cli
+description: "CLI vs web version negotiation"
+steps:
+  - screenshot: {path: placeholder.png}

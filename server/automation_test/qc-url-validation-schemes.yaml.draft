@@ -1,0 +1,39 @@
+version: 2
+name: qc_url_validation_schemes
+description: |
+  EC-11: URL scheme validation beyond javascript:.
+  Test data:, file://, ftp://, http with credentials, very long URLs, URLs with spaces → all should be rejected.
+steps:
+  - run: {recipe: open_qc_web}
+  # data: scheme
+  - tap_element: {filter: 'Change endpoint', element_type: button, source: flutter}
+  - type_text: {text: 'data:text/plain,hello'}
+  - tap_element: {label: Connect, element_type: button, source: flutter}
+  - assert_element: {filter: 'Invalid URL', source: flutter, timeout_ms: 5000}
+  - screenshot: {path: validation-data-scheme.png}
+  # file:// scheme
+  - tap_element: {filter: 'Change endpoint', element_type: button, source: flutter}
+  - type_text: {text: 'file:///etc/passwd', clear: true}
+  - tap_element: {label: Connect, element_type: button, source: flutter}
+  - assert_element: {filter: 'Invalid URL', source: flutter, timeout_ms: 5000}
+  # ftp:// scheme
+  - tap_element: {filter: 'Change endpoint', element_type: button, source: flutter}
+  - type_text: {text: 'ftp://ftp.example.com', clear: true}
+  - tap_element: {label: Connect, element_type: button, source: flutter}
+  - assert_element: {filter: 'Invalid URL', source: flutter, timeout_ms: 5000}
+  # http with embedded credentials
+  - tap_element: {filter: 'Change endpoint', element_type: button, source: flutter}
+  - type_text: {text: 'http://user:pass@example.com', clear: true}
+  - tap_element: {label: Connect, element_type: button, source: flutter}
+  - assert_element: {filter: 'Invalid URL', source: flutter, timeout_ms: 5000}
+  # URL with spaces
+  - tap_element: {filter: 'Change endpoint', element_type: button, source: flutter}
+  - type_text: {text: 'http://example.com /path', clear: true}
+  - tap_element: {label: Connect, element_type: button, source: flutter}
+  - assert_element: {filter: 'Invalid URL', source: flutter, timeout_ms: 5000}
+  # Very long URL (>2000 chars)
+  - tap_element: {filter: 'Change endpoint', element_type: button, source: flutter}
+  - type_text: {text: 'http://example.com/?q=${very_long_query}', clear: true}
+  - tap_element: {label: Connect, element_type: button, source: flutter}
+  - assert_element: {filter: 'Invalid URL', source: flutter, timeout_ms: 5000}
+  - screenshot: {path: validation-long-url.png}

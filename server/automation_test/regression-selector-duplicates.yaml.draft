@@ -1,0 +1,5 @@
+version: 2
+name: regression_selector_duplicates
+description: "Fixed: Selector duplicate handling"
+steps:
+  - screenshot: {path: placeholder.png}

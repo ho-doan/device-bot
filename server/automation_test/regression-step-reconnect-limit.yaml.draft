@@ -1,0 +1,5 @@
+version: 2
+name: regression_step_reconnect_limit
+description: "Fixed: Step reconnect limit"
+steps:
+  - screenshot: {path: placeholder.png}

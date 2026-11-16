@@ -1,0 +1,5 @@
+version: 2
+name: qc_import_1kb
+description: "EC-40: Import 1KB file"
+steps:
+  - screenshot: {path: placeholder.png}

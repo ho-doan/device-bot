@@ -1,0 +1,5 @@
+version: 2
+name: perf_text_input_10kb
+description: "10KB+ continuous text input"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,5 @@
+version: 2
+name: windows_input_ime_chinese
+description: "Chinese IME input"
+steps:
+  - screenshot: {path: placeholder.png}

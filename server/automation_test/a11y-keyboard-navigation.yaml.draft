@@ -1,0 +1,5 @@
+version: 2
+name: a11y_keyboard_navigation
+description: "Keyboard-only workflow"
+steps:
+  - screenshot: {path: placeholder.png}

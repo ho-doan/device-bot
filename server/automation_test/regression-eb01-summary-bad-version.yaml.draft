@@ -1,0 +1,5 @@
+version: 2
+name: regression_eb01_summary_bad_version
+description: "EB-01: Summary render (bad version)"
+steps:
+  - screenshot: {path: placeholder.png}

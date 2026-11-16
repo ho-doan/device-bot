@@ -1,0 +1,5 @@
+version: 2
+name: perf_network_flapping_1h
+description: "Network disconnect/reconnect every 5s for 1h"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,26 @@
+version: 2
+name: qc_web_multi_device
+description: |
+  EC-20: Multiple devices in QC web device list.
+  Boot 2 Chrome devices → open QC web → refresh → verify both devices appear in list →
+  select different device → verify selection accuracy.
+steps:
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser1'}
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser2'}
+  - call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: 'chrome:browser1', url: '${env:QC_TEST_URL}/qc/'}
+  - assert_element: {filter: Device, element_type: button, timeout_ms: 30000, source: flutter}
+  - screenshot: {path: multi-device-web.png}
+  # Refresh to reload device list
+  - tap_element: {label: Refresh, element_type: button, source: flutter}
+  - assert_element: {filter: Device, element_type: button, timeout_ms: 30000, source: flutter, count: 2}
+  - screenshot: {path: multi-device-list.png}
+  # Select different device
+  - tap_element: {filter: 'chrome:browser2', element_type: button}
+  - assert_element: {filter: 'Selected: chrome:browser2', source: flutter, timeout_ms: 10000}
+  - screenshot: {path: multi-device-selected.png}

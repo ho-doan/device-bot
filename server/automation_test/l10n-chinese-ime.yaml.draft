@@ -1,0 +1,5 @@
+version: 2
+name: l10n_chinese_ime
+description: "Simplified Chinese IME"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,5 @@
+version: 2
+name: perf_concurrent_5_devices
+description: "5 concurrent mobile devices"
+steps:
+  - screenshot: {path: placeholder.png}

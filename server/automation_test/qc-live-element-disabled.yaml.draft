@@ -1,0 +1,8 @@
+version: 2
+name: qc_live_element_disabled
+description: "EC-29: Tap disabled element"
+steps:
+  - run: {recipe: open_qc_live}
+  - tap_element: {filter: 'Disabled, disabled, button', element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: 'Run failed.*disabled', source: flutter, timeout_ms: 60000}

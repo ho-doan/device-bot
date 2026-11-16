@@ -1,0 +1,5 @@
+version: 2
+name: macos_universal_binary
+description: "Apple Silicon vs Intel compatibility"
+steps:
+  - screenshot: {path: placeholder.png}

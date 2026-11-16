@@ -1,0 +1,5 @@
+version: 2
+name: qc_auth_expired_token
+description: "EC-51: Expired token"
+steps:
+  - screenshot: {path: placeholder.png}

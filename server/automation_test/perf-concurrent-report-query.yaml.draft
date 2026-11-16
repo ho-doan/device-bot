@@ -1,0 +1,5 @@
+version: 2
+name: perf_concurrent_report_query
+description: "Concurrent report queries"
+steps:
+  - screenshot: {path: placeholder.png}

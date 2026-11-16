@@ -1,0 +1,5 @@
+version: 2
+name: regression_webrtc_ice_timeout
+description: "Fixed: WebRTC ICE timeout"
+steps:
+  - screenshot: {path: placeholder.png}

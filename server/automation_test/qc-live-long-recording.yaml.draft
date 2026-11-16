@@ -1,0 +1,44 @@
+version: 2
+name: qc_live_long_recording
+description: |
+  EC-15: Long recording (50+ actions).
+  Record 50 scroll/tap actions → verify performance acceptable → replay → PASS.
+  Validates serialization and replay efficiency under heavy load.
+steps:
+  - run: {recipe: open_qc_live}
+  # Repeat scroll pair 25 times = 50 actions
+  - run: {recipe: live_scroll_pair}  # 1-2
+  - run: {recipe: live_scroll_pair}  # 3-4
+  - run: {recipe: live_scroll_pair}  # 5-6
+  - run: {recipe: live_scroll_pair}  # 7-8
+  - run: {recipe: live_scroll_pair}  # 9-10
+  - run: {recipe: live_scroll_pair}  # 11-12
+  - run: {recipe: live_scroll_pair}  # 13-14
+  - run: {recipe: live_scroll_pair}  # 15-16
+  - run: {recipe: live_scroll_pair}  # 17-18
+  - run: {recipe: live_scroll_pair}  # 19-20
+  - run: {recipe: live_scroll_pair}  # 21-22
+  - run: {recipe: live_scroll_pair}  # 23-24
+  - run: {recipe: live_scroll_pair}  # 25-26
+  - run: {recipe: live_scroll_pair}  # 27-28
+  - run: {recipe: live_scroll_pair}  # 29-30
+  - run: {recipe: live_scroll_pair}  # 31-32
+  - run: {recipe: live_scroll_pair}  # 33-34
+  - run: {recipe: live_scroll_pair}  # 35-36
+  - run: {recipe: live_scroll_pair}  # 37-38
+  - run: {recipe: live_scroll_pair}  # 39-40
+  - run: {recipe: live_scroll_pair}  # 41-42
+  - run: {recipe: live_scroll_pair}  # 43-44
+  - run: {recipe: live_scroll_pair}  # 45-46
+  - run: {recipe: live_scroll_pair}  # 47-48
+  - run: {recipe: live_scroll_pair}  # 49-50
+  - assert_element: {label: Review YAML (50), element_type: button, source: flutter, timeout_ms: 10000}
+  - screenshot: {path: long-recording-fifty.png}
+  - tap_element: {label: Review YAML (50), element_type: button, source: flutter}
+  - assert_element: {filter: '50 recorded actions.', source: flutter}
+  - tap_element: {label: YAML, source: flutter}
+  - screenshot: {path: long-recording-yaml.png}
+  - tap_element: {label: Run on device, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: 'Run PASS', source: flutter, timeout_ms: 180000}
+  - screenshot: {path: long-recording-pass.png}

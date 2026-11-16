@@ -1,0 +1,5 @@
+version: 2
+name: qc_import_nested_recipes
+description: "EC-39: Nested recipes (recipe calls recipe)"
+steps:
+  - screenshot: {path: placeholder.png}

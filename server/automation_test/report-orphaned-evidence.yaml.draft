@@ -1,0 +1,5 @@
+version: 2
+name: report_orphaned_evidence
+description: "EC-48: Orphaned evidence"
+steps:
+  - screenshot: {path: placeholder.png}

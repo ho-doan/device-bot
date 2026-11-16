@@ -1,0 +1,24 @@
+version: 2
+name: qc_web_disconnect_midrun
+description: |
+  EC-04: Backend disconnect during operation.
+  Connect QC web → Import flow → Run → kill backend mid-run → verify UI error → restart backend →
+  Refresh → verify history/run state not corrupted.
+steps:
+  - run: {recipe: open_qc_web}
+  - tap_element: {label: Import flow, element_type: button}
+  - assert_element: {filter: Run imported flow, source: flutter, timeout_ms: 15000}
+  - assert_element: {filter: pass.yaml, source: flutter}
+  - tap_element: {label: Run on device, element_type: button}
+  # Backend will be killed mid-run by harness (kill_midrun: True)
+  - screenshot: {path: disconnect-midrun-start.png}
+  - assert_element: {filter: 'connection lost', source: flutter, timeout_ms: 45000}
+  - screenshot: {path: disconnect-error.png}
+  # Harness restarts backend and waits for healthy
+  - screenshot: {path: disconnect-post-restart.png}
+  - tap_element: {label: Reconnect, element_type: button, source: flutter, timeout_ms: 10000}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 30000}
+  - screenshot: {path: disconnect-reconnected.png}
+  # Verify prior run history was saved (not lost due to disconnect)
+  - tap_element: {label: History, element_type: button, source: flutter}
+  - assert_element: {filter: 'pass.yaml', source: flutter, timeout_ms: 15000}

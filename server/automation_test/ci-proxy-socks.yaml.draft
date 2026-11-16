@@ -1,0 +1,5 @@
+version: 2
+name: ci_proxy_socks
+description: "SOCKS proxy configuration"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,21 @@
+version: 2
+name: report_empty_project
+description: |
+  EC-13: Project with zero runs (created but not published).
+  Open report → select empty project → verify UI gracefully shows "no runs" (no crash/hang).
+steps:
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser'}
+  - select_device: {platform: chrome, state: available}
+  - call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/reports/'}
+  - assert_element: {label: Làm mới, element_type: button, timeout_ms: 30000}
+  # Select empty project (created by harness but no published runs)
+  - tap_element: {filter: 'QC empty project', element_type: button, timeout_ms: 15000}
+  - screenshot: {path: report-empty-project.png}
+  # Verify graceful "no runs" message
+  - assert_element: {filter: 'No runs', source: flutter, timeout_ms: 10000}
+  - assert_absent: {filter: 'case', element_type: button}
+  - screenshot: {path: report-empty-message.png}

@@ -1,0 +1,5 @@
+version: 2
+name: qc_endpoint_localhost_alt
+description: "EC-54: Localhost alt"
+steps:
+  - screenshot: {path: placeholder.png}

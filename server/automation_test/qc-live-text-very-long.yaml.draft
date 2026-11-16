@@ -1,0 +1,13 @@
+version: 2
+name: qc_live_text_very_long
+description: "EC-27: Very long text (10KB+)"
+steps:
+  - run: {recipe: open_qc_live}
+  - run: {recipe: select_live_search}
+  - run: {recipe: send_live_text, with: {text: '${very_long_text_10kb}'}}
+  - tap_element: {label: 'Review YAML (1)', element_type: button, source: flutter}
+  - tap_element: {label: YAML, source: flutter}
+  - assert_element: {resource_id: recording-yaml-preview, source: flutter}
+  - tap_element: {label: 'Run on device', element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: 'Run PASS', source: flutter, timeout_ms: 90000}

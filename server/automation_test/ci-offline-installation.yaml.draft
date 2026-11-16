@@ -1,0 +1,5 @@
+version: 2
+name: ci_offline_installation
+description: "Offline/air-gapped installation"
+steps:
+  - screenshot: {path: placeholder.png}

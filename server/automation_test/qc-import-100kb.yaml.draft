@@ -1,0 +1,5 @@
+version: 2
+name: qc_import_100kb
+description: "EC-41: Import 100KB file"
+steps:
+  - screenshot: {path: placeholder.png}

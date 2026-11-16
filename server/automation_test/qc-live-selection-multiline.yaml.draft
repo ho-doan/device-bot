@@ -1,0 +1,11 @@
+version: 2
+name: qc_live_selection_multiline
+description: "EC-38: Select multi-line text element"
+steps:
+  - run: {recipe: open_qc_live}
+  - tap_element: {filter: 'Multi-line paragraph', element_type: textField, source: flutter}
+  - run: {recipe: send_live_text, with: {text: 'line1\\nline2\\nline3'}}
+  - tap_element: {label: 'Review YAML (1)', element_type: button, source: flutter}
+  - tap_element: {label: 'Run on device', element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: 'Run PASS', source: flutter, timeout_ms: 60000}

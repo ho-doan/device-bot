@@ -1,0 +1,5 @@
+version: 999
+name: bad_version_test
+description: Unsupported YAML version for import error testing
+steps:
+  - wait: {ms: 1}

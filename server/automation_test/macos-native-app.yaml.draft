@@ -1,0 +1,5 @@
+version: 2
+name: macos_native_app
+description: "macOS native app control"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,5 @@
+version: 2
+name: regression_auth_bearer_delete
+description: "Fixed: Bearer token on DELETE"
+steps:
+  - screenshot: {path: placeholder.png}

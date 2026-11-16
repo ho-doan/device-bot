@@ -1,0 +1,34 @@
+version: 2
+name: report_download_original_image
+description: |
+  EC-14: Download original image evidence from report.
+  Open report → select case with evidence → click "Download original" → verify PNG file downloaded.
+steps:
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser'}
+  - select_device: {platform: chrome, state: available}
+  - call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: '<selected>', url: '${env:QC_TEST_URL}/reports/'}
+  - assert_element: {label: Làm mới, element_type: button, timeout_ms: 30000}
+  - tap_element: {filter: 'QC self-test fixture', element_type: button, timeout_ms: 15000}
+  - assert_element: {resource_id: search, element_type: textField, timeout_ms: 15000}
+  - call_tool:
+      name: mobile_scroll
+      arguments: {deviceId: '<selected>', x: 400, y: 600, deltaX: 0, deltaY: 300}
+  - tap_element: {filter: 'self-test passed', element_type: button}
+  - tap_element: {resource_id: tab-evidence, filter: Evidence, element_type: button}
+  - call_tool:
+      name: mobile_scroll
+      arguments: {deviceId: '<selected>', x: 900, y: 600, deltaX: 0, deltaY: 350}
+  - tap_element: {filter: 'fixture.png', element_type: button, stable_samples: 2}
+  - assert_element: {label: Tải ảnh gốc, element_type: link}
+  - screenshot: {path: download-original-link.png}
+  - call_tool:
+      name: fixture_file_chooser
+      arguments: {action: download_monitor}
+  - tap_element: {label: Tải ảnh gốc, element_type: link}
+  # Monitor download completion
+  - assert_file_downloaded: {filename_contains: '.png', timeout_ms: 30000}
+  - screenshot: {path: download-original-done.png}

@@ -1,0 +1,5 @@
+version: 2
+name: a11y_keyboard_tab_order
+description: "Tab order and focus indicators"
+steps:
+  - screenshot: {path: placeholder.png}

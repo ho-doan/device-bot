@@ -1,0 +1,37 @@
+version: 2
+name: qc_live_export_save
+description: |
+  EC-03: Record 2 scroll actions → Review YAML → Export YAML → choose file location (native save dialog)
+  → verify file exists on disk → import file again → Run → PASS.
+  This extends qc-live-export-cancel which only tests cancel; this verifies actual save + replay.
+steps:
+  - run: {recipe: open_qc_live}
+  - run: {recipe: live_scroll_pair}  # 1, 2
+  - assert_element: {label: Review YAML (2), element_type: button, source: flutter}
+  - tap_element: {label: Review YAML (2), element_type: button, source: flutter}
+  - assert_element: {filter: '2 recorded actions.', source: flutter}
+  - tap_element: {label: YAML, source: flutter}
+  - screenshot: {path: export-yaml-review.png}
+  - tap_element: {label: Export, element_type: button, source: flutter}
+  - screenshot: {path: export-dialog.png}
+  - assert_element: {label: Save, element_type: button, source: flutter, timeout_ms: 10000}
+  # Use file_chooser.cjs fixture to select a file path and trigger Save
+  - call_tool:
+      name: fixture_file_chooser
+      arguments: {action: save, filename: 'qc-export-test.yaml', return_path: true}
+  - id: verify_saved_file
+    assert_file_exists: {path: '${saved_file_path}'}
+  - screenshot: {path: export-saved.png}
+  # Now import the saved file back
+  - tap_element: {label: Back to Live, element_type: button, source: flutter}
+  - tap_element: {label: Close, element_type: button, source: flutter}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 30000}
+  - tap_element: {label: Import flow, element_type: button}
+  - call_tool:
+      name: fixture_file_chooser
+      arguments: {action: open, path: '${saved_file_path}'}
+  - assert_element: {filter: 'Run exported flow', source: flutter, timeout_ms: 15000}
+  - assert_element: {filter: 'qc-export-test.yaml', source: flutter}
+  - tap_element: {label: Run on device, element_type: button}
+  - assert_element: {filter: 'Run PASS', source: flutter, timeout_ms: 60000}
+  - screenshot: {path: export-replay-pass.png}

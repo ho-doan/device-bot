@@ -1,0 +1,5 @@
+version: 2
+name: regression_fixture_orbit_material
+description: "Fixed: Orbit fixture Material bg"
+steps:
+  - screenshot: {path: placeholder.png}

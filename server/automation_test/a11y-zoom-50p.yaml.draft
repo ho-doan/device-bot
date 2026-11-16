@@ -1,0 +1,5 @@
+version: 2
+name: a11y_zoom_50p
+description: "Zoom level 50%"
+steps:
+  - screenshot: {path: placeholder.png}

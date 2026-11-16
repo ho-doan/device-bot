@@ -1,0 +1,10 @@
+version: 2
+name: qc_live_suite_stability
+description: |
+  EC-02: Run Live suite sequentially (this is suite-level test, not individual YAML).
+  This file documents the test as a placeholder; actual verification is in run.py via
+  --suite live --port XXXX repeated 3 times. Should achieve 6/6 PASS all three runs.
+steps:
+  - run: {recipe: open_qc_live}
+  - tap_element: {label: Review YAML, element_type: button}
+  - assert_element: {filter: 'Live test verified', source: flutter}

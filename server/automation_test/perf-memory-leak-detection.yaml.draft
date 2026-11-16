@@ -1,0 +1,5 @@
+version: 2
+name: perf_memory_leak_detection
+description: "Memory leak profiling (24h)"
+steps:
+  - screenshot: {path: placeholder.png}

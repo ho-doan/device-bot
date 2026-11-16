@@ -1,0 +1,28 @@
+version: 2
+name: qc_import_reimport
+description: |
+  EC-12: Re-import same file after close dialog.
+  Import pass.yaml → Run → Close → Import pass.yaml again → Run → verify creates new history entry (no replace/duplicate error).
+steps:
+  - run: {recipe: open_qc_web}
+  - tap_element: {label: Import flow, element_type: button}
+  - assert_element: {filter: Run imported flow, source: flutter, timeout_ms: 15000}
+  - assert_element: {filter: pass.yaml, source: flutter}
+  - tap_element: {label: Run on device, element_type: button}
+  - assert_element: {filter: 'Run PASS', source: flutter, timeout_ms: 60000}
+  - screenshot: {path: reimport-first.png}
+  - tap_element: {label: Close, element_type: button, source: flutter}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 30000}
+  # Re-import same file
+  - tap_element: {label: Import flow, element_type: button}
+  - assert_element: {filter: Run imported flow, source: flutter, timeout_ms: 15000}
+  - assert_element: {filter: pass.yaml, source: flutter}
+  - tap_element: {label: Run on device, element_type: button}
+  - assert_element: {filter: 'Run PASS', source: flutter, timeout_ms: 60000}
+  - screenshot: {path: reimport-second.png}
+  - tap_element: {label: Close, element_type: button, source: flutter}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 30000}
+  # Verify history contains 2 separate entries (not merged/replaced)
+  - tap_element: {label: History, element_type: button, source: flutter}
+  - assert_element: {filter: 'pass.yaml', element_type: button, count: 2, source: flutter, timeout_ms: 15000}
+  - screenshot: {path: reimport-history.png}

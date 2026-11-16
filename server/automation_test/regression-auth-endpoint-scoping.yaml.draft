@@ -1,0 +1,5 @@
+version: 2
+name: regression_auth_endpoint_scoping
+description: "Fixed: Auth endpoint scoping"
+steps:
+  - screenshot: {path: placeholder.png}

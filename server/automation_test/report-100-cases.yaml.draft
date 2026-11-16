@@ -1,0 +1,5 @@
+version: 2
+name: report_100_cases
+description: "EC-45: Report with 100 cases"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,5 @@
+version: 2
+name: android_device_real_boot
+description: "Boot real Android device via ADB"
+steps:
+  - screenshot: {path: placeholder.png}

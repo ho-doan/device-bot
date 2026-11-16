@@ -1,0 +1,5 @@
+version: 2
+name: ci_docker_container
+description: "Docker container execution"
+steps:
+  - screenshot: {path: placeholder.png}

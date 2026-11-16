@@ -1,0 +1,5 @@
+version: 2
+name: perf_connection_pool_stability
+description: "Connection pool under load"
+steps:
+  - screenshot: {path: placeholder.png}

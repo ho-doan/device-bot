@@ -1,0 +1,5 @@
+version: 2
+name: regression_webrtc_renderer_dispose
+description: "Fixed: WebRTC renderer dispose"
+steps:
+  - screenshot: {path: placeholder.png}

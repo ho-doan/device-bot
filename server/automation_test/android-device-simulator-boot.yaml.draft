@@ -1,0 +1,5 @@
+version: 2
+name: android_device_simulator_boot
+description: "Boot Android simulator (AVD)"
+steps:
+  - screenshot: {path: placeholder.png}

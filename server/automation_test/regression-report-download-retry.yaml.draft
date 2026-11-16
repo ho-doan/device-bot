@@ -1,0 +1,5 @@
+version: 2
+name: regression_report_download_retry
+description: "Fixed: Report download retry"
+steps:
+  - screenshot: {path: placeholder.png}

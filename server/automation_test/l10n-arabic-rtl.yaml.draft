@@ -1,0 +1,5 @@
+version: 2
+name: l10n_arabic_rtl
+description: "Arabic RTL layout"
+steps:
+  - screenshot: {path: placeholder.png}

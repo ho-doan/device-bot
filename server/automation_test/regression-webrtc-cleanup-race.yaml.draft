@@ -1,0 +1,5 @@
+version: 2
+name: regression_webrtc_cleanup_race
+description: "Fixed: WebRTC cleanup race"
+steps:
+  - screenshot: {path: placeholder.png}

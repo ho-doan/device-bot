@@ -1,0 +1,5 @@
+version: 2
+name: macos_accessibility_voice_control
+description: "Voice Control support"
+steps:
+  - screenshot: {path: placeholder.png}

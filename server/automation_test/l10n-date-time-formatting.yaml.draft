@@ -1,0 +1,5 @@
+version: 2
+name: l10n_date_time_formatting
+description: "Locale-specific date/time"
+steps:
+  - screenshot: {path: placeholder.png}

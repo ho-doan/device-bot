@@ -1,0 +1,5 @@
+version: 2
+name: report_10_cases
+description: "EC-44: Report with 10 cases"
+steps:
+  - screenshot: {path: placeholder.png}

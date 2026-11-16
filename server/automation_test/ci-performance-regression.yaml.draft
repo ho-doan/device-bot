@@ -1,0 +1,5 @@
+version: 2
+name: ci_performance_regression
+description: "Performance regression tracking"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,5 @@
+version: 2
+name: ci_version_compat_old_web
+description: "Current device-bot + old web"
+steps:
+  - screenshot: {path: placeholder.png}

@@ -1,0 +1,11 @@
+version: 2
+name: qc_live_text_empty
+description: "EC-25: Empty recording (0 actions or only setup)"
+steps:
+  - run: {recipe: open_qc_live}
+  - screenshot: {path: empty-recording-start.png}
+  - assert_element: {label: 'Review YAML', element_type: button, source: flutter}
+  - tap_element: {label: 'Review YAML', element_type: button, source: flutter}
+  - tap_element: {label: 'Run on device', element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: 'Run PASS', source: flutter, timeout_ms: 60000}

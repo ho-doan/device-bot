@@ -1,0 +1,5 @@
+version: 2
+name: regression_input_kill_app
+description: "Fixed: Kill app with queued input"
+steps:
+  - screenshot: {path: placeholder.png}

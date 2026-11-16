@@ -1,0 +1,5 @@
+version: 2
+name: regression_eb01_summary_unknown_action
+description: "EB-01: Summary render (unknown action)"
+steps:
+  - screenshot: {path: placeholder.png}

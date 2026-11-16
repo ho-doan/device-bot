@@ -1,0 +1,5 @@
+version: 2
+name: ci_homebrew_install
+description: "Homebrew package installation"
+steps:
+  - screenshot: {path: placeholder.png}

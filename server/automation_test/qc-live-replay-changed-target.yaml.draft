@@ -1,0 +1,29 @@
+version: 2
+name: qc_live_replay_changed_target
+description: |
+  EC-08: Replay when target page changed.
+  Record 2 actions on fixture page → review YAML → do NOT replay immediately → navigate to different URL →
+  attempt replay → verify QC shows proper error (element not found) without crash/hang.
+steps:
+  - run: {recipe: open_qc_live}
+  - run: {recipe: live_scroll_pair}  # 1, 2
+  - assert_element: {label: Review YAML (2), element_type: button, source: flutter}
+  - tap_element: {label: Review YAML (2), element_type: button, source: flutter}
+  - assert_element: {filter: '2 recorded actions.', source: flutter}
+  - tap_element: {label: YAML, source: flutter}
+  - screenshot: {path: changed-target-yaml.png}
+  - tap_element: {label: Back, element_type: button, source: flutter}
+  # Now navigate away (target page URL changes)
+  - launch_app: {app_id: '${app_id}'}
+  - call_tool:
+      name: mobile_open_url
+      arguments: {deviceId: '<selected>', url: 'about:blank'}
+  - screenshot: {path: changed-target-blank.png}
+  # Attempt replay on blank page — should fail gracefully
+  - tap_element: {label: Run on device, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  # Should see error (element not found) not crash
+  - assert_element: {resource_id: recording-run-result, filter: 'Run failed.*element not found', source: flutter, timeout_ms: 60000}
+  - screenshot: {path: changed-target-failed.png}
+  - tap_element: {label: Back to Live, element_type: button, source: flutter}
+  - tap_element: {label: Close, element_type: button, source: flutter}

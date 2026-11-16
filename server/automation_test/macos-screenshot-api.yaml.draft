@@ -1,0 +1,5 @@
+version: 2
+name: macos_screenshot_api
+description: "GraphicsBuffer screenshot capture"
+steps:
+  - screenshot: {path: placeholder.png}

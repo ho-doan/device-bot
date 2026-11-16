@@ -1,0 +1,5 @@
+version: 2
+name: qc_auth_2fa
+description: "EC-53: 2FA enabled"
+steps:
+  - screenshot: {path: placeholder.png}

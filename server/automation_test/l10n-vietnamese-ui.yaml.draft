@@ -1,0 +1,5 @@
+version: 2
+name: l10n_vietnamese_ui
+description: "Vietnamese UI strings"
+steps:
+  - screenshot: {path: placeholder.png}

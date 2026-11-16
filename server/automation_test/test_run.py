@@ -11,12 +11,16 @@ from run import CASES, select_cases, verify_report_download, wait_fixture_worker
 class SuiteSelectionTests(unittest.TestCase):
     def test_web_suite_covers_every_web_case_and_no_native_desktop_case(self):
         names = select_cases('web')
-        self.assertEqual(len(names), 10)
+        self.assertEqual(len(names), 14)
         self.assertEqual(set(names), {name for name, config in CASES.items()
                                       if not config.get('desktop')})
         self.assertIn('qc-import-fail', names)
         self.assertIn('report-download', names)
         self.assertIn('report-persistence', names)
+        self.assertIn('qc-import-syntax-error', names)
+        self.assertIn('qc-import-bad-version', names)
+        self.assertIn('qc-web-token-whitespace', names)
+        self.assertIn('qc-web-reload', names)
 
     def test_existing_default_and_live_selections_are_preserved(self):
         self.assertEqual(select_cases('all'), list(CASES))

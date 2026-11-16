@@ -1,0 +1,25 @@
+version: 2
+name: qc_live_unicode
+description: |
+  EC-07: Unicode/emoji input through QC Live UI.
+  Record Vietnamese text and emoji (e.g., "Tìm kiếm 🎯 café") → verify YAML captures it correctly →
+  replay → verify fixture receives correct text.
+steps:
+  - run: {recipe: open_qc_live}
+  - run: {recipe: select_live_search}
+  - run: {recipe: send_live_text, with: {text: 'Tìm kiếm 🎯 café'}}
+  - screenshot: {path: unicode-input.png}
+  - tap_element: {label: Review YAML (1), element_type: button, source: flutter}
+  - assert_element: {filter: '1 recorded actions.', source: flutter}
+  - tap_element: {label: YAML, source: flutter}
+  # Verify YAML preview shows the unicode text (not escaped or corrupted)
+  - assert_element: {resource_id: recording-yaml-preview, filter: 'Tìm kiếm 🎯 café', source: flutter}
+  - screenshot: {path: unicode-yaml-preview.png}
+  - tap_element: {label: Run on device, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: 'Run PASS', source: flutter, timeout_ms: 60000}
+  - screenshot: {path: unicode-replay-pass.png}
+  # Verify the fixture received the correct text (check via history API)
+  - tap_element: {label: Back to Live, element_type: button, source: flutter}
+  - tap_element: {label: Close, element_type: button, source: flutter}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 30000}

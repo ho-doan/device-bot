@@ -1,0 +1,8 @@
+version: 2
+name: qc_live_element_overlapped
+description: "EC-31: Tap overlapped elements"
+steps:
+  - run: {recipe: open_qc_live}
+  - tap_element: {filter: 'Overlapped, button', element_type: button, source: flutter, position: 1}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: 'Run PASS', source: flutter, timeout_ms: 60000}

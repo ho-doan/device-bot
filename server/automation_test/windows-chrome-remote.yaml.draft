@@ -1,0 +1,5 @@
+version: 2
+name: windows_chrome_remote
+description: "Chrome Remote Desktop connection"
+steps:
+  - screenshot: {path: placeholder.png}

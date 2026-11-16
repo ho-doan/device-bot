@@ -1,0 +1,5 @@
+version: 2
+name: ci_report_store_recovery
+description: "Report store corruption recovery"
+steps:
+  - screenshot: {path: placeholder.png}

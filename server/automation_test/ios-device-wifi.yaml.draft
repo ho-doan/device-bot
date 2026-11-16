@@ -1,0 +1,5 @@
+version: 2
+name: ios_device_wifi
+description: "Connect real iPhone via Wi-Fi"
+steps:
+  - screenshot: {path: placeholder.png}

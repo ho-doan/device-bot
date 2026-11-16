@@ -1,0 +1,5 @@
+version: 2
+name: android_gesture_swipe
+description: "Record multi-direction swipes"
+steps:
+  - screenshot: {path: placeholder.png}

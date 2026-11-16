@@ -1,0 +1,5 @@
+version: 2
+name: regression_evidence_case_routing
+description: "Fixed: Evidence case routing"
+steps:
+  - screenshot: {path: placeholder.png}

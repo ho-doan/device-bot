@@ -1,0 +1,5 @@
+version: 2
+name: ios_gesture_swipe
+description: "iOS swipe gesture"
+steps:
+  - screenshot: {path: placeholder.png}

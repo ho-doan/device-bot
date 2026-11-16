@@ -1,0 +1,68 @@
+version: 2
+name: qc_live_100_actions
+description: |
+  EC-35: 100+ actions recording (50 scroll pairs = 100 actions).
+  Verify performance acceptable, YAML serialization correct, replay successful.
+steps:
+  - run: {recipe: open_qc_live}
+  # Generate 100 actions via 50 scroll pairs
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - run: {recipe: live_scroll_pair}
+  - screenshot: {path: 100-actions-recorded.png}
+  - assert_element: {label: 'Review YAML (100)', element_type: button, source: flutter, timeout_ms: 10000}
+  - tap_element: {label: 'Review YAML (100)', element_type: button, source: flutter}
+  - assert_element: {filter: '100 recorded actions.', source: flutter}
+  - tap_element: {label: YAML, source: flutter}
+  - screenshot: {path: 100-actions-yaml.png}
+  - tap_element: {label: Run on device, element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: 'Run PASS', source: flutter, timeout_ms: 180000}
+  - screenshot: {path: 100-actions-pass.png}

@@ -1,0 +1,17 @@
+version: 2
+name: qc_web_token_whitespace
+description: Enter a valid token with leading/trailing whitespace and verify connection.
+steps:
+  - run: {recipe: open_qc_web}
+  - tap_element: {label: Bearer token, element_type: textField}
+  - call_tool:
+      name: mobile_type_keys
+      arguments: {deviceId: '<selected>', text: '', clear: true}
+  - type_text: {text: '  ${env:DEVICE_BOT_AUTH}  ', sensitive: true}
+  - tap_element: {label: Refresh, element_type: button}
+  - assert_element: {label: MCP session connected., class_contains: span, timeout_ms: 30000}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 60000}
+  - screenshot: {path: token-whitespace-connected.png}
+  - tap_element: {label: Refresh, element_type: button}
+  - assert_element: {label: MCP session connected., class_contains: span, timeout_ms: 30000}
+  - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 60000}

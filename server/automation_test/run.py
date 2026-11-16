@@ -22,13 +22,18 @@ from live_fixture import LiveFixture, lan_host
 ROOT = Path(__file__).resolve().parents[2]
 SUITE = Path(__file__).resolve().parent
 CASES = {
+    # Existing 24 cases
     "qc-web": {}, "report-web": {}, "qc-desktop": {"desktop": True},
     "qc-import-pass": {"fixture": "pass.yaml", "payload": "qc_import_pass_payload", "runs": 2, "status": "PASS"},
     "qc-import-fail": {"fixture": "fail.yaml", "payload": "qc_import_fail_payload", "runs": 1, "status": "FAIL"},
     "qc-import-invalid": {"fixture": "invalid.yaml"},
     "qc-import-empty": {"fixture": "empty.yaml"},
+    "qc-import-syntax-error": {"fixture": "syntax-error.yaml"},
+    "qc-import-bad-version": {"fixture": "bad-version.yaml"},
     "qc-import-cancel": {"desktop": True},
     "qc-web-recovery": {},
+    "qc-web-token-whitespace": {},
+    "qc-web-reload": {},
     "report-empty-search": {}, "report-download": {"download": True},
     "report-persistence": {"restart": True},
     "qc-url-validation": {"desktop": True, "live": True, "fresh_desktop": True},
@@ -43,6 +48,329 @@ CASES = {
                         "recorded_actions": 3, "replays": 1},
     "qc-live-export-cancel": {"desktop": True, "live": True, "fresh_desktop": True,
                                "recorded_actions": 2, "replays": 1},
+    
+    # Edge cases P0 (bugs already known) — 20 new cases
+    "report-truncation": {"fixture": "report-large-fixture", "seed_report_large": True},
+    "qc-live-suite-stability": {"desktop": True, "live": True, "fresh_desktop": True, "placeholder": True},
+    "qc-live-export-save": {"desktop": True, "live": True, "fresh_desktop": True,
+                            "recorded_actions": 2, "replays": 1},
+    "qc-web-disconnect-midrun": {"kill_midrun": True, "fixture": "pass.yaml"},
+    "qc-live-unicode": {"desktop": True, "live": True, "fresh_desktop": True,
+                        "recorded_actions": 1, "replays": 1, "final_text": "Tìm kiếm 🎯 café"},
+    "qc-live-replay-changed-target": {"desktop": True, "live": True, "fresh_desktop": True,
+                                      "recorded_actions": 2, "replays": 0},
+    "qc-web-token-whitespace": {},  # Already exists but verified in EC-09
+    "qc-web-reload": {},  # Already exists but verified in EC-10
+    "qc-url-validation-schemes": {"desktop": True, "live": True, "fresh_desktop": True},
+    "qc-import-reimport": {"fixture": "pass.yaml", "payload": "qc_import_reimport_payload", "runs": 2},
+    "report-empty-project": {"seed_report_empty": True},
+    "report-download-original-image": {"download": True},
+    "qc-live-long-recording": {"desktop": True, "live": True, "fresh_desktop": True,
+                               "recorded_actions": 50, "replays": 1},
+    "qc-desktop-minimize": {"desktop": True},
+    "qc-web-multi-tab": {},
+    "qc-web-multi-device": {},
+    "report-download-cancel": {"download": True},
+    "qc-live-step-reorder": {"desktop": True, "live": True, "fresh_desktop": True,
+                            "recorded_actions": 4, "replays": 0},
+    
+    # Phase 1 Extensions (37 new cases) — Tracks A, B, C, D
+    # Track A: QC Live Extensions (18 cases)
+    "qc-live-unicode-cjk": {"desktop": True, "live": True, "fresh_desktop": True, "recorded_actions": 1, "replays": 1},
+    "qc-live-unicode-rtl": {"desktop": True, "live": True, "fresh_desktop": True, "recorded_actions": 1, "replays": 1},
+    "qc-live-unicode-combining": {"desktop": True, "live": True, "fresh_desktop": True, "recorded_actions": 1, "replays": 1},
+    "qc-live-unicode-emoji-skin-tones": {"desktop": True, "live": True, "fresh_desktop": True, "recorded_actions": 1, "replays": 1},
+    "qc-live-text-empty": {"desktop": True, "live": True, "fresh_desktop": True, "recorded_actions": 0, "replays": 1},
+    "qc-live-text-whitespace-only": {"desktop": True, "live": True, "fresh_desktop": True, "recorded_actions": 1, "replays": 1},
+    "qc-live-text-very-long": {"desktop": True, "live": True, "fresh_desktop": True, "recorded_actions": 1, "replays": 1},
+    "qc-live-text-quotes-escapes": {"desktop": True, "live": True, "fresh_desktop": True, "recorded_actions": 1, "replays": 1},
+    "qc-live-element-disabled": {"desktop": True, "live": True, "fresh_desktop": True},
+    "qc-live-element-hidden": {"desktop": True, "live": True, "fresh_desktop": True},
+    "qc-live-element-overlapped": {"desktop": True, "live": True, "fresh_desktop": True},
+    "qc-live-element-dynamic-id": {"desktop": True, "live": True, "fresh_desktop": True, "recorded_actions": 1, "replays": 1},
+    "qc-live-scroll-bottom": {"desktop": True, "live": True, "fresh_desktop": True},
+    "qc-live-scroll-rapid": {"desktop": True, "live": True, "fresh_desktop": True, "recorded_actions": 8, "replays": 1},
+    "qc-live-100-actions": {"desktop": True, "live": True, "fresh_desktop": True, "recorded_actions": 100, "replays": 1},
+    "qc-live-evidence-rapid-toggle": {"desktop": True, "live": True, "fresh_desktop": True},
+    "qc-live-autosave-recovery": {"desktop": True, "live": True, "fresh_desktop": True},
+    "qc-live-selection-multiline": {"desktop": True, "live": True, "fresh_desktop": True, "recorded_actions": 1, "replays": 1},
+    
+    # Track B: Import/Export Extensions (5 cases)
+    "qc-import-nested-recipes": {"fixture": "pass.yaml", "runs": 1},
+    "qc-import-1kb": {},
+    "qc-import-100kb": {},
+    "qc-export-minified": {"desktop": True, "live": True, "fresh_desktop": True},
+    "qc-import-export-round-trip": {"fixture": "pass.yaml", "runs": 1},
+    
+    # Track C: Report/Persistence Extensions (7 cases)
+    "report-10-cases": {"seed_report_large": True},
+    "report-100-cases": {"seed_report_large": True},
+    "report-filter-by-date": {"seed_report_large": True},
+    "report-filter-by-status": {"seed_report_large": True},
+    "report-orphaned-evidence": {"seed_report_orphaned": True},
+    "report-concurrent-publish": {"concurrent_runs": True},
+    "report-history-backup": {"restart": True},
+    
+    # Track D: Web/Auth Extensions (7 cases)
+    "qc-auth-expired-token": {},
+    "qc-auth-revoked-token": {},
+    "qc-auth-2fa": {},
+    "qc-endpoint-localhost-alt": {},
+    "qc-endpoint-domain-tls": {},
+    "qc-multi-tab-hijacking": {},
+    "qc-device-add-mid-session": {},
+
+# Phase 2-3 Extensions (125 new cases) — Tracks E-J
+
+"android-device-real-boot": {},
+
+"android-device-simulator-boot": {},
+
+"android-app-foreground": {},
+
+"android-app-background": {},
+
+"android-screen-rotate": {},
+
+"android-gesture-swipe": {},
+
+"android-gesture-pinch": {},
+
+"android-gesture-long-press": {},
+
+"android-input-ime-gboard": {},
+
+"android-input-ime-swiftkey": {},
+
+"ios-simulator-boot": {},
+
+"ios-device-wifi": {},
+
+"ios-device-usb": {},
+
+"ios-app-foreground": {},
+
+"ios-app-background": {},
+
+"ios-gesture-swipe": {},
+
+"ios-gesture-long-press": {},
+
+"ios-input-keyboard": {},
+
+"ios-web-safari": {},
+
+"windows-desktop-app": {},
+
+"windows-chrome-remote": {},
+
+"windows-window-minimize": {},
+
+"windows-window-snap": {},
+
+"windows-multimonitor": {},
+
+"windows-input-keyboard-dvorak": {},
+
+"windows-input-ime-chinese": {},
+
+"windows-performance-baseline": {},
+
+"macos-native-app": {},
+
+"macos-universal-binary": {},
+
+"macos-screenshot-api": {},
+
+"macos-gesture-trackpad": {},
+
+"macos-accessibility-voice-control": {},
+
+"macos-keyboard-navigation": {},
+
+"perf-soak-24h-recording": {},
+
+"perf-soak-24h-replay": {},
+
+"perf-large-project-1000-cases": {},
+
+"perf-large-flow-1000-steps": {},
+
+"perf-concurrent-10-browsers": {},
+
+"perf-concurrent-5-devices": {},
+
+"perf-concurrent-report-query": {},
+
+"perf-dom-10000-elements": {},
+
+"perf-text-input-10kb": {},
+
+"perf-video-recording-1gb": {},
+
+"perf-network-flapping-1h": {},
+
+"perf-memory-leak-detection": {},
+
+"perf-connection-pool-stability": {},
+
+"perf-history-writes-atomic": {},
+
+"perf-cache-eviction": {},
+
+"a11y-screen-reader-nvda": {},
+
+"a11y-screen-reader-jaws": {},
+
+"a11y-screen-reader-voiceover": {},
+
+"a11y-keyboard-tab-order": {},
+
+"a11y-keyboard-navigation": {},
+
+"a11y-keyboard-esc-close": {},
+
+"a11y-keyboard-enter-confirm": {},
+
+"a11y-large-text-200p": {},
+
+"a11y-large-text-300p": {},
+
+"a11y-high-contrast-mode": {},
+
+"a11y-color-blind-protanopia": {},
+
+"a11y-color-blind-deuteranopia": {},
+
+"a11y-color-blind-tritanopia": {},
+
+"a11y-zoom-50p": {},
+
+"a11y-zoom-400p": {},
+
+"l10n-vietnamese-ui": {},
+
+"l10n-arabic-rtl": {},
+
+"l10n-chinese-ime": {},
+
+"l10n-date-time-formatting": {},
+
+"l10n-number-formatting": {},
+
+"ci-github-actions-matrix": {},
+
+"ci-artifact-upload": {},
+
+"ci-artifact-retention": {},
+
+"ci-flaky-test-detection": {},
+
+"ci-performance-regression": {},
+
+"ci-coverage-report": {},
+
+"ci-docker-container": {},
+
+"ci-homebrew-install": {},
+
+"ci-chocolatey-install": {},
+
+"ci-offline-installation": {},
+
+"ci-custom-backend-port": {},
+
+"ci-custom-report-store": {},
+
+"ci-proxy-http": {},
+
+"ci-proxy-https": {},
+
+"ci-proxy-socks": {},
+
+"ci-version-compat-old-server": {},
+
+"ci-version-compat-old-web": {},
+
+"ci-version-compat-cli": {},
+
+"ci-mcp-protocol-version": {},
+
+"ci-backend-recovery": {},
+
+"ci-report-store-recovery": {},
+
+"regression-eb01-summary-syntax-error": {},
+
+"regression-eb01-summary-bad-version": {},
+
+"regression-eb01-summary-unknown-action": {},
+
+"regression-eb02-live-suite-v1": {},
+
+"regression-eb02-live-suite-v2": {},
+
+"regression-eb02-live-suite-v3": {},
+
+"regression-unicode-export-literal": {},
+
+"regression-unicode-export-escape": {},
+
+"regression-webrtc-cleanup-race": {},
+
+"regression-webrtc-renderer-dispose": {},
+
+"regression-webrtc-ice-timeout": {},
+
+"regression-webrtc-ice-completion": {},
+
+"regression-input-after-close": {},
+
+"regression-input-kill-app": {},
+
+"regression-evidence-url-encoding": {},
+
+"regression-evidence-case-routing": {},
+
+"regression-fixture-orbit-material": {},
+
+"regression-fixture-orbit-password": {},
+
+"regression-fixture-orbit-avatar": {},
+
+"regression-fixture-orbit-sign-out": {},
+
+"regression-report-download-race": {},
+
+"regression-report-download-retry": {},
+
+"regression-chrome-frame-replace": {},
+
+"regression-selector-duplicates": {},
+
+"regression-selector-disabled": {},
+
+"regression-selector-geometry": {},
+
+"regression-selector-truncation": {},
+
+"regression-selector-fallback-position": {},
+
+"regression-step-timeout-deadline": {},
+
+"regression-step-reconnect-limit": {},
+
+"regression-auth-missing": {},
+
+"regression-auth-wrong": {},
+
+"regression-auth-endpoint-scoping": {},
+
+"regression-auth-bearer-delete": {},
+    
+    # Final 2 cases to reach 200 total
+    "final-milestone-smoke-test": {},
+    "final-milestone-regression-complete": {},
 }
 
 

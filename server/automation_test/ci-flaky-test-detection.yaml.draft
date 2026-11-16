@@ -1,0 +1,5 @@
+version: 2
+name: ci_flaky_test_detection
+description: "Flaky test detection and retry"
+steps:
+  - screenshot: {path: placeholder.png}

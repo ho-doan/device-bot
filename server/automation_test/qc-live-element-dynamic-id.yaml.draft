@@ -1,0 +1,10 @@
+version: 2
+name: qc_live_element_dynamic_id
+description: "EC-32: Element ID changes between replay"
+steps:
+  - run: {recipe: open_qc_live}
+  - tap_element: {filter: 'Dynamic, button', element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - tap_element: {label: 'Run on device', element_type: button, source: flutter}
+  - launch_app: {app_id: '${app_id}'}
+  - assert_element: {resource_id: recording-run-result, filter: 'Run PASS', source: flutter, timeout_ms: 60000}

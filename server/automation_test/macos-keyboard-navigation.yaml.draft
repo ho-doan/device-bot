@@ -1,0 +1,5 @@
+version: 2
+name: macos_keyboard_navigation
+description: "Keyboard-only navigation"
+steps:
+  - screenshot: {path: placeholder.png}

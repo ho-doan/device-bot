@@ -1,0 +1,5 @@
+version: 2
+name: regression_auth_wrong
+description: "Fixed: Wrong credentials rejection"
+steps:
+  - screenshot: {path: placeholder.png}

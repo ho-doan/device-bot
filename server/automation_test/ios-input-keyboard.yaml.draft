@@ -1,0 +1,5 @@
+version: 2
+name: ios_input_keyboard
+description: "iOS custom keyboard input"
+steps:
+  - screenshot: {path: placeholder.png}

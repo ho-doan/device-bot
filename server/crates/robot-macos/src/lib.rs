@@ -19,10 +19,7 @@ use robot_core::{
     UiTarget,
 };
 use serde_json::{Value, json};
-use tokio::{
-    process::{Child, Command},
-    sync::Mutex,
-};
+use tokio::{process::Command, sync::Mutex};
 
 #[cfg(target_os = "macos")]
 mod accessibility;
@@ -44,6 +41,9 @@ use ffi::{
 };
 #[cfg(target_os = "macos")]
 use windows::{native_listed_windows, running_apps_from_windows, windows_for_process};
+
+mod recording;
+use recording::ActiveRecording;
 
 mod live;
 pub use live::{prepare_window_capture, start_window_capture};
@@ -119,12 +119,6 @@ pub fn request_accessibility_permission() -> bool {
     {
         false
     }
-}
-
-#[derive(Debug)]
-struct ActiveRecording {
-    path: PathBuf,
-    child: Child,
 }
 
 #[derive(Debug, Clone)]
@@ -469,7 +463,16 @@ impl Robot for MacosRobot {
         session.active_process_id = Arc::default();
         session.active_window_id = Arc::default();
         session.live_geometry = Arc::default();
+        session.recording = Arc::default();
         Some(Arc::new(session))
+    }
+
+    async fn close_session(&self) -> Result<(), RobotError> {
+        let mut slot = self.recording.lock().await;
+        if let Some(recording) = slot.take() {
+            recording::finish(recording, std::time::Duration::from_secs(15)).await?;
+        }
+        Ok(())
     }
 
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
@@ -635,15 +638,20 @@ impl Robot for MacosRobot {
             .map_err(|error| {
                 RobotError::CommandFailed(format!("could not create recording directory: {error}"))
             })?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
         let path = self.artifact_dir.join(format!(
-            "macos-recording-{}.mp4",
+            "macos-recording-{stamp}-{}-{}.mp4",
+            std::process::id(),
             RECORDING_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         // Select AVFoundation's named desktop source, never its numeric device
         // index: indexes can point at a connected Continuity camera. Unlike
-        // `screencapture -v`, ffmpeg finalizes a valid MP4 on SIGINT.
+        // `screencapture -v`, ffmpeg finalizes the MP4 on graceful quit.
         let input = format!("{}:none", Self::screen_capture_device());
-        let child = Command::new(&self.ffmpeg_path)
+        let mut child = Command::new(&self.ffmpeg_path)
             .args([
                 "-hide_banner",
                 "-loglevel",
@@ -663,11 +671,13 @@ impl Robot for MacosRobot {
                 "libx264",
                 "-pix_fmt",
                 "yuv420p",
+                "-progress",
+                "pipe:1",
             ])
             .arg(&path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
             .map_err(|error| {
@@ -675,6 +685,7 @@ impl Robot for MacosRobot {
                     "could not start ffmpeg screen recording (run --install-chrome-recording-tools or set DEVICE_BOT_FFMPEG_PATH): {error}"
                 ))
             })?;
+        recording::ready(&mut child, std::time::Duration::from_secs(10)).await?;
         *recording = Some(ActiveRecording {
             path: path.clone(),
             child,
@@ -684,42 +695,13 @@ impl Robot for MacosRobot {
 
     async fn stop_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
         self.require_device(device_id)?;
-        let Some(recording) = self.recording.lock().await.take() else {
+        let mut slot = self.recording.lock().await;
+        let Some(recording) = slot.take() else {
             return Err(RobotError::InvalidInput(
                 "no macOS screen recording is in progress".into(),
             ));
         };
-        #[cfg(target_os = "macos")]
-        if let Some(pid) = recording.child.id() {
-            // ffmpeg finalizes a playable MP4 when interrupted with SIGINT.
-            unsafe {
-                libc::kill(pid as i32, libc::SIGINT);
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        let recording = {
-            let mut recording = recording;
-            recording.child.start_kill().map_err(|error| {
-                RobotError::CommandFailed(format!("could not stop screen recording: {error}"))
-            })?;
-            recording
-        };
-        let output = recording.child.wait_with_output().await.map_err(|error| {
-            RobotError::CommandFailed(format!(
-                "could not finalize macOS screen recording: {error}"
-            ))
-        })?;
-        if !recording.path.is_file() {
-            return Err(RobotError::CommandFailed(format!(
-                "macOS did not create a screen-recording artifact (ffmpeg status {}): {}",
-                output
-                    .status
-                    .code()
-                    .map_or_else(|| "signal".into(), |code| code.to_string()),
-                String::from_utf8_lossy(&output.stderr).trim()
-            )));
-        }
-        Ok(recording.path.to_string_lossy().into_owned())
+        recording::finish(recording, std::time::Duration::from_secs(15)).await
     }
 
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
@@ -906,3 +888,52 @@ mod screenshot_tests;
 mod screenshot;
 
 mod pointer;
+
+#[cfg(test)]
+mod recorder_ownership_regression {
+    use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore = "requires an existing Screen Recording grant and interactive desktop"]
+    async fn live_desktop_recording_smoke() {
+        assert!(
+            unsafe { CGPreflightScreenCaptureAccess() },
+            "live desktop recording smoke requires an existing Screen Recording grant"
+        );
+        let dir = std::env::temp_dir().join(format!("macos-live-recording-{}", std::process::id()));
+        let robot = MacosRobot::new(&dir);
+        let path = robot.start_screen_recording(DEVICE_ID).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        assert_eq!(robot.stop_screen_recording(DEVICE_ID).await.unwrap(), path);
+        let status = Command::new("ffmpeg")
+            .args(["-v", "error", "-i", &path, "-f", "null", "-"])
+            .status()
+            .await
+            .unwrap();
+        assert!(status.success(), "recording could not be decoded");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+        eprintln!("LIVE_SMOKE_PASSED: encoded desktop recording decoded successfully");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fork_cannot_stop_parent_recording() {
+        let robot = MacosRobot::new(std::env::temp_dir());
+        let path = std::env::temp_dir().join(format!("macos-owner-test-{}", std::process::id()));
+        std::fs::write(&path, b"recording").unwrap();
+        let child = Command::new("sleep")
+            .arg("60")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        *robot.recording.lock().await = Some(ActiveRecording {
+            path: path.clone(),
+            child,
+        });
+        let fork = robot.fork_session().unwrap();
+        assert!(fork.stop_screen_recording(DEVICE_ID).await.is_err());
+        assert!(robot.recording.lock().await.is_some());
+        let _ = std::fs::remove_file(path);
+    }
+}

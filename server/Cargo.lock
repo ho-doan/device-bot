@@ -1812,6 +1812,7 @@ name = "robot-stream"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "libc",
  "robot-android",
  "robot-chrome",
  "robot-core",

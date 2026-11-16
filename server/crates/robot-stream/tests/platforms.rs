@@ -16,19 +16,8 @@ use webrtc::{
     },
 };
 
-struct HelperCleanup(PathBuf);
-impl Drop for HelperCleanup {
-    fn drop(&mut self) {
-        // Only PIDs written by this test's xcodebuild wrapper are owned here.
-        if let Ok(pids) = std::fs::read_to_string(&self.0) {
-            for pid in pids.lines().filter_map(|pid| pid.parse::<u32>().ok()) {
-                let _ = std::process::Command::new("kill")
-                    .args(["-TERM", &pid.to_string()])
-                    .output();
-            }
-        }
-    }
-}
+#[path = "support/xcodebuild.rs"]
+mod xcodebuild;
 
 #[tokio::test]
 #[ignore = "requires explicit DEVICE_BOT_LIVE_PLATFORM/DEVICE and a disposable fixture"]
@@ -38,23 +27,15 @@ async fn real_platform_live_decodes_controls_reopens_and_stops() {
     let artifacts =
         PathBuf::from(std::env::var("DEVICE_BOT_LIVE_ARTIFACTS").expect("artifact directory"));
     tokio::fs::create_dir_all(&artifacts).await.unwrap();
-    let pid_file = artifacts.join("xctest-pids");
-    let _helper_cleanup = HelperCleanup(pid_file.clone());
-    let xcodebuild = if matches!(platform.as_str(), "simulator" | "ios-real") {
-        // Prevent an abandoned XCTest run from restarting the helper underneath
-        // the next attempt. Retain the native driver's actual build/agent path.
-        tokio::fs::write(&pid_file, "").await.unwrap();
-        let wrapper = artifacts.join("xcodebuild-wrapper.py");
-        tokio::fs::write(&wrapper, "#!/usr/bin/env python3\nimport os,sys\nif 'test-without-building' in sys.argv:\n with open(os.path.join(os.path.dirname(__file__),'xctest-pids'),'a') as f: f.write(str(os.getpid())+'\\n')\nos.execvp('xcodebuild',['xcodebuild',*sys.argv[1:]])\n").await.unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
-        }
-        wrapper.to_string_lossy().into_owned()
+    let helper = if matches!(platform.as_str(), "simulator" | "ios-real") {
+        Some(xcodebuild::XcodebuildHelper::new(&artifacts).unwrap())
     } else {
-        "xcodebuild".into()
+        None
     };
+    let xcodebuild = helper
+        .as_ref()
+        .map(|helper| helper.command())
+        .unwrap_or_else(|| "xcodebuild".into());
     let agent_token = (platform == "ios-real").then(|| uuid::Uuid::new_v4().to_string());
     let simulator_agent = robot_ios_real::XCTestAgentBridge::new(agent_token.clone());
     let bind = if platform == "ios-real" {

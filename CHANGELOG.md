@@ -1,3 +1,16 @@
+## 0.1.22 — 2026-11-16
+
+* Preserve literal text, including YAML-sensitive strings, through Live recording,
+  inspector export and flow replay. Add recording contract checks to automation CI.
+* Organize QC features around Cubits, Dio and generated models, with typed JSON
+  boundaries and clearer dialog and Live state management.
+* Separate CLI parsing and startup, core contracts and driver routing, flow
+  validation and execution, and macOS native bindings. Preserve typed flow
+  failures through execution and cleanup, and remove platform build warnings.
+* Configure fixture downloads before disposable browser pages run. Expand
+  regression coverage for lost acknowledgements, invalid input, authentication,
+  frame authorization and concurrent report history.
+
 ## 0.1.21 — 2026-11-15
 
 * Add the Apache-2.0 license and package metadata. Include LICENSE and NOTICE

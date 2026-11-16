@@ -10,21 +10,12 @@ case "$PLATFORM" in
   ios-sim)
     # This runner owns this Simulator for the job. Stop its old cached agent
     # before booting a clean UI/recording session; do not erase app/user data.
-    python3 - <<'PY'
-import os, signal, subprocess
-device = os.environ['DEVICE_ID']
-for line in subprocess.check_output(['ps', '-ax', '-o', 'pid=,ppid=,command='], text=True).splitlines():
-    parts = line.strip().split(None, 2)
-    if len(parts) != 3:
-        continue
-    pid, parent, command = parts
-    if (parent == '1' and 'xcodebuild test-without-building' in command
-            and 'MobileMcpSimulatorRunner' in command and f'id={device}' in command):
-        try:
-            os.kill(int(pid), signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-PY
+    while read -r pid parent command; do
+      if [[ "$parent" == 1 && "$command" == *'xcodebuild test-without-building'* &&
+            "$command" == *MobileMcpSimulatorRunner* && "$command" == *"id=$DEVICE_ID"* ]]; then
+        kill -TERM "$pid" 2>/dev/null || true
+      fi
+    done < <(ps -ax -o pid=,ppid=,command=)
     state="$(xcrun simctl list devices --json | jq -er --arg id "$DEVICE_ID" \
       '.devices[][] | select(.udid==$id) | .state')"
     if [[ "$state" == Booted ]]; then xcrun simctl shutdown "$DEVICE_ID"; fi

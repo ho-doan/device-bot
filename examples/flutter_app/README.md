@@ -54,8 +54,8 @@ login, protected deep links, logout, reset navigation, unknown routes, and layou
 at phone/tablet/desktop sizes including large text and reduced motion.
 
 Example GitHub Actions and GitLab CI configurations are included for using this
-app as a standalone repository. They validate the app and run all shell scenarios
-in `automation_test/*.sh` with videos and JUnit, following `automation-test-mobile`.
+app as a standalone repository. They validate the app and run the nine
+`automation_test/it-0*.yaml` scenarios through Rust `robot-flow`, with videos and JUnit.
 See [CI setup, runner requirements and evidence](ci/README.md).
 
 For native Android/iOS execution, see the [integration test scenarios and commands](integration_test/README.md).

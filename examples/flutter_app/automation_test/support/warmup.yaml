@@ -1,0 +1,7 @@
+version: 2
+name: orbit_ci_warmup
+description: Start XCTest and inspect the cold fixture before screen recording.
+steps:
+  - select_device: "${device}"
+  - launch_app: {app_id: "${app_id}"}
+  - assert_element: {label: Welcome back., timeout_ms: 120000}

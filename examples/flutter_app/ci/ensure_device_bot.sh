@@ -39,7 +39,7 @@ else
     device_bot_installer="$(mktemp)"
     if ! curl --fail --silent --show-error --location --retry 3 \
       --proto '=https' --tlsv1.2 \
-      https://raw.githubusercontent.com/ho-doan/device-bot/b94571c090647acc5c57c9af4323b933f0866f23/scripts/install.sh \
+      https://raw.githubusercontent.com/ho-doan/device-bot/571cb2643998b2dc19503cafeefa18dd66dd5840/scripts/install.sh \
       --output "$device_bot_installer"; then
       rm -f "$device_bot_installer"
       exit 1

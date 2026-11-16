@@ -1,5 +1,6 @@
-# Standalone opt-in pilot. When including this file, retain the caller's stages
-# and add `mobile` to that list. Install robot-flow/device-bot on the native host.
+# Standalone targeted job for inclusion from the monorepo root. The app-root
+# .gitlab-ci.yml runs the full nine-case suite through ci/run_yaml.sh.
+# Retain the caller's stages and add `mobile`. Install matching native binaries.
 stages:
   - mobile
 
@@ -30,12 +31,12 @@ mobile:yaml:
     - command -v "$ROBOT_FLOW_BIN"
     - bash "$MOBILE_SETUP_SCRIPT" "$ORBIT_SCENARIO"
     - >-
-      "$ROBOT_FLOW_BIN" --profiles examples/flutter_app/automation_test/targets.yaml
+      "$ROBOT_FLOW_BIN" --profiles examples/flutter_app/automation_test/targets-semantics.yaml
       --target "$ORBIT_TARGET" --device "$DEVICE_ID" --app-id "$APP_ID"
       --confirm fixture_ready --artifacts artifacts/yaml
       "examples/flutter_app/automation_test/$ORBIT_SCENARIO"
   after_script:
-    - python3 examples/flutter_app/automation_test/support/ci_yaml_report.py artifacts/yaml
+    - bash examples/flutter_app/automation_test/support/ensure_yaml_report.sh artifacts/yaml
   artifacts:
     when: always
     expire_in: 14 days

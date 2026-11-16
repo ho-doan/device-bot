@@ -739,6 +739,16 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                     onPressed: _submitText,
                                     child: const Text('Send text'),
                                   ),
+                                  if (widget.platform == 'macos')
+                                    OutlinedButton.icon(
+                                      key: const Key('live-send-enter'),
+                                      onPressed: () => _send({
+                                        'action': 'type',
+                                        'text': '\n',
+                                      }),
+                                      icon: const Icon(Icons.keyboard_return),
+                                      label: const Text('Enter'),
+                                    ),
                                   if (widget.platform != 'ios')
                                     OutlinedButton(
                                       key: const Key('android-live-clear-text'),

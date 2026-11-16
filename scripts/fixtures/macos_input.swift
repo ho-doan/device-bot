@@ -41,6 +41,8 @@ class Delegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     input.placeholderString = "Notes input"
     input.setAccessibilityLabel("Notes input")
     input.delegate = self
+    input.target = self
+    input.action = #selector(submit)
     window.contentView!.addSubview(input)
     let button = NSButton(title: "Commit fixture", target: self, action: #selector(commit))
     button.frame = NSRect(x: 440, y: 315, width: 160, height: 40)
@@ -56,6 +58,8 @@ class Delegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     window.contentView!.addSubview(drag)
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
+    state["windowId"] = window.windowNumber
+    state["processId"] = ProcessInfo.processInfo.processIdentifier
     save()
   }
   func controlTextDidChange(_ obj: Notification) {
@@ -64,6 +68,10 @@ class Delegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
   }
   @objc func commit() {
     state["committed"] = true
+    save()
+  }
+  @objc func submit() {
+    state["returnCount"] = (state["returnCount"] as? Int ?? 0) + 1
     save()
   }
 }

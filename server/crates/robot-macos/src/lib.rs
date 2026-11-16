@@ -791,6 +791,13 @@ impl Robot for MacosRobot {
         let _guard = self.capture_lock.lock().await;
         if live::Target::parse(device_id)?.is_some() {
             let target = self.live_guard(device_id, &[]).await?;
+            // AXSelectedText inserts a newline into the value; it does not send
+            // the Return event that submits an editor (for example Chrome's URL bar).
+            if text == "\n" {
+                return self
+                    .apple_script("tell application \"System Events\" to key code 36", &[])
+                    .await;
+            }
             if text != "\u{1b}" && self.live_edit_text(target, text, false) {
                 return Ok(());
             }

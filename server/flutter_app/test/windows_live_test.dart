@@ -48,6 +48,41 @@ class _RenderedTestVideo extends _TestVideo {
 }
 
 void main() {
+  testWidgets('macOS Enter sends Return separately from literal text', (
+    tester,
+  ) async {
+    final inputs = <Map<String, dynamic>>[];
+    final updates = StreamController<AndroidLiveUpdate>.broadcast();
+    addTearDown(updates.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(splashFactory: InkRipple.splashFactory),
+        home: AndroidLiveDialog(
+          deviceName: 'Mac',
+          platform: 'macos',
+          connect: () => updates.stream,
+          openVideo: () async => _TestVideo({'originX': 0, 'originY': 0}),
+          onInput: (input) async => inputs.add(input),
+        ),
+      ),
+    );
+    await tester.pump();
+    final field = find.byKey(const Key('android-live-type'));
+    // Literal escape sequences remain literal text; Enter is a separate action.
+    await tester.enterText(field, r'\n');
+    await tester.tap(find.byKey(const Key('android-live-send-text')));
+    await tester.pump();
+    await tester.enterText(field, 'unsent draft');
+    await tester.tap(find.byKey(const Key('live-send-enter')));
+    await tester.pump();
+    expect(inputs, [
+      {'action': 'type', 'text': r'\n'},
+      {'action': 'type', 'text': '\n'},
+    ]);
+    expect(tester.widget<TextField>(field).controller!.text, 'unsent draft');
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('Windows inspection recovers without reopening healthy video', (
     tester,
   ) async {

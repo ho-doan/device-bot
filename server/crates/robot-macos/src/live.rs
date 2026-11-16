@@ -529,6 +529,65 @@ pub(super) fn scroll(_: Point, _: f64, _: f64) -> Result<(), RobotError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore = "requires disposable scripts/fixtures/macos_input.swift and Accessibility"]
+    async fn live_return_submits_focused_field_instead_of_inserting_a_newline() {
+        let path = std::env::var("DEVICE_BOT_MACOS_RETURN_TEST_STATE").unwrap();
+        let read_state =
+            || -> Value { serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap() };
+        let state = read_state();
+        let target = Target {
+            pid: state["processId"].as_i64().unwrap() as i32,
+            window: state["windowId"].as_u64().unwrap() as u32,
+        };
+        assert!(
+            native_listed_windows()
+                .unwrap()
+                .iter()
+                .any(|window| window.process_id == target.pid as u32
+                    && window.window_id == target.window.to_string()
+                    && window.title == "Device Bot Input Fixture")
+        );
+        let robot = MacosRobot::new(std::env::temp_dir());
+        let id = format!("macos:{}:{}", target.pid, target.window);
+        robot
+            .live_geometry
+            .lock()
+            .await
+            .insert(id.clone(), geometry(target).unwrap());
+        let field = robot
+            .list_elements(&id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|element| element.content_description.as_deref() == Some("Notes input"))
+            .expect("disposable fixture input");
+        robot
+            .tap(
+                &id,
+                Point {
+                    x: (field.bounds.left + field.bounds.right) as f64 / 2.,
+                    y: (field.bounds.top + field.bounds.bottom) as f64 / 2.,
+                },
+            )
+            .await
+            .unwrap();
+        robot.type_text(&id, "\n").await.unwrap();
+        for _ in 0..20 {
+            if read_state()["returnCount"].as_u64() == Some(1) {
+                assert_eq!(read_state()["text"], "");
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!(
+            "Return did not trigger the field's submit action: {}",
+            read_state()
+        );
+    }
+
     #[test]
     fn scoped_ids_require_unambiguous_positive_numeric_identity() {
         assert_eq!(

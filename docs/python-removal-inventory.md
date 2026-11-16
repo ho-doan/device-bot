@@ -88,8 +88,8 @@ Các hành động YAML chưa được schema hiện tại hỗ trợ như `asse
 ### Flutter example: chuyển CI sang YAML
 
 - CI GitHub/GitLab app-root hiện chạy `ci/validate.sh`, shell bootstrap/CI tests và `ci/run_yaml.sh`; không còn caller Python trong đường CI example.
-- Chín `it-01.yaml`..`it-09.yaml` là nguồn scenario; đã bỏ các shell scenario trùng cùng helper MCP/test cũ. Giữ shell build/install/cold-stop, Windows fixture lifecycle và JUnit fallback.
-- `automation_test/ci/mobile-yaml.gitlab-ci.yml` vẫn là include monorepo opt-in/manual chạy một case với external setup; after_script đã chuyển sang shell. CI chính chạy đủ chín case qua Rust runner.
+- Chín `it-01.yaml`..`it-09.yaml` là nguồn scenario; đã bỏ các shell scenario trùng cùng helper MCP/test cũ. Shell còn build/install/cold-stop và kiểm tra evidence CI; Windows fixture lifecycle và JUnit fallback do `robot-project` xử lý bằng Rust.
+- `automation_test/ci/mobile-yaml.gitlab-ci.yml` vẫn là include monorepo opt-in/manual chạy một case với external setup; after_script dùng `device-bot project ensure-report`. CI chính chạy đủ chín case qua Rust runner.
 - Profile mặc định của CI là `targets-semantics.yaml` cho fixture hiện tại. JSON/JUnit native giữ PASS/PARTIAL và limitations; wrapper kiểm report, ffprobe/full decode và QA_REVIEW PENDING. Report preflight/warmup không tính vào GitLab test results.
 - Rust tests và shell fixtures xác minh hợp đồng runner/CI, không chứng minh app/driver thật. Simulator có evidence YAML lịch sử; Android/Windows và physical iOS vẫn cần live verification đúng target/build.
 - Workflow dưới `examples/flutter_app/.github/workflows/` không được GitHub tự khám phá từ repository root; GitLab cần chọn/include config example. Đây là cấu hình dành cho khi example được dùng như project CI riêng.

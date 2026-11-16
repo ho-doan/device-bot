@@ -1,0 +1,16 @@
+version: 1
+kind: project
+name: orbit
+# Build/install/cold-stop is still external setup for these existing flows.
+# Use the CI wrapper until project resource setup covers the selected platform.
+flows:
+  - automation_test/it-01.yaml
+  - automation_test/it-02.yaml
+  - automation_test/it-03.yaml
+  - automation_test/it-04.yaml
+  - automation_test/it-05.yaml
+  - automation_test/it-06.yaml
+  - automation_test/it-07.yaml
+  - automation_test/it-08.yaml
+  - automation_test/it-09.yaml
+windows_fixture: '${env:APP_ID}'

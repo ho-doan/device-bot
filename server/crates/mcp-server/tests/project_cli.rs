@@ -127,3 +127,42 @@ fn project_stops_on_failed_flow_and_returns_nonzero() {
     assert!(!output.status.success());
     assert_eq!(reports(&project.0.join("artifacts")).len(), 1);
 }
+
+#[test]
+fn native_report_helper_runs_without_services_and_preserves_existing_report() {
+    let project = ProjectDir::new();
+    let output_dir = project.0.join("ci-error");
+    let report = output_dir.join("setup/junit.xml");
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_device-bot"))
+            .args(["project", "ensure-report"])
+            .arg(&output_dir)
+            .env("DEVICE_BOT_IOS_AGENT_BIND", "invalid-if-services-start")
+            .output()
+            .unwrap()
+    };
+    let output = run();
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        fs::read_to_string(&report)
+            .unwrap()
+            .contains("errors=\"1\"")
+    );
+    fs::write(&report, "preserved real report").unwrap();
+    assert!(run().status.success());
+    assert_eq!(fs::read_to_string(report).unwrap(), "preserved real report");
+}
+
+#[cfg(not(windows))]
+#[test]
+fn windows_fixture_rejects_non_windows_host_and_missing_state_stop_is_safe() {
+    let project = ProjectDir::new();
+    for (action, success) in [("start", false), ("stop", true)] {
+        let output = Command::new(env!("CARGO_BIN_EXE_device-bot"))
+            .args(["project", "windows-fixture", action, "missing-app.exe"])
+            .arg(project.0.join("state.json"))
+            .output()
+            .unwrap();
+        assert_eq!(output.status.success(), success, "{output:?}");
+    }
+}

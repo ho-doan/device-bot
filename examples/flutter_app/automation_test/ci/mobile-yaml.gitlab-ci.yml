@@ -36,7 +36,7 @@ mobile:yaml:
       --confirm fixture_ready --artifacts artifacts/yaml
       "examples/flutter_app/automation_test/$ORBIT_SCENARIO"
   after_script:
-    - bash examples/flutter_app/automation_test/support/ensure_yaml_report.sh artifacts/yaml
+    - '"${DEVICE_BOT_BIN:-device-bot}" project ensure-report artifacts/yaml'
   artifacts:
     when: always
     expire_in: 14 days

@@ -55,7 +55,7 @@ mobile:automation:
     - bash ci/prepare_app.sh 2>&1 | tee artifacts/build.log
     - bash ci/run_yaml.sh
   after_script:
-    - 'if [ "$CI_JOB_STATUS" != success ]; then bash automation_test/support/ensure_yaml_report.sh artifacts/yaml/job-error; fi'
+    - 'if [ "$CI_JOB_STATUS" != success ]; then "${DEVICE_BOT_BIN:-${DEVICE_BOT_INSTALL_DIR:-$HOME/.local/bin}/device-bot}" project ensure-report artifacts/yaml/job-error; fi'
   artifacts:
     when: always
     expire_in: 14 days
@@ -88,7 +88,7 @@ windows:automation:
   script:
     - bash ci/run_windows.sh
   after_script:
-    - bash -c 'if [ "$CI_JOB_STATUS" != success ]; then bash automation_test/support/ensure_yaml_report.sh artifacts/yaml/job-error; fi'
+    - bash -c 'if [ "$CI_JOB_STATUS" != success ]; then "${DEVICE_BOT_BIN:-${DEVICE_BOT_INSTALL_DIR:-$HOME/.local/bin}/device-bot}" project ensure-report artifacts/yaml/job-error; fi'
   artifacts:
     when: always
     expire_in: 14 days

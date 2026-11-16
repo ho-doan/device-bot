@@ -20,10 +20,12 @@ GitHub does not discover it automatically. When exporting the app, also copy
 Validation needs Flutter 3.41.3, Bash, jq, FFmpeg and ffprobe. The example CI path
 has no Python interpreter requirement. Native automation additionally needs a
 matching `device-bot` and `robot-flow` build with its runtime assets. The default
-mobile version is `0.1.24`; the bootstrap installer is pinned to a revision that
-ships the Rust runner. An explicit `DEVICE_BOT_BIN` is validated without being
-replaced. `ROBOT_FLOW_BIN` defaults to the executable beside that binary; the
-suite rejects mismatched binary versions before touching a device.
+mobile version is `0.1.24`; bootstrap also checks for the native `project
+ensure-report` capability. Until a release includes `robot-project`, set
+`DEVICE_BOT_BIN` to an updated build from this checkout, with its runtime assets.
+An explicit binary is validated without being replaced. `ROBOT_FLOW_BIN`
+defaults to the executable beside that binary; the suite rejects mismatched
+binary versions before touching a device.
 
 | Variable | Purpose |
 | --- | --- |
@@ -46,7 +48,8 @@ ADB, Java, Android SDK tooling and `APP_ID=com.example.flutter_app`.
 
 For GitHub, validation runs on hosted Ubuntu. Mobile automation needs labels
 `self-hosted`, `macOS`, `mobile-ios-sim` and the same native tools. Set Actions
-variables `DEVICE_ID` and `APP_ID`. Dispatch with `mobile_tests=true`, or set
+variables `DEVICE_ID`, `APP_ID` and, when using a local build, `DEVICE_BOT_BIN`.
+Dispatch with `mobile_tests=true`, or set
 `MOBILE_TESTS_ENABLED=true` for push runs. Pull requests run validation.
 
 Keep device runners assigned to trusted code. Resource groups and concurrency
@@ -68,8 +71,9 @@ set `ROBOT_FLOW_BIN`). The bootstrap validates this build without downloading a
 mobile release. Set `WINDOWS_TESTS_ENABLED=true` or dispatch the manual job.
 
 `ci/run_windows.sh` builds the fixture, sets its absolute `APP_ID`, then runs the
-same nine YAML cases. `support/windows.ps1` prepares a fresh fixture process for
-each case and closes only the PID/start-time/executable it created. Whole-desktop
+same nine YAML cases. `device-bot project windows-fixture start|stop` prepares a
+fresh fixture process for each case through Win32 and closes only the
+PID/start-time/executable it created. Whole-desktop
 recording belongs to the native driver; CI verifies its resulting MP4. Windows
 and Android YAML parity still require live runs on their respective hosts;
 process fixtures only validate CI behavior.
@@ -81,8 +85,10 @@ unrelated YAML and drafts. Each case gets `artifacts/yaml/it-0N/`, including the
 native `case-*/report.json`, JUnit, screenshots, MCP traces and video. CI checks
 report status, video stream, positive duration and full video decoding. Missing
 reports, invalid video or a nonzero runner exit fail the suite. Setup and CI
-validation failures get supplemental error JUnit, including when build/install
-fails before the suite starts. Preflight/warmup reports are diagnostic and are
+validation failures get supplemental error JUnit through `device-bot project
+ensure-report`, including when fixture build/install fails before the suite
+starts. This fallback requires a working device-bot binary. Preflight/warmup
+reports are diagnostic and are
 excluded from GitLab's published test results.
 
 `PARTIAL` and its limitations stay in native JSON/JUnit and in `QA_REVIEW.md`.
@@ -102,7 +108,13 @@ flutter test
 ```
 
 The shell tests exercise bootstrap and CI contracts without network or device
-access. MCP transport, timeout, cancellation and recording cleanup tests live in
+access. Native helper tests run with `cargo test --manifest-path
+server/Cargo.toml -p robot-project` and `cargo test --manifest-path
+server/Cargo.toml -p device-bot --test project_cli` from the monorepo root.
+`../project.yaml` lists the same nine flows for `device-bot run`; it still
+requires fixture build/install and per-case cold-stop preparation. The CI
+wrapper supplies those steps until project resources own their lifecycle.
+MCP transport, timeout, cancellation and recording cleanup tests live in
 `server/crates/robot-flow`; run `cargo test --manifest-path server/Cargo.toml -p
 robot-flow` from the monorepo root. Some existing Rust transport test fixtures
 still invoke Python; removal of those fixtures is separate from this example's

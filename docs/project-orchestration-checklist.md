@@ -41,13 +41,13 @@ Smoke chỉ xác minh orchestration/MCP, không được báo thành application
 - [x] Implement Windows fixture bằng Win32: kiểm executable, PID và creation
   time; chờ window/widget bridge; restore/foreground; close/kill đúng owner.
 - [x] Windows code qua compile/type check và Clippy cho Windows target.
-- [ ] Nối CI/wrapper sang `device-bot project ensure-report` và
+- [x] Nối CI/wrapper sang `device-bot project ensure-report` và
   `device-bot project windows-fixture start|stop`.
-- [ ] Xóa `automation_test/support/ensure_yaml_report.sh` và `windows.ps1`
+- [x] Xóa `automation_test/support/ensure_yaml_report.sh` và `windows.ps1`
   cùng toàn bộ caller còn dùng chúng.
-- [ ] Kiểm tra bootstrap yêu cầu đúng capability của bản device-bot đang dùng.
-- [ ] Test Rust reporter qua CLI thật; shell contract tests và CI config lint.
-- [ ] Cập nhật README/template project Flutter và commit phần thay helper.
+- [x] Kiểm tra bootstrap yêu cầu đúng capability của bản device-bot đang dùng.
+- [x] Test Rust reporter qua CLI thật; shell contract tests và CI config lint.
+- [x] Cập nhật README/template project Flutter và commit phần thay helper.
 - [ ] Live Windows verification cho window, bridge, cleanup và PID reuse.
 
 Không coi cross-compilation hoặc process mock là bằng chứng live Windows.
@@ -136,5 +136,5 @@ trong video.
 - [ ] Cập nhật checklist sau mỗi mốc; không đánh dấu hoàn tất từ scaffold,
   compile, mock pass hoặc một lần retry may mắn.
 
-Việc đang làm: hoàn tất migration caller/CI của mốc 2 và commit; sau đó tiến
-tới project session nhiều target ở mốc 3.
+Việc tiếp theo: project session nhiều target ở mốc 3. Windows helper đã qua
+cross-compilation và tests CLI trên macOS; live Windows vẫn cần host phù hợp.

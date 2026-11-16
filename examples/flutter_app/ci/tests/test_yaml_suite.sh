@@ -6,14 +6,25 @@ root="$(mktemp -d)"
 trap 'rm -rf "$root"' EXIT
 mkdir -p "$root/app/ci" "$root/app/automation_test/support" "$root/bin"
 cp "$app/ci/run_yaml.sh" "$root/app/ci/"
-cp "$app/automation_test/support/ensure_yaml_report.sh" "$root/app/automation_test/support/"
 cp "$app/automation_test/it-0"*.yaml "$root/app/automation_test/"
 # An unverified draft and an unrelated YAML must never enter the CI case list.
 touch "$root/app/automation_test/it-10.yaml.draft" "$root/app/automation_test/other.yaml"
 ffmpeg -v error -f lavfi -i color=size=16x16:rate=5 -t 0.4 -c:v mpeg4 "$root/video.mp4"
 cat > "$root/bin/device-bot" <<'SH'
 #!/bin/sh
-echo 0.1.24
+# Process fixture for wrapper control only. Rust tests cover reporter semantics.
+case "$1:$2" in
+  --version:*) echo 0.1.24 ;;
+  project:ensure-report)
+    mkdir -p "$3/setup"
+    echo '<testsuite tests="1" errors="1"/>' > "$3/setup/junit.xml"
+    ;;
+  project:windows-fixture)
+    echo "$*" >> "$TEST_ROOT/windows-calls"
+    case "${TEST_MODE:-}:$3" in windows_start_failure:start|windows_stop_failure:stop) exit 1;; esac
+    ;;
+  *) exit 2 ;;
+esac
 SH
 cat > "$root/bin/robot-flow" <<'SH'
 #!/usr/bin/env bash
@@ -69,14 +80,6 @@ cat > "$root/bin/cygpath" <<'SH'
 #!/bin/sh
 echo "$2"
 SH
-cat > "$root/bin/powershell.exe" <<'SH'
-#!/bin/sh
-echo "$*" >> "$TEST_ROOT/windows-calls"
-case "${TEST_MODE:-}:$*" in
-  windows_start_failure:*'-Action start'*) exit 1 ;;
-  windows_stop_failure:*'-Action stop'*) exit 1 ;;
-esac
-SH
 chmod +x "$root/bin/"*
 run_suite() {
   mode="$1"
@@ -114,20 +117,11 @@ expect_failure warmup_failure ios-sim
 expect_failure cancel
 [[ -f "$root/results/cancel/setup-error/setup/junit.xml" ]]
 run_suite windows windows
-[[ "$(grep -c -- '-Action start' "$root/windows-calls")" == 9 ]]
-[[ "$(grep -c -- '-Action stop' "$root/windows-calls")" == 9 ]]
+[[ "$(grep -c -- 'windows-fixture start' "$root/windows-calls")" == 9 ]]
+[[ "$(grep -c -- 'windows-fixture stop' "$root/windows-calls")" == 9 ]]
 for mode in windows_start_failure windows_stop_failure; do
   expect_failure "$mode" windows
   [[ -f "$root/results/$mode/setup-error/setup/junit.xml" ]]
 done
-# Nested dry-run and warmup reports cannot hide a missing case report.
-directory="$root/report-fallback"
-mkdir -p "$directory/preflight/case-1" "$directory/warmup/case-1"
-touch "$directory/preflight/case-1/junit.xml" "$directory/warmup/case-1/junit.xml"
-bash "$app/automation_test/support/ensure_yaml_report.sh" "$directory"
-[[ -f "$directory/setup/junit.xml" ]]
-mkdir -p "$root/existing-report/case-1"
-echo original > "$root/existing-report/case-1/junit.xml"
-bash "$app/automation_test/support/ensure_yaml_report.sh" "$root/existing-report"
-[[ ! -d "$root/existing-report/setup" ]]
+# Real report preservation/fallback contracts live in robot-project/tests.
 printf 'YAML CI contracts passed: case selection, reports, video errors, setup, cancellation and Windows lifecycle.\n'

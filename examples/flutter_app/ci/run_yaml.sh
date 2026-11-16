@@ -20,12 +20,10 @@ cleanup() {
   local status=$?
   trap - EXIT
   if [[ -n "$windows_state" ]]; then
-    powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
-      -File "$(cygpath -w automation_test/support/windows.ps1)" \
-      -Action stop -AppPath "$APP_ID" -StatePath "$windows_state" || { status=1; setup_in_progress=true; }
+    "${DEVICE_BOT_BIN:-device-bot}" project windows-fixture stop "$APP_ID" "$windows_state" || { status=1; setup_in_progress=true; }
   fi
   if ((status != 0)) && [[ "$setup_in_progress" == true ]]; then
-    bash automation_test/support/ensure_yaml_report.sh "$output/setup-error"
+    "${DEVICE_BOT_BIN:-device-bot}" project ensure-report "$output/setup-error"
   fi
   exit "$status"
 }
@@ -52,7 +50,7 @@ case "$PLATFORM" in
   android) command -v "${ANDROID_ADB_PATH:-adb}" >/dev/null ;;
   ios-sim) command -v "${XCRUN_PATH:-xcrun}" >/dev/null; unset SDKROOT ;;
   windows)
-    command -v powershell.exe >/dev/null
+    command -v cygpath >/dev/null
     export ORBIT_APP_PATH="$APP_ID"
     ;;
   *) printf 'Unsupported PLATFORM: %s\n' "$PLATFORM" >&2; exit 2 ;;
@@ -86,9 +84,7 @@ for scenario in "${scenarios[@]}"; do
       ;;
     windows)
       windows_state="$(cygpath -w "$directory/windows-fixture.json")"
-      powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
-        -File "$(cygpath -w automation_test/support/windows.ps1)" \
-        -Action start -AppPath "$APP_ID" -StatePath "$windows_state"
+      "$DEVICE_BOT_BIN" project windows-fixture start "$APP_ID" "$windows_state"
       ;;
   esac
   printf 'Running %s through robot-flow; QA review remains pending.\n' "$name"
@@ -120,21 +116,19 @@ for scenario in "${scenarios[@]}"; do
     ! ffmpeg -v error -xerror -i "${videos[0]}" -map 0:v:0 -f null - \
       > "$directory/video-decode.log" 2>&1; then
     case_status=1
-    bash automation_test/support/ensure_yaml_report.sh "$directory/video-error"
+    "$DEVICE_BOT_BIN" project ensure-report "$directory/video-error"
   fi
-  bash automation_test/support/ensure_yaml_report.sh "$directory"
+  "$DEVICE_BOT_BIN" project ensure-report "$directory"
   if ((case_status)); then
     suite_status=1
-    bash automation_test/support/ensure_yaml_report.sh "$directory/ci-error"
+    "$DEVICE_BOT_BIN" project ensure-report "$directory/ci-error"
     printf -- '- %s: ERROR (inspect runner/video logs)\n' "$name" >> "$output/QA_REVIEW.md"
   else
     jq -r --arg name "$name" '"- \($name): \(.status)", (.limitations[] | "  - Not covered: \(.)")' \
       "${reports[0]}" >> "$output/QA_REVIEW.md"
   fi
   if [[ -n "$windows_state" ]]; then
-    powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
-      -File "$(cygpath -w automation_test/support/windows.ps1)" \
-      -Action stop -AppPath "$APP_ID" -StatePath "$windows_state"
+    "$DEVICE_BOT_BIN" project windows-fixture stop "$APP_ID" "$windows_state"
     windows_state=''
   fi
   setup_in_progress=true

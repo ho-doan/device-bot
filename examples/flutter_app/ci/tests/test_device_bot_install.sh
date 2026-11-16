@@ -9,7 +9,7 @@ trap 'rm -rf "$root"' EXIT
 mkdir -p "$root/bin" "$root/install dir"
 cat > "$root/healthy" <<'SH'
 #!/bin/sh
-case "$1" in --version) echo 0.1.24;; --check-install) exit 0;; *) exit 9;; esac
+case "$1" in --version) echo 0.1.24;; --check-install) exit 0;; --help) echo 'device-bot project ensure-report';; *) exit 9;; esac
 SH
 chmod +x "$root/healthy"
 cat > "$root/bin/curl" <<'SH'
@@ -44,6 +44,11 @@ reset_fixture
 expect_success
 [[ -f "$root/downloaded" ]]
 reset_fixture
+sed 's/device-bot project ensure-report/old CLI without project support/' "$root/healthy" > "$root/install dir/device-bot"
+chmod +x "$root/install dir/device-bot"
+expect_success
+[[ -f "$root/downloaded" ]]
+reset_fixture
 sed 's/--check-install) exit 0/--check-install) exit 1/' "$root/healthy" > "$root/install dir/device-bot"
 chmod +x "$root/install dir/device-bot"
 expect_success
@@ -73,4 +78,4 @@ printf '#!/bin/sh\nwhile [ "$1" != --output ]; do shift; done\nshift\nprintf "ex
 expect_failure
 printf '#!/bin/sh\nwhile [ "$1" != --output ]; do shift; done\nshift\nprintf "exit 0\\n" > "$1"\n' > "$root/bin/curl"
 expect_failure
-printf 'Bootstrap: 11 checks passed (no network/device access).\n'
+printf 'Bootstrap: 12 checks passed (no network/device access).\n'

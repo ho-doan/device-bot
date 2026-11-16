@@ -9,6 +9,10 @@ case "$(uname -s)" in
     : "${DEVICE_BOT_BIN:?Set DEVICE_BOT_BIN to a Windows build with desktop recording}"
     "$DEVICE_BOT_BIN" --version
     "$DEVICE_BOT_BIN" --check-install
+    "$DEVICE_BOT_BIN" --help | grep -q 'project ensure-report' || {
+      echo "Use a device-bot build containing robot-project native helpers." >&2
+      exit 1
+    }
     return 0
     ;;
 esac
@@ -23,7 +27,8 @@ device_bot_ready() {
   if [[ -n "${DEVICE_BOT_VERSION:-}" && "$actual" != "${DEVICE_BOT_VERSION#v}" ]]; then
     return 1
   fi
-  "$DEVICE_BOT_BIN" --check-install
+  "$DEVICE_BOT_BIN" --check-install || return 1
+  "$DEVICE_BOT_BIN" --help | grep -q 'project ensure-report'
 }
 
 if [[ -n "${DEVICE_BOT_BIN:-}" ]]; then
@@ -53,7 +58,10 @@ else
     unset device_bot_installer
     # Use exactly the installed binary, even if another copy was found earlier.
     export DEVICE_BOT_BIN="$DEVICE_BOT_INSTALL_DIR/device-bot"
-    device_bot_ready
+    if ! device_bot_ready; then
+      echo "Installed release lacks the required robot-project helpers; set DEVICE_BOT_BIN to an updated build." >&2
+      exit 1
+    fi
   fi
 fi
 "$DEVICE_BOT_BIN" --version

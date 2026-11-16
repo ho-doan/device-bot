@@ -37,9 +37,15 @@ PLATFORM=ios-sim DEVICE_ID=<simulator-udid> APP_ID=com.example.flutter-myapp \
 ```
 
 The wrapper cold-stops/prepares the fixture before every case. Windows uses
-`ci/run_windows.sh` and `support/windows.ps1` for process setup/cleanup. Keep the
+`ci/run_windows.sh` and the Rust `device-bot project windows-fixture start|stop`
+helper for process setup/cleanup. `device-bot project ensure-report` supplies
+missing setup-error JUnit. Both former support helpers have been deleted; use
+a matching build that includes `robot-project` (see the CI guide). Keep the
 native desktop/device unlocked and avoid manual input during the run. Simulator
 IME checks require its software keyboard enabled.
+
+`../project.yaml` lists these flows for `device-bot run`. It does not yet replace
+the CI wrapper's platform-specific build/install/cold-stop preparation.
 
 For an individual case, including physical iOS, follow the external setup and
 `--confirm fixture_ready` contract in [the YAML client guide](../../../server/docs/yaml-mcp-client.md).

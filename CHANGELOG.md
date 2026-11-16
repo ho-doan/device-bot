@@ -1,3 +1,10 @@
+## 0.1.24 — 2026-11-16
+
+* Add an Enter button to macOS QC Live. Send a real Return key event for
+  standalone newline input so focused editors submit instead of inserting a newline.
+* Cover literal text preservation in QC and native Return submission with an
+  AppKit fixture regression test.
+
 ## 0.1.23 — 2026-11-16
 
 * Add opt-in Windows MSAA/IAccessible discovery for native queries and Live,

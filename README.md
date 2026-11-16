@@ -188,7 +188,7 @@ documents their schemas and platform limits.
 | iOS Simulator | Boot, app management, XCTest elements/input, screenshots, recording, Live | Xcode on a Mac and the bundled XCTest runner |
 | Physical iPhone | XCTest elements/input, app management, screenshots, USB or Wi-Fi Live | Paired iPhone, Developer Mode, signed helper, reachable Mac bridge; Wi-Fi sharing needs **Start Broadcast** |
 | macOS app/window | Accessibility elements, app launch, native input, screenshots, recording, Live | Accessibility and Screen Recording permissions for the relevant operations |
-| Windows app/window | UI Automation elements, app launch, input/drag, screenshots, Live | Interactive desktop with compatible elevation; app installation and screen-recording tools are not implemented |
+| Windows app/window | UI Automation elements, app launch, input/drag, screenshots, desktop recording, Live | Interactive desktop with compatible elevation; recording requires FFmpeg with gdigrab and libx264 and still needs live Windows verification. App installation is not implemented |
 | Chrome page | DOM elements, navigation, input, screenshots, recording, Live | Chrome with a DevTools session; QC **Start** can prepare a separate browser profile automatically |
 
 Browser-page automation uses the Chrome target (`chrome:…`). Launching a browser

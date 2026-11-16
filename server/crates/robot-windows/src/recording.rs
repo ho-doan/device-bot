@@ -121,6 +121,13 @@ impl DesktopRecorder {
         Ok(path.to_string_lossy().into_owned())
     }
 
+    pub async fn close(&mut self) -> Result<(), RobotError> {
+        if self.active.is_some() {
+            self.stop().await?;
+        }
+        Ok(())
+    }
+
     pub async fn stop(&mut self) -> Result<String, RobotError> {
         let Some(mut recording) = self.active.take() else {
             return Err(RobotError::InvalidInput(
@@ -214,6 +221,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn forked_sessions_own_and_finalize_only_their_recordings() {
+        use robot_core::Robot;
+        let (dir, executable) = fixture("for arg do target=$arg; done\necho frame=1\nread -r quit\n[ \"$quit\" = q ] || exit 1\nprintf video > \"$target\"").await;
+        let original = super::super::WindowsRobot::new(&dir);
+        let fork = original.fork_session().unwrap();
+        // Start directly at the process seam so this test runs on non-Windows hosts.
+        let other = super::super::WindowsRobot::new(&dir);
+        let first = original
+            .recording
+            .lock()
+            .await
+            .start(executable.to_str().unwrap(), &dir)
+            .await
+            .unwrap();
+        let second = other
+            .recording
+            .lock()
+            .await
+            .start(executable.to_str().unwrap(), &dir)
+            .await
+            .unwrap();
+        fork.close_session().await.unwrap();
+        assert!(!std::path::Path::new(&first).exists());
+        original.close_session().await.unwrap();
+        assert!(std::path::Path::new(&first).is_file());
+        assert!(!std::path::Path::new(&second).exists());
+        other.close_session().await.unwrap();
+        assert!(std::path::Path::new(&second).is_file());
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn startup_failure_is_reported_without_retaining_session() {
         let (dir, executable) = fixture("echo no-desktop >&2\nexit 1").await;
         let mut recorder = DesktopRecorder::default();
@@ -223,6 +262,27 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("no-desktop"));
         assert!(recorder.active.is_none());
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn close_propagates_finalization_failure_and_is_idempotent() {
+        let (dir, executable) =
+            fixture("echo frame=1\nread -r quit\necho encoder-failed >&2\nexit 1").await;
+        let mut recorder = DesktopRecorder::default();
+        recorder
+            .start(executable.to_str().unwrap(), &dir)
+            .await
+            .unwrap();
+        assert!(
+            recorder
+                .close()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("encoder-failed")
+        );
+        recorder.close().await.unwrap();
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 

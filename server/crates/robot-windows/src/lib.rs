@@ -638,7 +638,12 @@ impl Robot for WindowsRobot {
         session.active_process_id = Arc::default();
         session.active_window_id = Arc::default();
         session.live_geometry = Arc::default();
+        session.recording = Arc::default();
         Some(Arc::new(session))
+    }
+
+    async fn close_session(&self) -> Result<(), RobotError> {
+        self.recording.lock().await.close().await
     }
 
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
@@ -798,8 +803,10 @@ if ($null -eq $apps) {
 
     async fn start_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
         self.require_device(device_id)?;
-        let ffmpeg =
-            std::env::var("DEVICE_BOT_FFMPEG_PATH").unwrap_or_else(|_| "ffmpeg.exe".into());
+        let ffmpeg = live::resolve_ffmpeg(
+            std::env::var("DEVICE_BOT_FFMPEG_PATH").ok(),
+            std::env::current_exe().ok().as_deref(),
+        );
         self.recording
             .lock()
             .await

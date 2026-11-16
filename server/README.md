@@ -508,7 +508,7 @@ claim that macOS, Windows, Android, or iOS browser automation is supported.
 | iOS Simulator | boot, app install/uninstall/launch, screenshot, MP4 recording, tap, text, swipe, XCTest elements | Requires Xcode and the bundled XCTest runner to be buildable for the target app. Chrome UI flow still requires the Chrome DevTools robot. |
 | Real iOS device | CoreDevice discovery, install/uninstall, app launch, XCTest screenshot/input/swipe/elements, and QuickTime MP4 recording when the signed XCTest agent is reachable | Recording uses QuickTime's iPhone capture device and therefore requires the trusted iPhone to be connected by USB. A wireless device is discoverable, but its XCTest agent must bind to a LAN-reachable MCP host; the default loopback bind is not sufficient. |
 | macOS host | screenshot, MP4 recording, launch app, tap, text, accessibility elements | No installer/uninstaller or drag. Requires Screen Recording permission for recording and Accessibility permission for input. |
-| Windows host | screenshot, launch app, tap, text, drag, UIA accessibility elements, opt-in Flutter widget-tree discovery | No recording, installer/uninstaller, or OmniParser coordinate fallback. Requires an interactive Windows session; target and MCP process elevation/desktop session must be compatible. |
+| Windows host | screenshot, desktop MP4 recording, launch app, tap, text, drag, UIA accessibility elements, opt-in Flutter widget-tree discovery | Recording requires FFmpeg with gdigrab and libx264. No installer/uninstaller or OmniParser coordinate fallback. Requires an interactive Windows session; target and MCP process elevation/desktop session must be compatible. |
 | Chrome DevTools page | screenshot, MP4 recording, click, text, drag, DOM elements, navigate the attached page | It requires a reachable DevTools endpoint. |
 
 The compatibility methods named `open_url` still exist in several platform
@@ -756,7 +756,7 @@ The macOS and Windows drivers expose their local host only on their respective
 operating systems. `mobile_launch_app` opens an installed native application;
 Windows also supports drag gestures. macOS requires Accessibility permission
 for pointer/keyboard input. Neither desktop driver currently installs apps.
-Windows also lacks recording and the planned OmniParser coordinate fallback.
+Windows also lacks the planned OmniParser coordinate fallback.
 For native MSAA/`IAccessible` discovery without an embedded Flutter bridge, set
 `DEVICE_BOT_WINDOWS_ACCESSIBILITY=msaa` before starting the server. UIA remains
 the default. See the [Windows accessibility comparison guide](crates/robot-windows/README.md)

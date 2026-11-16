@@ -307,7 +307,10 @@ impl WindowsRobot {
     }
 }
 
-fn resolve_ffmpeg(override_path: Option<String>, executable: Option<&std::path::Path>) -> String {
+pub(super) fn resolve_ffmpeg(
+    override_path: Option<String>,
+    executable: Option<&std::path::Path>,
+) -> String {
     if let Some(path) = override_path.filter(|path| !path.trim().is_empty()) {
         return path;
     }

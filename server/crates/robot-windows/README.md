@@ -84,3 +84,18 @@ establish that the bridge can be removed.
 References: [AccessibleObjectFromWindow](https://learn.microsoft.com/en-us/windows/win32/api/oleacc/nf-oleacc-accessibleobjectfromwindow),
 [AccessibleChildren](https://learn.microsoft.com/en-us/windows/win32/api/oleacc/nf-oleacc-accessiblechildren),
 [MSAA state flags](https://learn.microsoft.com/en-us/windows/win32/winauto/object-state-constants).
+
+## Desktop recording
+
+Screen recording captures the visible Windows desktop independently of the
+selected app or Live window. FFmpeg must support `gdigrab` and `libx264`; the
+Windows bundle is discovered next to Device Bot, or set
+`DEVICE_BOT_FFMPEG_PATH` to an executable. An interactive desktop is required.
+Only visible content is recorded; hidden tabs or remote devices need a visible
+window or mirror. Start returns the intended output path after the first frame;
+stop finalizes the MP4 and returns the saved path. Session cleanup also stops
+and finalizes its own active recorder. A failed capture or finalization reports
+an error, and recordings belonging to other sessions are not stopped.
+
+Automated process tests do not establish actual Windows capture or playback;
+verify the resulting video on the Windows host.

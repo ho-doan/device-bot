@@ -1,4 +1,5 @@
 //! Project manifests and orchestration; flows still execute through robot-flow/MCP.
+pub mod plan;
 mod report;
 mod run;
 pub mod windows_fixture;
@@ -22,18 +23,34 @@ struct Manifest {
     name: String,
     #[serde(default)]
     env_file: Option<PathBuf>,
-    flows: Vec<PathBuf>,
+    flows: Vec<plan::FlowEntry>,
+    #[serde(default)]
+    hosts: Vec<plan::Host>,
+    #[serde(default)]
+    resources: Vec<plan::Resource>,
     #[serde(default)]
     windows_fixture: Option<String>,
 }
 
-#[derive(Debug)]
 pub struct Project {
     pub name: String,
     pub root: PathBuf,
     pub flows: Vec<PathBuf>,
+    pub plan: plan::ProjectPlan,
     environment: BTreeMap<String, String>,
     windows_fixture: Option<String>,
+}
+
+impl std::fmt::Debug for Project {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Project")
+            .field("name", &self.name)
+            .field("root", &self.root)
+            .field("flows", &self.flows)
+            .field("plan", &self.plan)
+            .field("environment", &"[redacted]")
+            .finish_non_exhaustive()
+    }
 }
 
 pub(crate) fn invalid(message: impl Into<String>) -> io::Error {
@@ -75,28 +92,13 @@ impl Project {
         } else {
             BTreeMap::new()
         };
-        let flows = model
-            .flows
-            .iter()
-            .map(|path| {
-                let path = root.join(path);
-                if !path.is_file()
-                    || path
-                        .extension()
-                        .is_none_or(|ext| ext != "yaml" && ext != "yml")
-                {
-                    return Err(invalid(format!(
-                        "project flow must be an existing YAML file: {}",
-                        path.display()
-                    )));
-                }
-                Ok(path)
-            })
-            .collect::<io::Result<Vec<_>>>()?;
+        let plan = plan::ProjectPlan::build(&root, model.hosts, model.resources, model.flows)?;
+        let flows = plan.flows.iter().map(|flow| flow.path.clone()).collect();
         Ok(Self {
             name: model.name,
             root,
             flows,
+            plan,
             environment,
             windows_fixture: model.windows_fixture,
         })
@@ -108,7 +110,7 @@ impl Project {
             .or_else(|| self.environment.get(key).cloned())
     }
 
-    pub(crate) fn resolve(&self, value: &str) -> io::Result<String> {
+    pub fn resolve(&self, value: &str) -> io::Result<String> {
         let mut resolved = String::new();
         let mut rest = value;
         while let Some((prefix, reference)) = rest.split_once("${env:") {

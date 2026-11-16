@@ -1,0 +1,337 @@
+//! Declarative project plan. This module validates configuration; it does not
+//! acquire resources or claim runtime capability.
+use crate::invalid;
+use serde::Deserialize;
+use std::{
+    collections::HashSet,
+    io,
+    path::{Path, PathBuf},
+};
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HostPlatform {
+    Macos,
+    Windows,
+    Linux,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HostBinding {
+    Local {},
+    Mcp { endpoint: String },
+}
+impl std::fmt::Debug for HostBinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local {} => f.write_str("Local"),
+            Self::Mcp { .. } => f.write_str("Mcp { endpoint: [redacted] }"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Host {
+    pub name: String,
+    pub platform: HostPlatform,
+    pub binding: HostBinding,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceKind {
+    Android,
+    IosSimulator,
+    IosReal,
+    Chrome,
+    Windows,
+    Macos,
+}
+
+/// How a resource on another execution host appears on a display host.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteDisplay {
+    Mirror,
+    RemoteDesktop,
+}
+
+/// Declares intent only; the project runtime must verify ownership and capability.
+#[derive(Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Preparation {
+    Attach {},
+    Launch {
+        #[serde(default)]
+        app_id: Option<String>,
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default)]
+        boot: bool,
+    },
+}
+impl std::fmt::Debug for Preparation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Attach {} => f.write_str("Attach"),
+            Self::Launch { .. } => f.write_str("Launch { values: [redacted] }"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Capability {
+    Discovery,
+    Launch,
+    Input,
+    Screenshot,
+    Elements,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DisplayBinding {
+    pub host: String,
+    #[serde(default)]
+    pub via: Option<RemoteDisplay>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Resource {
+    pub name: String,
+    pub kind: ResourceKind,
+    /// Host where the resource's MCP driver executes.
+    pub host: String,
+    /// Host displaying the resource; does not imply a recorder exists.
+    pub display: DisplayBinding,
+    /// Optional stable device/app selector interpreted by the future runtime.
+    #[serde(default)]
+    pub selector: Option<String>,
+    pub prepare: Preparation,
+    pub timeout_ms: u64,
+    #[serde(default)]
+    pub requires: Vec<Capability>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowBinding {
+    pub target: String,
+    #[serde(default)]
+    pub profile: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamedFlow {
+    pub path: PathBuf,
+    #[serde(default)]
+    pub profiles: Option<PathBuf>,
+    pub bindings: Vec<FlowBinding>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum FlowEntry {
+    Legacy(PathBuf),
+    Bound(NamedFlow),
+}
+
+#[derive(Clone, Debug)]
+pub struct PlannedFlow {
+    pub path: PathBuf,
+    pub profiles: Option<PathBuf>,
+    /// Empty only for a legacy flow; a bound entry always has bindings.
+    pub bindings: Vec<FlowBinding>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectPlan {
+    pub hosts: Vec<Host>,
+    pub resources: Vec<Resource>,
+    pub flows: Vec<PlannedFlow>,
+}
+
+impl ProjectPlan {
+    pub fn is_legacy(&self) -> bool {
+        self.hosts.is_empty()
+            && self.resources.is_empty()
+            && self.flows.iter().all(|f| f.bindings.is_empty())
+    }
+
+    pub(crate) fn build(
+        root: &Path,
+        hosts: Vec<Host>,
+        resources: Vec<Resource>,
+        entries: Vec<FlowEntry>,
+    ) -> io::Result<Self> {
+        let mut host_names = HashSet::new();
+        for host in &hosts {
+            name(&host.name, "host")?;
+            if !host_names.insert(host.name.as_str()) {
+                return Err(invalid("duplicate host name"));
+            }
+            if let HostBinding::Mcp { endpoint } = &host.binding {
+                if endpoint.trim().is_empty() {
+                    return Err(invalid("MCP endpoint cannot be empty"));
+                }
+            }
+        }
+        let mut resource_names = HashSet::new();
+        for resource in &resources {
+            name(&resource.name, "resource")?;
+            if !resource_names.insert(resource.name.as_str()) {
+                return Err(invalid("duplicate resource name"));
+            }
+            let host = hosts
+                .iter()
+                .find(|h| h.name == resource.host)
+                .ok_or_else(|| invalid("resource references unknown execution host"))?;
+            let display = hosts
+                .iter()
+                .find(|h| h.name == resource.display.host)
+                .ok_or_else(|| invalid("resource references unknown display host"))?;
+            if display.platform == HostPlatform::Linux {
+                return Err(invalid("Linux desktop display is not supported"));
+            }
+            if resource.host != resource.display.host && resource.display.via.is_none() {
+                return Err(invalid(
+                    "remote display requires an explicit mirror or remote_desktop",
+                ));
+            }
+            if resource.host == resource.display.host && resource.display.via.is_some() {
+                return Err(invalid(
+                    "local display cannot declare a remote display method",
+                ));
+            }
+            if matches!(
+                (resource.kind, host.platform),
+                (
+                    ResourceKind::IosSimulator | ResourceKind::IosReal | ResourceKind::Macos,
+                    HostPlatform::Windows | HostPlatform::Linux
+                ) | (
+                    ResourceKind::Windows,
+                    HostPlatform::Macos | HostPlatform::Linux
+                )
+            ) {
+                return Err(invalid(
+                    "resource kind is incompatible with execution host platform",
+                ));
+            }
+            if resource
+                .selector
+                .as_ref()
+                .is_some_and(|s| s.trim().is_empty())
+            {
+                return Err(invalid("resource selector cannot be empty"));
+            }
+            if resource.timeout_ms == 0 {
+                return Err(invalid("resource timeout_ms must be positive"));
+            }
+            let mut requirements = HashSet::new();
+            if resource
+                .requires
+                .iter()
+                .any(|capability| !requirements.insert(capability))
+            {
+                return Err(invalid("duplicate resource capability"));
+            }
+            if let Preparation::Launch { app_id, url, boot } = &resource.prepare {
+                let valid =
+                    |value: &Option<String>| value.as_ref().is_some_and(|s| !s.trim().is_empty());
+                if resource.kind == ResourceKind::Chrome {
+                    if !valid(url) || app_id.is_some() || *boot {
+                        return Err(invalid(
+                            "Chrome launch requires url and does not support app_id or boot",
+                        ));
+                    }
+                } else if !valid(app_id)
+                    || url.is_some()
+                    || (*boot
+                        && !matches!(
+                            resource.kind,
+                            ResourceKind::Android | ResourceKind::IosSimulator
+                        ))
+                {
+                    return Err(invalid(
+                        "native launch requires app_id; boot is only valid for Android or iOS Simulator",
+                    ));
+                }
+            }
+        }
+        let mut flows = Vec::new();
+        for entry in entries {
+            let (path, profiles, bindings) = match entry {
+                FlowEntry::Legacy(path) => (path, None, Vec::new()),
+                FlowEntry::Bound(flow) => {
+                    if flow.bindings.is_empty() {
+                        return Err(invalid("bound flow requires at least one binding"));
+                    }
+                    let mut targets = HashSet::new();
+                    for binding in &flow.bindings {
+                        name(&binding.target, "flow target")?;
+                        if !resource_names.contains(binding.target.as_str()) {
+                            return Err(invalid("flow references unknown target"));
+                        }
+                        if !targets.insert(binding.target.as_str()) {
+                            return Err(invalid("duplicate target binding in flow"));
+                        }
+                        if binding
+                            .profile
+                            .as_ref()
+                            .is_some_and(|p| p.trim().is_empty())
+                        {
+                            return Err(invalid("flow profile cannot be empty"));
+                        }
+                    }
+                    if flow
+                        .bindings
+                        .iter()
+                        .any(|binding| binding.profile.is_some())
+                        && flow.profiles.is_none()
+                    {
+                        return Err(invalid("flow profile requires a profiles file"));
+                    }
+                    let profiles = flow.profiles.map(|path| root.join(path));
+                    if profiles.as_ref().is_some_and(|path| !path.is_file()) {
+                        return Err(invalid("flow profiles file does not exist"));
+                    }
+                    (flow.path, profiles, flow.bindings)
+                }
+            };
+            let path = root.join(path);
+            if !path.is_file()
+                || path
+                    .extension()
+                    .is_none_or(|ext| ext != "yaml" && ext != "yml")
+            {
+                return Err(invalid(format!(
+                    "project flow must be an existing YAML file: {}",
+                    path.display()
+                )));
+            }
+            flows.push(PlannedFlow {
+                path,
+                profiles,
+                bindings,
+            });
+        }
+        Ok(Self {
+            hosts,
+            resources,
+            flows,
+        })
+    }
+}
+fn name(value: &str, kind: &str) -> io::Result<()> {
+    if value.trim().is_empty() || value.trim() != value {
+        return Err(invalid(format!(
+            "{kind} name must be nonempty and have no surrounding whitespace"
+        )));
+    }
+    Ok(())
+}

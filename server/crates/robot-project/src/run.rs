@@ -42,6 +42,11 @@ pub async fn run(
     server: &Path,
     reports: &Path,
 ) -> io::Result<i32> {
+    if !project.plan.is_legacy() {
+        return Err(crate::invalid(
+            "named project resource execution is not supported yet",
+        ));
+    }
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

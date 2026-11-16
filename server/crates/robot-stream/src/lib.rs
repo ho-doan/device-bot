@@ -107,7 +107,10 @@ impl StreamManager {
         );
         let (stop, mut stopped) = watch::channel(false);
         let (state_tx, mut state_rx) = watch::channel(RTCPeerConnectionState::New);
+        let id = uuid::Uuid::new_v4().to_string();
+        let state_log_id = id.clone();
         peer.on_peer_connection_state_change(Box::new(move |state| {
+            eprintln!("[video_stream] event=peer_state stream_id={state_log_id} state={state:?}");
             state_tx.send_replace(state);
             Box::pin(async {})
         }));
@@ -121,7 +124,6 @@ impl StreamManager {
         let peer_worker = peer.clone();
         let (source_tx, source_rx) = tokio::sync::oneshot::channel();
         let weak_sessions = Arc::downgrade(&self.sessions);
-        let id = uuid::Uuid::new_v4().to_string();
         let worker_id = id.clone();
         let worker_track = track.clone();
         let done = tokio::spawn(async move {
@@ -170,7 +172,11 @@ impl StreamManager {
             };
             tokio::select! {
                 _ = stopped.changed() => {},
-                result = pump => { if let Err(error) = result { eprintln!("{error}"); } },
+                result = pump => {
+                    if let Err(error) = result {
+                        eprintln!("[video_stream] event=worker_error stream_id={worker_id} error={error}");
+                    }
+                },
             }
             let _ = peer_worker.close().await;
             if let Some(sessions) = weak_sessions.upgrade() {

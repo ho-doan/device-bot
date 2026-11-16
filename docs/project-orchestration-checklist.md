@@ -6,12 +6,15 @@ Người viết automation khai báo project bằng YAML: env, target/actor, flo
 lifecycle tài nguyên. `device-bot run` thực thi bằng Rust runtime và MCP hiện có,
 không cần viết sh/py/rs riêng cho từng project.
 
-Hai scenario cần đạt:
+Các scenario cần đạt:
 
 1. QC mở Android, iOS, web và Windows, giữ cả bốn target hiển thị trên desktop
    macOS/Windows, chạy cùng một flow theo binding của từng target và ghi một
    video desktop xuyên suốt phiên.
-2. Hai account chat qua hai phiên Chrome độc lập; chạy login/search/tạo và nhận
+2. Flow kết hợp **Chrome + macOS** và **Chrome + Windows**: trong cùng một
+   flow/case, thao tác web, chuyển sang desktop native để xử lý popup/UI rồi
+   quay lại đúng tab/actor Chrome. Đây không phải hai lượt chạy flow độc lập.
+3. Hai account chat qua hai phiên Chrome độc lập; chạy login/search/tạo và nhận
    conversation, xử lý popup quyền bằng desktop native và thu video/log/network.
 
 ADR-0002 quy định ranh giới runtime và quyền sở hữu tài nguyên. File này theo
@@ -59,6 +62,8 @@ Không coi cross-compilation hoặc process mock là bằng chứng live Windows
 - [ ] Prepare/mở đủ target trước khi bắt đầu vòng chạy flow.
 - [ ] Giữ resource sống tới cuối project, không teardown sau từng flow/target.
 - [ ] Cùng một file flow chạy trên từng target qua profile/selector/recipe phù hợp.
+- [ ] Flow kết hợp Chrome + macOS và Chrome + Windows chạy trong cùng case/session;
+  đổi scope từng step mà không mất tab/actor, target đang chọn hoặc owner recording.
 - [ ] Điều phối foreground/input có ownership; các target không tranh chuột/phím.
 - [ ] Có timeout, cancellation và cleanup cho resource do project tạo; không
   đóng app/device/session của người dùng hoặc project khác.
@@ -112,6 +117,8 @@ trong video.
 ## Mốc 7 — Khép kín project mẫu và parity
 
 - [ ] Project mẫu bốn platform: env, bindings, shared flow, desktop recording.
+- [ ] Project mẫu flow kết hợp Chrome + macOS và Chrome + Windows, có bước native
+  thật và bước quay lại web trong cùng flow; kiểm chứng riêng từng host.
 - [ ] Project mẫu chat hai account: env, actors, permission, log và network.
 - [ ] Chạy lại qua `device-bot run`, không dùng orchestration đặc biệt chỉ có
   trong test hoặc một bộ sh/py thay thế.

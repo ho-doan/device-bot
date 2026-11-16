@@ -35,6 +35,12 @@ traversal. It falls back to the foreground process only when no app has been
 launched through the Windows robot. UIA remains unavailable across elevated or
 different desktop sessions.
 
+Windows also offers an explicit MSAA/`IAccessible` native backend through
+`DEVICE_BOT_WINDOWS_ACCESSIBILITY=msaa`. It reads semantic providers on the
+selected HWND and its same-process child windows, without a Flutter package.
+UIA remains the default; trees are not merged. MSAA supplies no invented resource
+IDs or Flutter widget classes. See the [comparison and release validation guide](../crates/robot-windows/README.md).
+
 The desktop drivers intentionally retain their platform-specific gaps: macOS
 supports screen recording while Windows does not; neither driver installs or
 uninstalls apps; and macOS does not expose drag/swipe through its current native

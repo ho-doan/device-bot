@@ -256,6 +256,15 @@ impl WindowsRobot {
         if max == Some(0) {
             return Ok(vec![]);
         }
+        if msaa::use_msaa(
+            std::env::var("DEVICE_BOT_WINDOWS_ACCESSIBILITY")
+                .ok()
+                .as_deref(),
+        )? {
+            return self
+                .msaa_elements(Some(target.pid), Some(target.hwnd), filter, max)
+                .await;
+        }
         // Validate ownership and traverse exactly this HWND, never the first
         // window found for a PID (one process may own several app windows).
         let script=build_uia_script(Some(target.pid),filter,max)

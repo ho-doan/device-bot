@@ -23,6 +23,7 @@ use tokio::{process::Command, sync::Mutex};
 
 mod flutter_bridge;
 mod live;
+mod msaa;
 mod recording;
 
 const DEVICE_ID: &str = "windows-host";
@@ -117,6 +118,15 @@ impl WindowsRobot {
         // UIA can query the selected process while QC remains foreground.
         let process_id = *self.active_process_id.lock().await;
         let window_id = *self.active_window_id.lock().await;
+        if msaa::use_msaa(
+            std::env::var("DEVICE_BOT_WINDOWS_ACCESSIBILITY")
+                .ok()
+                .as_deref(),
+        )? {
+            return self
+                .msaa_elements(process_id, window_id, filter, max_results)
+                .await;
+        }
         if let (Some(pid), Some(hwnd)) = (process_id, window_id) {
             return self
                 .live_elements(&format!("windows:{pid}:{hwnd}"), filter, max_results)
@@ -581,7 +591,10 @@ fn parse_uia_elements(output: &[u8]) -> Result<Vec<UiElement>, RobotError> {
                 focused: object.get("focused").and_then(Value::as_bool),
                 checked: object.get("checked").and_then(Value::as_bool),
                 selected: object.get("selected").and_then(Value::as_bool),
-                value: optional_string("value"),
+                value: object
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
                 element_type: None,
                 web_context: None,
             })
@@ -1188,6 +1201,17 @@ mod tests {
         let mut output = vec![0xef, 0xbb, 0xbf];
         output.extend_from_slice(br#"[]"#);
         assert!(parse_uia_elements(&output).unwrap().is_empty());
+    }
+
+    #[test]
+    fn native_payload_preserves_empty_editor_values_and_unknown_states() {
+        let elements = parse_uia_elements(br#"[{"className":"textField","left":-120,"top":20,"right":-20,"bottom":50,"value":"","focused":null,"checked":null,"selected":null}]"#).unwrap();
+        assert_eq!(elements[0].value.as_deref(), Some(""));
+        assert_eq!(elements[0].focused, None);
+        assert_eq!(elements[0].checked, None);
+        assert_eq!(elements[0].selected, None);
+        assert_eq!(elements[0].bounds.left, -120);
+        assert!(parse_uia_elements(br#"[{"className":"textField","left":0}]"#).is_err());
     }
 
     #[tokio::test]

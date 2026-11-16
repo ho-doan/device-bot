@@ -1,3 +1,12 @@
+## 0.1.23 — 2026-11-16
+
+* Add opt-in Windows MSAA/IAccessible discovery for native queries and Live,
+  selectable with `DEVICE_BOT_WINDOWS_ACCESSIBILITY=msaa`. Keep UIA as the default.
+* Add native-only accessibility snapshots and a release-app validation guide to
+  evaluate Flutter release automation without an embedded widget-tree bridge.
+* Preserve empty native editor values. Bound MSAA traversal, validate window
+  ownership, exclude hidden controls and withhold protected text.
+
 ## 0.1.22 — 2026-11-16
 
 * Preserve literal text, including YAML-sensitive strings, through Live recording,

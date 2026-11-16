@@ -755,7 +755,11 @@ operating systems. `mobile_launch_app` opens an installed native application;
 Windows also supports drag gestures. macOS requires Accessibility permission
 for pointer/keyboard input. Neither desktop driver currently installs apps.
 Windows also lacks recording and the planned OmniParser coordinate fallback.
-For Flutter Windows apps, call `await DeviceBotFlutter.start()` from
+For native MSAA/`IAccessible` discovery without an embedded Flutter bridge, set
+`DEVICE_BOT_WINDOWS_ACCESSIBILITY=msaa` before starting the server. UIA remains
+the default. See the [Windows accessibility comparison guide](crates/robot-windows/README.md)
+for native-only snapshots, release-app validation and limitations.
+For additional Flutter widget-tree discovery, call `await DeviceBotFlutter.start()` from
 [`packages/device_bot_flutter`](../packages/device_bot_flutter/README.md) before `runApp`.
 Native accessibility is queried first. The Flutter widget tree is consulted
 only when the selector has no native matches; ambiguity and native errors remain

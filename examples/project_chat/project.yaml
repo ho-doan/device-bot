@@ -1,0 +1,35 @@
+version: 1
+kind: project
+name: project-chat
+env_file: .env
+hosts:
+  - name: local
+    platform: macos
+    binding: {kind: local}
+resources:
+  - name: alice
+    kind: chrome
+    host: local
+    display: {host: local}
+    prepare: {kind: launch, url: '${env:CHAT_URL}'}
+    timeout_ms: 30000
+    requires: [input, elements]
+  - name: bob
+    kind: chrome
+    host: local
+    display: {host: local}
+    prepare: {kind: launch, url: '${env:CHAT_URL}'}
+    timeout_ms: 30000
+    requires: [input, elements]
+  - name: desktop
+    kind: macos
+    host: local
+    display: {host: local}
+    prepare: {kind: attach}
+    timeout_ms: 30000
+    requires: [input, elements]
+flows:
+  - path: chat.yaml
+    profiles: profiles.yaml
+    bindings:
+      - {target: alice, profile: chat}

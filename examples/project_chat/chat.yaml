@@ -1,0 +1,63 @@
+version: 2
+name: two-account-chat
+steps:
+  - id: alice-user
+    resource: alice
+    fill_field: {target: username, text_from_env: CHAT_ALICE_USER}
+  - id: alice-password
+    resource: alice
+    fill_field: {target: password, text_from_env: CHAT_ALICE_PASSWORD, sensitive: true}
+  - id: alice-login
+    resource: alice
+    tap_element: {label: Sign in}
+  - id: alice-ready
+    resource: alice
+    assert_element: {label: Signed in as alice}
+  - id: alice-search
+    resource: alice
+    fill_field: {target: search, text_from_env: CHAT_BOB_USER}
+  - id: alice-find
+    resource: alice
+    tap_element: {label: Search contacts}
+  - id: alice-open
+    resource: alice
+    tap_element: {label: Open conversation with bob}
+  - id: alice-message
+    resource: alice
+    fill_field: {target: message, text_from_env: CHAT_ALICE_MESSAGE}
+  - id: alice-send
+    resource: alice
+    tap_element: {label: Send message}
+  - id: bob-user
+    resource: bob
+    fill_field: {target: username, text_from_env: CHAT_BOB_USER}
+  - id: bob-password
+    resource: bob
+    fill_field: {target: password, text_from_env: CHAT_BOB_PASSWORD, sensitive: true}
+  - id: bob-login
+    resource: bob
+    tap_element: {label: Sign in}
+  - id: bob-ready
+    resource: bob
+    assert_element: {label: Signed in as bob}
+  - id: bob-search
+    resource: bob
+    fill_field: {target: search, text_from_env: CHAT_ALICE_USER}
+  - id: bob-find
+    resource: bob
+    tap_element: {label: Search contacts}
+  - id: bob-open
+    resource: bob
+    tap_element: {label: Open conversation with alice}
+  - id: bob-receives
+    resource: bob
+    assert_element: {label: 'alice: ${env:CHAT_ALICE_MESSAGE}'}
+  - id: bob-message
+    resource: bob
+    fill_field: {target: message, text_from_env: CHAT_BOB_MESSAGE}
+  - id: bob-send
+    resource: bob
+    tap_element: {label: Send message}
+  - id: alice-receives
+    resource: alice
+    assert_element: {label: 'bob: ${env:CHAT_BOB_MESSAGE}'}

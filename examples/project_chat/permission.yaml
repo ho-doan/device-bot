@@ -1,0 +1,12 @@
+version: 2
+name: native-notification-permission
+steps:
+  - id: request-permission
+    resource: alice
+    tap_element: {label: Enable notifications}
+  - id: allow-native
+    resource: desktop
+    tap_element: {label: Allow}
+  - id: verify-return-to-alice
+    resource: alice
+    assert_element: {label: 'Notification permission: granted'}

@@ -1,0 +1,8 @@
+version: 1
+selectors:
+  username: {resource_id: username}
+  password: {resource_id: password}
+  search: {resource_id: search}
+  message: {resource_id: message}
+targets:
+  chat: {}

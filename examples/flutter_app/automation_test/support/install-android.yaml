@@ -1,0 +1,10 @@
+version: 2
+name: orbit_install_android
+description: Install the staged APK on the selected Android device.
+steps:
+  - select_device: "${device}"
+  - call_tool:
+      name: mobile_install_app
+      arguments:
+        deviceId: "<selected>"
+        apkPath: "${env:ORBIT_APK}"

@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - 'server/**'
+      - 'examples/flutter_app/**'
       - 'packages/device_bot_flutter/**'
       - 'scripts/**'
       - '.github/actions/setup-release-flutter/**'
@@ -13,12 +14,18 @@ on:
   pull_request:
     paths:
       - 'server/**'
+      - 'examples/flutter_app/**'
       - 'packages/device_bot_flutter/**'
       - 'scripts/**'
       - '.github/actions/setup-release-flutter/**'
       - '.github/workflows/automation-tests.yml'
       - '.github/workflows/release.yml'
   workflow_dispatch:
+    inputs:
+      orbit_ios_live:
+        description: Run the example project on the configured iOS Simulator runner
+        type: boolean
+        default: false
   workflow_call:
 
 permissions:
@@ -28,7 +35,7 @@ jobs:
   web:
     name: Build QC web and test Flutter
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-release-flutter
@@ -54,6 +61,14 @@ jobs:
       - name: Test QC browser stream lifecycle
         working-directory: server/flutter_app
         run: flutter test --platform chrome test/browser/streaming_adapter_test.dart
+      - name: Test the example app
+        working-directory: examples/flutter_app
+        run: |
+          flutter pub get
+          flutter test
+      - name: Build the example Android APK
+        working-directory: examples/flutter_app
+        run: flutter build apk --debug
       - name: Build the web app under test
         working-directory: server/flutter_app
         run: flutter build web --release --base-href /qc/
@@ -69,6 +84,92 @@ jobs:
           path: artifacts/recording-contracts
           if-no-files-found: error
           retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: automation-orbit-apk
+          path: examples/flutter_app/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+
+  project-example:
+    name: Example project YAML validation
+    needs: web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ORBIT_APP_PATH: placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server -> target
+          shared-key: automation-project-example
+      - uses: actions/download-artifact@v4
+        with:
+          name: automation-orbit-apk
+          path: artifacts/orbit-apk
+      - name: Test project preparation and environment handling
+        run: cargo test --manifest-path server/Cargo.toml --locked -p robot-project --test fixture_flow --test projects
+      - name: Build project runner
+        run: cargo build --manifest-path server/Cargo.toml --locked -p device-bot -p robot-flow
+      - name: Validate preparation and all example flows for Android and iOS Simulator
+        run: |
+          server/target/debug/device-bot run examples/flutter_app --platform android --artifact "$GITHUB_WORKSPACE/artifacts/orbit-apk/app-debug.apk" --confirm fixture_ready --dry-run --artifacts "$RUNNER_TEMP/project-android"
+          server/target/debug/device-bot run examples/flutter_app --platform ios-sim --confirm fixture_ready --dry-run --artifacts "$RUNNER_TEMP/project-ios"
+  orbit-ios-live:
+    name: Example project / iOS Simulator UI
+    if: github.event_name == 'workflow_dispatch' && inputs.orbit_ios_live
+    runs-on: [self-hosted, macOS, mobile-ios-sim]
+    timeout-minutes: 150
+    concurrency:
+      group: device-bot-orbit-ios-simulator
+      cancel-in-progress: false
+    env:
+      PLATFORM: ios-sim
+      DEVICE_ID: ${{ vars.DEVICE_ID }}
+      APP_ID: com.example.flutter-myapp
+      ORBIT_APP_PATH: placeholder
+      DEVICE_BOT_FLUTTER_AUTOSTART: '0'
+      DEVICE_BOT_IOS_AGENT_BIND: '127.0.0.1:0'
+      DEVICE_BOT_IOS_SIM_AGENT_BIND: '127.0.0.1:19788'
+      DEVICE_BOT_FFMPEG_PATH: ${{ vars.DEVICE_BOT_FFMPEG_PATH }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the project runner
+        run: cargo build --manifest-path server/Cargo.toml --locked -p device-bot -p robot-flow
+      - name: Check the video encoder
+        shell: bash
+        run: |
+          if [[ -n "$DEVICE_BOT_FFMPEG_PATH" ]]; then
+            encoder="$DEVICE_BOT_FFMPEG_PATH"
+          elif [[ -x /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg ]]; then
+            encoder=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
+          elif [[ -x /usr/local/opt/ffmpeg-full/bin/ffmpeg ]]; then
+            encoder=/usr/local/opt/ffmpeg-full/bin/ffmpeg
+          else
+            encoder="$(command -v ffmpeg)"
+          fi
+          "$encoder" -hide_banner -filters | grep drawtext > /dev/null
+          "$(dirname "$encoder")/ffprobe" -version > /dev/null
+          echo "DEVICE_BOT_FFMPEG_PATH=$encoder" >> "$GITHUB_ENV"
+      - name: Build and install the example app
+        run: bash examples/flutter_app/ci/prepare_app.sh
+      - name: Prepare each fixture and run all project flows
+        run: >-
+          server/target/debug/device-bot run examples/flutter_app
+          --platform ios-sim --device "$DEVICE_ID" --confirm fixture_ready
+          --rpc-timeout 180 --case-timeout 600
+          --artifacts "$GITHUB_WORKSPACE/artifacts/orbit-project"
+      - name: Upload project evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-project-ios-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/orbit-project
+          if-no-files-found: warn
+          retention-days: 14
 
   e2e:
     name: QC web E2E / ${{ matrix.runner }}

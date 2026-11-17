@@ -45,7 +45,32 @@ native desktop/device unlocked and avoid manual input during the run. Simulator
 IME checks require its software keyboard enabled.
 
 `../project.yaml` lists these flows for `device-bot run`. It does not yet replace
-the CI wrapper's platform-specific build/install/cold-stop preparation.
+the CI wrapper's platform-specific build/install/cold-stop preparation. Its
+`before_each_flow` restarts the app and checks the login screen before each
+Android or Simulator case. This resets the example's in-memory session; it is
+not a general reset of persisted data or backend fixtures. On Windows the setup
+flow checks readiness and the project-owned fixture starts a new process.
+Validate the project and all nine cases without a device:
+
+```sh
+ORBIT_APP_PATH=placeholder server/target/debug/device-bot run examples/flutter_app \
+  --platform ios-sim --confirm fixture_ready --dry-run
+ORBIT_APP_PATH=placeholder server/target/debug/device-bot run examples/flutter_app \
+  --platform android --artifact /path/to/app-debug.apk --confirm fixture_ready --dry-run
+```
+
+For a live Android run, remove `--dry-run` and select an available device with
+`--device` when discovery is ambiguous. The project stages the APK and installs
+it once through MCP before the case setup flows. The runner and MCP server must
+share access to the staged file. A stopped emulator, Android Flutter bridge and
+platform prerequisites still need their existing setup.
+
+The repository's GitHub `QC automation tests` workflow validates this project
+on Android and Simulator profiles. The optional `orbit_ios_live` manual input
+runs it on a dedicated self-hosted `mobile-ios-sim` runner with `DEVICE_ID`
+configured and uploads project evidence. It builds and installs the example
+app first; it does not require the AstroTalk VPN or fixtures. The installed
+Flutter/Xcode/FFmpeg and interactive Simulator requirements still apply.
 
 For an individual case, including physical iOS, follow the external setup and
 `--confirm fixture_ready` contract in [the YAML client guide](../../../server/docs/yaml-mcp-client.md).

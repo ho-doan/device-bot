@@ -2,7 +2,18 @@ version: 1
 kind: project
 name: orbit
 # Build/install/cold-stop is still external setup for these existing flows.
-# Use the CI wrapper until project resource setup covers the selected platform.
+before_each_flow: automation_test/support/warmup.yaml
+platforms:
+  android:
+    profiles: automation_test/targets-semantics.yaml
+    prepare: {kind: artifact_file, path_env: ORBIT_APK, file_name: app.apk}
+    before_all_flow: automation_test/support/install-android.yaml
+    before_each_flow: automation_test/support/reset-mobile.yaml
+  ios-sim:
+    profiles: automation_test/targets-semantics.yaml
+    before_each_flow: automation_test/support/reset-mobile.yaml
+  windows:
+    profiles: automation_test/targets-semantics.yaml
 flows:
   - automation_test/it-01.yaml
   - automation_test/it-02.yaml

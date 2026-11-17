@@ -1,0 +1,13 @@
+version: 2
+name: orbit_reset_mobile
+description: Restart the in-memory demo fixture and verify the login screen.
+steps:
+  - select_device: "${device}"
+  - launch_app: {app_id: "${app_id}"}
+  - call_tool:
+      name: mobile_terminate_app
+      arguments:
+        deviceId: "<selected>"
+        appId: "${app_id}"
+  - launch_app: {app_id: "${app_id}"}
+  - assert_element: {label: Welcome back., timeout_ms: 120000}

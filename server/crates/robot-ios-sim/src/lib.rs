@@ -1099,6 +1099,34 @@ impl Robot for IosSimulatorRobot {
             .insert(device_id.into(), app_id.into());
         Ok(())
     }
+
+    async fn terminate_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
+        Self::valid_device_id(device_id)?;
+        if !app_id
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+            || !app_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+        {
+            return Err(RobotError::InvalidInput(
+                "invalid app bundle identifier".into(),
+            ));
+        }
+        self.simctl(&[
+            "simctl".into(),
+            "terminate".into(),
+            device_id.into(),
+            app_id.into(),
+        ])
+        .await?;
+        let mut active = self.active_apps.lock().await;
+        if active.get(device_id).is_some_and(|id| id == app_id) {
+            active.remove(device_id);
+        }
+        Ok(())
+    }
     async fn open_url(
         &self,
         device_id: &str,
@@ -1666,6 +1694,37 @@ mod tests {
         robot.boot_device("simulator-id").await.unwrap();
         let error = robot.boot_device("failed-id").await.unwrap_err();
         assert!(error.to_string().contains("boot failed"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn terminate_stops_only_the_named_app_and_rejects_invalid_ids() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "device-bot-simulator-terminate-{}-{}",
+            std::process::id(),
+            ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("xcrun");
+        std::fs::write(&script, "#!/bin/sh\n[ \"$1\" = simctl ] && [ \"$2\" = terminate ] && [ \"$3\" = simulator-id ] && [ \"$4\" = com.example.App ] || exit 7\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let robot = IosSimulatorRobot::new(script.to_string_lossy(), &dir);
+        robot
+            .active_apps
+            .lock()
+            .await
+            .insert("simulator-id".into(), "com.example.App".into());
+        robot
+            .terminate_app("simulator-id", "com.example.App")
+            .await
+            .unwrap();
+        assert!(robot.active_apps.lock().await.get("simulator-id").is_none());
+        assert!(matches!(
+            robot.terminate_app("simulator-id", "--bad").await,
+            Err(RobotError::InvalidInput(_))
+        ));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -79,6 +79,8 @@ Android Live offers **Kill app** (the foreground package) and **Kill all apps**
 force-stop, preserve app data and keep the live device connection open. These
 operations are also exposed as `mobile_terminate_app` and
 `mobile_terminate_all_apps`; `mobile_terminate_app` accepts an optional `appId`.
+On iOS Simulator, `mobile_terminate_app` also stops a running app by bundle ID;
+it reports an error if the app is not running and does not clear its data.
 
 For a standalone macOS QC build, unzip `device-bot-qc-v<VERSION>-aarch64-apple-darwin.zip`,
 move **Device Bot QC.app** to Applications, and open it. This package includes

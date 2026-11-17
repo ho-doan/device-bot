@@ -77,6 +77,130 @@ fn initialized_project_runs_via_real_cli_runner_and_mcp() {
 }
 
 #[test]
+fn project_flow_directory_runs_all_cases_via_cli() {
+    let project = ProjectDir::new();
+    let helper = serde_json::to_string(std::env::current_exe().unwrap().to_str().unwrap()).unwrap();
+    fs::write(
+        project.0.join("project.yaml"),
+        format!("version: 1\nkind: project\nname: directory\nenv_file: .env\nflows: [flows]\nplatforms:\n  web:\n    profiles: profiles.yaml\n    target: chrome\n    device: 'chrome:browser'\n    app_id: 'http://127.0.0.1:8080'\nbefore_each:\n  command: {helper}\n  args: [--exact, fixture_hook_child, --nocapture]\n"),
+    )
+    .unwrap();
+    fs::write(
+        project.0.join("profiles.yaml"),
+        "version: 1\ntargets:\n  chrome: {}\n",
+    )
+    .unwrap();
+    fs::write(
+        project.0.join("flows/second.yml"),
+        "version: 2\nname: second\nsteps:\n  - wait: {ms: 0}\n",
+    )
+    .unwrap();
+    let dry = project.run(
+        &[
+            "--platform",
+            "web",
+            "--artifact",
+            "https://example.test/app.zip?secret=redacted",
+            "--dry-run",
+        ],
+        None,
+    );
+    assert!(
+        dry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    assert!(!project.0.join("hook-cases.txt").exists());
+    let output = project.run(
+        &[
+            "--platform",
+            "web",
+            "--artifact",
+            "https://example.test/app.zip?secret=redacted",
+        ],
+        None,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("secret=redacted"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("secret=redacted"));
+    assert_eq!(
+        fs::read_to_string(project.0.join("hook-cases.txt")).unwrap(),
+        "second\nsmoke\n"
+    );
+    assert!(project.0.join("artifact-seen").is_file());
+    let paths = reports(&project.0.join("artifacts"));
+    assert_eq!(paths.len(), 4);
+    let mut live = 0;
+    for path in paths {
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        if report["dry_run"] == false {
+            assert_eq!(report["status"], "PASS");
+            live += 1;
+        }
+    }
+    assert_eq!(live, 2);
+}
+
+#[test]
+fn fixture_hook_child() {
+    use std::io::Write;
+    let Some(case) = std::env::var_os("DEVICE_BOT_CASE_NAME") else {
+        return;
+    };
+    assert_eq!(std::env::var("DEVICE_BOT_PLATFORM").unwrap(), "web");
+    if let Ok(artifact) = std::env::var("DEVICE_BOT_ARTIFACT") {
+        assert_eq!(artifact, "https://example.test/app.zip?secret=redacted");
+        fs::write("artifact-seen", "yes").unwrap();
+    }
+    assert!(Path::new(&std::env::var_os("DEVICE_BOT_CASE_PATH").unwrap()).is_file());
+    assert!(Path::new(&std::env::var_os("DEVICE_BOT_CASE_DIR").unwrap()).is_dir());
+    let mut output = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("hook-cases.txt")
+        .unwrap();
+    writeln!(output, "{}", case.to_string_lossy()).unwrap();
+    assert_ne!(
+        std::env::var("DEVICE_BOT_HOOK_FAIL").ok().as_deref(),
+        Some("true")
+    );
+}
+
+#[test]
+fn fixture_hook_failure_stops_suite_and_produces_junit() {
+    let project = ProjectDir::new();
+    let helper = serde_json::to_string(std::env::current_exe().unwrap().to_str().unwrap()).unwrap();
+    fs::write(
+        project.0.join("profiles.yaml"),
+        "version: 1\ntargets:\n  chrome: {}\n",
+    )
+    .unwrap();
+    fs::write(project.0.join("project.yaml"), format!("version: 1\nkind: project\nname: failure\nenv_file: .env\nflows: [flows]\nplatforms:\n  web: {{profiles: profiles.yaml, target: chrome}}\nbefore_each:\n  command: {helper}\n  args: [--exact, fixture_hook_child]\n")).unwrap();
+    let output = project.run(
+        &["--platform", "web"],
+        Some(("DEVICE_BOT_HOOK_FAIL", "true")),
+    );
+    assert!(!output.status.success());
+    assert_eq!(
+        fs::read_to_string(project.0.join("hook-cases.txt")).unwrap(),
+        "smoke\n"
+    );
+    assert!(reports(&project.0.join("artifacts")).is_empty());
+    fn junit(path: &Path) -> bool {
+        path.is_dir()
+            && fs::read_dir(path).unwrap().any(|entry| {
+                let path = entry.unwrap().path();
+                path.file_name().is_some_and(|name| name == "junit.xml") || junit(&path)
+            })
+    }
+    assert!(junit(&project.0.join("artifacts")));
+}
+
+#[test]
 fn project_env_is_read_and_process_values_override_it() {
     let project = ProjectDir::new();
     fs::write(

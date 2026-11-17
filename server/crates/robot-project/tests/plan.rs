@@ -54,6 +54,51 @@ flows:
 "#;
 
 #[test]
+fn flow_directory_expands_yaml_in_order_and_preserves_bindings() {
+    let temp = Temp::new();
+    fs::write(temp.0.join("flows/z.yml"), "version: 2\n").unwrap();
+    fs::write(temp.0.join("flows/a.yaml"), "version: 2\n").unwrap();
+    fs::write(temp.0.join("flows/ignored.txt"), "not a flow").unwrap();
+    fs::create_dir(temp.0.join("flows/nested")).unwrap();
+    fs::write(temp.0.join("flows/nested/ignored.yaml"), "version: 2\n").unwrap();
+
+    let project = temp
+        .load(&MANIFEST.replace("path: flows/smoke.yaml", "path: flows"))
+        .unwrap();
+    let names: Vec<_> = project
+        .plan
+        .flows
+        .iter()
+        .map(|f| f.path.file_name().unwrap().to_str().unwrap())
+        .collect();
+    assert_eq!(names, ["a.yaml", "smoke.yaml", "z.yml"]);
+    assert!(
+        project
+            .plan
+            .flows
+            .iter()
+            .all(|f| f.bindings.len() == 2
+                && f.profiles.as_ref().unwrap().ends_with("profiles.yaml"))
+    );
+
+    let legacy = temp
+        .load("version: 1\nkind: project\nname: demo\nflows: [flows]\n")
+        .unwrap();
+    assert!(legacy.plan.is_legacy());
+    assert_eq!(legacy.flows.len(), 3);
+}
+
+#[test]
+fn empty_flow_directory_is_an_error() {
+    let temp = Temp::new();
+    fs::create_dir(temp.0.join("empty")).unwrap();
+    let error = temp
+        .load("version: 1\nkind: project\nname: demo\nflows: [empty]\n")
+        .unwrap_err();
+    assert!(error.to_string().contains("contains no YAML files"));
+}
+
+#[test]
 fn plans_shared_flow_and_distinct_execution_display_hosts() {
     let temp = Temp::new();
     let project = temp.load(MANIFEST).unwrap();

@@ -1,0 +1,317 @@
+//! Platform-specific defaults for path-only project runs.
+use crate::{Project, invalid, plan::ProjectPlan};
+use serde::Deserialize;
+use std::{collections::BTreeMap, io};
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Platform {
+    profiles: String,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    device: Option<String>,
+    #[serde(default)]
+    app_id: Option<String>,
+}
+
+pub(crate) fn validate(
+    platforms: &BTreeMap<String, Platform>,
+    plan: &ProjectPlan,
+) -> io::Result<()> {
+    if !platforms.is_empty() && !plan.is_legacy() {
+        return Err(invalid(
+            "platform defaults currently require a path-only project",
+        ));
+    }
+    for (name, platform) in platforms {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+        {
+            return Err(invalid("invalid project platform name"));
+        }
+        if platform.profiles.trim().is_empty()
+            || platform
+                .target
+                .as_ref()
+                .is_some_and(|target| target.trim().is_empty())
+        {
+            return Err(invalid(
+                "project platform requires a profiles file and nonempty target",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Translate project-only platform selection into existing flow runner options.
+pub(crate) struct Selection {
+    pub(crate) arguments: Vec<String>,
+    pub(crate) platform: Option<String>,
+    pub(crate) artifact: Option<String>,
+}
+
+pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<Selection> {
+    let mut forwarded = Vec::with_capacity(arguments.len() + 8);
+    let mut selected = None;
+    let mut artifact = None;
+    let mut flags = Vec::new();
+    let mut i = 0;
+    while i < arguments.len() {
+        if arguments[i] == "--platform" {
+            let value = arguments
+                .get(i + 1)
+                .ok_or_else(|| invalid("--platform requires a value"))?;
+            if value.starts_with('-') || selected.replace(value.as_str()).is_some() {
+                return Err(invalid("specify exactly one project --platform"));
+            }
+            i += 2;
+        } else if arguments[i] == "--artifact" {
+            let value = arguments
+                .get(i + 1)
+                .ok_or_else(|| invalid("--artifact requires a value"))?;
+            if value.trim().is_empty()
+                || value.starts_with('-')
+                || artifact.replace(value.clone()).is_some()
+            {
+                return Err(invalid("specify exactly one nonempty project --artifact"));
+            }
+            i += 2;
+        } else {
+            forwarded.push(arguments[i].clone());
+            let takes_value = matches!(
+                arguments[i].as_str(),
+                "--profiles"
+                    | "--target"
+                    | "--device"
+                    | "--app-id"
+                    | "--server"
+                    | "--server-arg"
+                    | "--mcp-url"
+                    | "--artifacts"
+                    | "--confirm"
+                    | "--rpc-timeout"
+                    | "--case-timeout"
+            );
+            if takes_value {
+                flags.push(arguments[i].as_str());
+                let value = arguments
+                    .get(i + 1)
+                    .ok_or_else(|| invalid(format!("{} requires a value", arguments[i])))?;
+                forwarded.push(value.clone());
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+    }
+    if artifact.is_some() && project.before_each.is_none() {
+        return Err(invalid("--artifact requires a before_each handler"));
+    }
+    let Some(selected) = selected else {
+        if project.platforms.is_empty() {
+            return Ok(Selection {
+                arguments: forwarded,
+                platform: None,
+                artifact,
+            });
+        }
+        return Err(invalid("project requires --platform"));
+    };
+    let config = project
+        .platforms
+        .get(selected)
+        .ok_or_else(|| invalid("unknown project platform"))?;
+    if flags.contains(&"--profiles") || flags.contains(&"--target") {
+        return Err(invalid(
+            "--profiles and --target cannot override a project platform",
+        ));
+    }
+    let profile = project.root.join(project.resolve(&config.profiles)?);
+    if !profile.is_file() {
+        return Err(invalid(
+            "selected project platform profiles file does not exist",
+        ));
+    }
+    let profile = profile
+        .to_str()
+        .ok_or_else(|| invalid("platform profiles path is not UTF-8"))?;
+    forwarded.extend([
+        "--profiles".into(),
+        profile.into(),
+        "--target".into(),
+        config.target.as_deref().unwrap_or(selected).into(),
+    ]);
+    for (flag, default) in [("--device", &config.device), ("--app-id", &config.app_id)] {
+        if !flags.contains(&flag) {
+            if let Some(value) = default {
+                let value = project.resolve(value)?;
+                if value.trim().is_empty() {
+                    return Err(invalid(format!("project platform {flag} cannot be empty")));
+                }
+                forwarded.extend([flag.into(), value]);
+            }
+        }
+    }
+    Ok(Selection {
+        arguments: forwarded,
+        platform: Some(selected.to_owned()),
+        artifact,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    struct Fixture(std::path::PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let root =
+                std::env::temp_dir().join(format!("project-platform-{}", uuid::Uuid::new_v4()));
+            crate::init(&root).unwrap();
+            fs::write(root.join("profiles.yaml"), "version: 1\ntargets: {}\n").unwrap();
+            fs::write(
+                root.join(".env"),
+                "PROJECT_PLATFORM_APP=com.example.app\nPROJECT_PLATFORM_DEVICE=device-123\n",
+            )
+            .unwrap();
+            fs::write(
+                root.join("project.yaml"),
+                r#"version: 1
+kind: project
+name: example
+env_file: .env
+flows: [flows]
+platforms:
+  web:
+    profiles: profiles.yaml
+    target: chrome
+    device: '${env:PROJECT_PLATFORM_DEVICE}'
+    app_id: '${env:PROJECT_PLATFORM_APP}'
+"#,
+            )
+            .unwrap();
+            Self(root)
+        }
+        fn project(&self) -> Project {
+            Project::load(&self.0).unwrap()
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| (*s).into()).collect()
+    }
+
+    #[test]
+    fn selects_profile_and_resolves_scoped_defaults_without_global_mutation() {
+        let f = Fixture::new();
+        let project = f.project();
+        let actual = arguments(&project, &args(&["--platform", "web", "--dry-run"]))
+            .unwrap()
+            .arguments;
+        assert_eq!(
+            actual,
+            vec![
+                "--dry-run",
+                "--profiles",
+                project.root.join("profiles.yaml").to_str().unwrap(),
+                "--target",
+                "chrome",
+                "--device",
+                "device-123",
+                "--app-id",
+                "com.example.app"
+            ]
+        );
+        assert!(std::env::var_os("PROJECT_PLATFORM_DEVICE").is_none());
+    }
+
+    #[test]
+    fn explicit_device_and_app_override_defaults_and_option_values_are_not_flags() {
+        let f = Fixture::new();
+        let actual = arguments(
+            &f.project(),
+            &args(&[
+                "--platform",
+                "web",
+                "--device",
+                "chosen",
+                "--app-id",
+                "custom",
+                "--server-arg",
+                "--platform",
+            ]),
+        )
+        .unwrap()
+        .arguments;
+        assert_eq!(actual.iter().filter(|arg| *arg == "--device").count(), 1);
+        assert_eq!(actual.iter().filter(|arg| *arg == "--app-id").count(), 1);
+        assert!(
+            actual
+                .windows(2)
+                .any(|pair| pair == ["--server-arg", "--platform"])
+        );
+    }
+
+    #[test]
+    fn invalid_selection_conflicts_and_missing_profile_fail_early() {
+        let f = Fixture::new();
+        let project = f.project();
+        for values in [
+            vec![],
+            vec!["--platform"],
+            vec!["--platform", "unknown"],
+            vec!["--platform", "web", "--platform", "web"],
+            vec!["--platform", "web", "--target", "android"],
+        ] {
+            assert!(arguments(&project, &args(&values)).is_err(), "{values:?}");
+        }
+        fs::remove_file(f.0.join("profiles.yaml")).unwrap();
+        assert!(arguments(&project, &args(&["--platform", "web"])).is_err());
+    }
+
+    #[test]
+    fn artifact_is_passed_only_to_a_declared_handler() {
+        let f = Fixture::new();
+        let input = args(&[
+            "--platform",
+            "web",
+            "--artifact",
+            "https://example.test/file?token=secret",
+        ]);
+        assert!(arguments(&f.project(), &input).is_err());
+        let manifest = f.0.join("project.yaml");
+        let mut content = fs::read_to_string(&manifest).unwrap();
+        content.push_str("before_each: {command: prepare-app}\n");
+        fs::write(manifest, content).unwrap();
+        let selection = arguments(&f.project(), &input).unwrap();
+        assert_eq!(
+            selection.artifact.as_deref(),
+            Some("https://example.test/file?token=secret")
+        );
+        assert!(
+            !selection
+                .arguments
+                .iter()
+                .any(|arg| arg.contains("secret") || arg == "--artifact")
+        );
+        let duplicate = args(&[
+            "--platform",
+            "web",
+            "--artifact",
+            "file",
+            "--artifact",
+            "other",
+        ]);
+        assert!(arguments(&f.project(), &duplicate).is_err());
+    }
+}

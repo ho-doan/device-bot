@@ -370,22 +370,13 @@ impl ProjectPlan {
                     (flow.path, profiles, flow.bindings)
                 }
             };
-            let path = root.join(path);
-            if !path.is_file()
-                || path
-                    .extension()
-                    .is_none_or(|ext| ext != "yaml" && ext != "yml")
-            {
-                return Err(invalid(format!(
-                    "project flow must be an existing YAML file: {}",
-                    path.display()
-                )));
+            for path in flow_paths(&root.join(path))? {
+                flows.push(PlannedFlow {
+                    path,
+                    profiles: profiles.clone(),
+                    bindings: bindings.clone(),
+                });
             }
-            flows.push(PlannedFlow {
-                path,
-                profiles,
-                bindings,
-            });
         }
         Ok(Self {
             hosts,
@@ -394,6 +385,38 @@ impl ProjectPlan {
             flows,
         })
     }
+}
+
+/// A directory selects its immediate YAML files in deterministic order.
+fn flow_paths(path: &Path) -> io::Result<Vec<PathBuf>> {
+    let is_yaml = |path: &Path| {
+        path.extension()
+            .is_some_and(|ext| ext == "yaml" || ext == "yml")
+    };
+    if path.is_file() && is_yaml(path) {
+        return Ok(vec![path.to_owned()]);
+    }
+    if path.is_dir() {
+        let mut paths = Vec::new();
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() && is_yaml(&entry.path()) {
+                paths.push(entry.path());
+            }
+        }
+        paths.sort();
+        if !paths.is_empty() {
+            return Ok(paths);
+        }
+        return Err(invalid(format!(
+            "project flow directory contains no YAML files: {}",
+            path.display()
+        )));
+    }
+    Err(invalid(format!(
+        "project flow must be an existing YAML file or directory: {}",
+        path.display()
+    )))
 }
 fn name(value: &str, kind: &str) -> io::Result<()> {
     // Resource names become directory components, so enforce the same portable

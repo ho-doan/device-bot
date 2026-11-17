@@ -22,7 +22,7 @@ impl Drop for Fixture {
     }
 }
 
-async fn interrupted() {
+pub(crate) async fn interrupted() {
     #[cfg(unix)]
     {
         let mut terminate =
@@ -42,6 +42,8 @@ pub async fn run(
     server: &Path,
     reports: &Path,
 ) -> io::Result<i32> {
+    let selection = crate::platform::arguments(project, arguments)?;
+    let arguments = &selection.arguments;
     if !project.plan.is_legacy() {
         return run_named(project, arguments, server, reports).await;
     }
@@ -61,7 +63,7 @@ pub async fn run(
         .join(format!("run-{}-{stamp}", std::process::id()));
     fs::create_dir_all(&output)?;
     eprintln!("Project: {}\nEvidence: {}", project.name, output.display());
-    let result = run_flows(project, arguments, runner, server, reports, &output).await;
+    let result = run_flows(project, &selection, runner, server, reports, &output).await;
     if result.is_err() {
         ensure_report(&output.join("project-error"))?;
     }
@@ -70,12 +72,13 @@ pub async fn run(
 
 async fn run_flows(
     project: &Project,
-    arguments: &[String],
+    selection: &crate::platform::Selection,
     runner: &Path,
     server: &Path,
     reports: &Path,
     output: &Path,
 ) -> io::Result<i32> {
+    let arguments = &selection.arguments;
     let dry = arguments.iter().any(|arg| arg == "--dry-run");
     for (index, flow) in project.flows.iter().enumerate() {
         let directory = output.join(format!("case-{:03}", index + 1));
@@ -94,6 +97,23 @@ async fn run_flows(
         } else {
             None
         };
+        if !dry {
+            if let Some(hook) = &project.before_each {
+                if let Err(error) = hook
+                    .run(
+                        project,
+                        selection.platform.as_deref(),
+                        selection.artifact.as_deref(),
+                        flow,
+                        &directory,
+                    )
+                    .await
+                {
+                    ensure_report(&directory)?;
+                    return Err(error);
+                }
+            }
+        }
         let mut command = Command::new(runner);
         command
             .current_dir(&project.root)

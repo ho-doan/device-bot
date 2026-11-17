@@ -1,5 +1,7 @@
 //! Project manifests and orchestration; flows still execute through robot-flow/MCP.
+mod hook;
 pub mod plan;
+mod platform;
 mod recording;
 mod report;
 mod run;
@@ -36,6 +38,10 @@ struct Manifest {
     windows_fixture: Option<String>,
     #[serde(default)]
     recording: Option<recording::RecordingConfig>,
+    #[serde(default)]
+    platforms: BTreeMap<String, platform::Platform>,
+    #[serde(default)]
+    before_each: Option<hook::Hook>,
 }
 
 pub struct Project {
@@ -46,6 +52,8 @@ pub struct Project {
     pub(crate) recording: Option<recording::RecordingConfig>,
     environment: BTreeMap<String, String>,
     windows_fixture: Option<String>,
+    platforms: BTreeMap<String, platform::Platform>,
+    before_each: Option<hook::Hook>,
 }
 
 impl std::fmt::Debug for Project {
@@ -107,6 +115,10 @@ impl Project {
             model.actors,
             model.flows,
         )?;
+        platform::validate(&model.platforms, &plan)?;
+        if let Some(hook) = &model.before_each {
+            hook.validate(&plan)?;
+        }
         recording::validate_config(model.recording.as_ref(), &plan)?;
         let flows = plan.flows.iter().map(|flow| flow.path.clone()).collect();
         Ok(Self {
@@ -117,6 +129,8 @@ impl Project {
             recording: model.recording,
             environment,
             windows_fixture: model.windows_fixture,
+            platforms: model.platforms,
+            before_each: model.before_each,
         })
     }
 
@@ -172,6 +186,8 @@ pub fn invocation(arguments: &[String]) -> io::Result<Option<(Project, Vec<Strin
         "--confirm",
         "--rpc-timeout",
         "--case-timeout",
+        "--platform",
+        "--artifact",
     ];
     let mut paths = Vec::new();
     let mut i = 0;

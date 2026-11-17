@@ -39,6 +39,76 @@ Flows run sequentially and stop at the first failure. Each run gets a fresh
 runner get supplemental setup JUnit. Cancellation attempts flow cleanup before
 stopping a project-owned Windows fixture.
 
+A flow entry can also name a directory. The project selects its immediate
+`.yaml` and `.yml` files in filename order; subdirectories are not traversed.
+An empty directory is an error. Bound entries apply their profiles and bindings
+to each selected file. Directory selection does not reset application state
+between cases: prepare an independent fixture before each case as required.
+
+```yaml
+flows:
+  - flows/scenarios
+```
+
+Path-only projects can store flow profiles and target defaults under platform
+names, so the caller selects the target with one option:
+
+```yaml
+version: 1
+kind: project
+name: app-tests
+flows: [flows/scenarios]
+platforms:
+  web:
+    profiles: profiles/web.yaml
+    target: chrome
+    device: 'chrome:browser'
+    app_id: '${env:APP_URL}'
+  android:
+    profiles: profiles/native.yaml
+    device: '${env:ANDROID_DEVICE_ID}'
+    app_id: com.example.app
+```
+
+Run `device-bot run . --platform web`. `target` defaults to the platform
+name; `profiles` is relative to the project root. `device` and `app_id` are
+optional, support `${env:NAME}`, and can be overridden with `--device` and
+`--app-id`. `--profiles` and `--target` cannot override a selected platform.
+Each project with `platforms` requires `--platform`; named resource projects do
+not yet support platform defaults. These settings select an existing profile and
+target; they do not download an artifact, install an application or reset its
+state.
+
+Projects may declare a per-case fixture preparation command. This is useful when
+the application must be reset between cases, as launching it does not itself
+prove a reset. The command runs once before each live case; it is skipped during
+`--dry-run`. A failed, timed-out or interrupted preparation stops the suite and
+produces setup JUnit evidence. No shell is inserted and the executable receives
+each `args` entry as a separate argument. A project must contain trusted commands;
+the project runner does not sandbox them or guarantee cleanup of their children.
+
+```yaml
+before_each:
+  command: python3
+  args: [scripts/reset_fixture.py]
+  timeout_seconds: 180
+```
+
+The working directory is the project root. The command receives
+`DEVICE_BOT_CASE_NAME`, `DEVICE_BOT_CASE_PATH`, `DEVICE_BOT_CASE_DIR` and, when
+selected, `DEVICE_BOT_PLATFORM`, plus the project environment. Its arguments may
+use `${env:NAME}`. The command must perform and verify the application-specific
+reset; declaring this hook does not itself reset a device or test account. It is
+currently available only for path-only projects.
+
+`device-bot run . --platform web --artifact <file-or-link>` passes the supplied
+value to `before_each` as `DEVICE_BOT_ARTIFACT`. The option requires a hook so
+an artifact is never silently ignored. The hook is responsible for resolving
+relative paths, downloading links, validating the artifact and preparing the
+app; the project runner does not yet perform those actions. Protect URLs with
+credentials in the hook's output as well as in CI logs. A dry-run checks the
+configuration but neither invokes the hook nor validates the artifact.
+
 The same crate owns the native CI helpers:
 
 ```sh

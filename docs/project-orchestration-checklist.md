@@ -87,14 +87,25 @@ native trên macOS. Linux desktop/recording chỉ nhận khi driver thực sự 
 
 ## Mốc 4 — Recording desktop toàn phiên
 
-- [ ] Một recorder gắn với desktop host, độc lập việc flow chọn target nào.
-- [ ] Đặt thời điểm start trong lifecycle để hỗ trợ cả ghi phần mở app lẫn ghi
+- [x] Một recorder gắn với desktop host, độc lập việc flow chọn target nào.
+- [x] Đặt thời điểm start trong lifecycle để hỗ trợ cả ghi phần mở app lẫn ghi
   sau khi QC đã mở đủ target.
 - [ ] Record xuyên suốt Android/iOS/web/Windows và popup native.
-- [ ] Stop/finalize trong cleanup khi success, fail hoặc cancellation.
-- [ ] Kiểm video tồn tại, có stream/duration hợp lệ và decode được.
-- [ ] Gắn timestamp/step/target vào evidence để đối chiếu thao tác trong video.
+- [x] Stop/finalize trong cleanup khi success, fail hoặc cancellation.
+- [x] Kiểm video tồn tại, có stream/duration hợp lệ và decode được.
+- [x] Gắn timestamp/step/target vào evidence để đối chiếu thao tác trong video.
 - [ ] Live macOS/Windows verification và commit mốc.
+
+Bằng chứng phần Rust: `cargo test --manifest-path server/Cargo.toml -p robot-flow -p robot-project`
+và `cargo test --manifest-path server/Cargo.toml --locked -p device-bot` đạt. Test
+scope xác nhận một recorder chạy xuyên Chrome → native UI → Chrome; video validation
+kiểm stream, duration, decode và từ chối media sai. Live macOS attach-only project
+với flow `wait` tạo MP4 H.264 3456×2234, duration 4.533335 giây, dung lượng
+314573 bytes; `ffmpeg` decode thành công. Timeline có recording start, step started/
+passed và recording stop. Windows host không được cấu hình trong môi trường này,
+nên live Windows chưa xác minh. Test scope hiện là mock; layout/mirror Android,
+iOS, Windows và popup permission thật chưa được xác minh. Phần M4 đã commit theo
+slice, chưa đánh dấu hoàn tất milestone.
 
 Desktop recording chỉ ghi nội dung đang hiển thị. Muốn thấy đồng thời các
 target phải có layout/cửa sổ/mirror phù hợp; không coi tab ẩn là đã xuất hiện

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use device_mcp_protocol::{ToolDefinition, ToolResult};
 use robot_core::Robot;
@@ -37,13 +37,26 @@ pub(super) async fn start(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResu
     }
 }
 
-pub(super) async fn stop(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResult {
+pub(super) async fn stop(
+    robot: &Arc<dyn Robot>,
+    transfers: &super::recording_transfer::RecordingTransfers,
+    arguments: &Value,
+) -> ToolResult {
     let device_id = match required_string(arguments, "deviceId") {
         Ok(value) => value,
         Err(error) => return error,
     };
     match robot.stop_screen_recording(&device_id).await {
-        Ok(path) => ToolResult::text(format!("Screen recording saved: {path}")),
+        Ok(path) => match transfers.register(Path::new(&path)).await {
+            Ok(recording_id) => {
+                let mut result = ToolResult::text(format!("Screen recording saved: {path}"));
+                result.structured_content = Some(json!({"recordingId":recording_id}));
+                result
+            }
+            Err(error) => ToolResult::execution_error(format!(
+                "recording stopped but transfer registration failed: {error}"
+            )),
+        },
         Err(error) => ToolResult::execution_error(error.to_string()),
     }
 }

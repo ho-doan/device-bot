@@ -1806,6 +1806,7 @@ name = "robot-project"
 version = "0.1.24"
 dependencies = [
  "async-trait",
+ "base64",
  "dotenvy",
  "libc",
  "robot-flow",

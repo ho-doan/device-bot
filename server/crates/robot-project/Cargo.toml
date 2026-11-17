@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+base64 = "0.22.1"
 robot-flow = { path = "../robot-flow" }
 robot-report = { path = "../robot-report" }
 serde.workspace = true

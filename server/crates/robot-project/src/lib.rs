@@ -1,5 +1,6 @@
 //! Project manifests and orchestration; flows still execute through robot-flow/MCP.
 pub mod plan;
+mod recording;
 mod report;
 mod run;
 pub mod session;
@@ -31,6 +32,8 @@ struct Manifest {
     resources: Vec<plan::Resource>,
     #[serde(default)]
     windows_fixture: Option<String>,
+    #[serde(default)]
+    recording: Option<recording::RecordingConfig>,
 }
 
 pub struct Project {
@@ -38,6 +41,7 @@ pub struct Project {
     pub root: PathBuf,
     pub flows: Vec<PathBuf>,
     pub plan: plan::ProjectPlan,
+    pub(crate) recording: Option<recording::RecordingConfig>,
     environment: BTreeMap<String, String>,
     windows_fixture: Option<String>,
 }
@@ -49,6 +53,7 @@ impl std::fmt::Debug for Project {
             .field("root", &self.root)
             .field("flows", &self.flows)
             .field("plan", &self.plan)
+            .field("recording", &self.recording)
             .field("environment", &"[redacted]")
             .finish_non_exhaustive()
     }
@@ -94,12 +99,14 @@ impl Project {
             BTreeMap::new()
         };
         let plan = plan::ProjectPlan::build(&root, model.hosts, model.resources, model.flows)?;
+        recording::validate_config(model.recording.as_ref(), &plan)?;
         let flows = plan.flows.iter().map(|flow| flow.path.clone()).collect();
         Ok(Self {
             name: model.name,
             root,
             flows,
             plan,
+            recording: model.recording,
             environment,
             windows_fixture: model.windows_fixture,
         })

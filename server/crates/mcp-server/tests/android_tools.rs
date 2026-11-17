@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use async_trait::async_trait;
 use device_bot::Server;
@@ -16,6 +19,7 @@ struct RecordingRobot {
     running_apps: Mutex<Vec<RunningApp>>,
     windows: Mutex<Vec<AppWindow>>,
     selected: Mutex<Vec<String>>,
+    recording_files: Mutex<Vec<PathBuf>>,
     query_delay: std::time::Duration,
 }
 
@@ -119,7 +123,15 @@ impl Robot for RecordingRobot {
             .lock()
             .unwrap()
             .push(format!("record-stop:{device_id}"));
-        Ok(format!("artifacts/{device_id}.mp4"))
+        let path = std::env::temp_dir().join(format!(
+            "device-bot-recording-test-{}.mp4",
+            uuid::Uuid::new_v4()
+        ));
+        tokio::fs::write(&path, [1, 2, 3])
+            .await
+            .map_err(|error| RobotError::CommandFailed(error.to_string()))?;
+        self.recording_files.lock().unwrap().push(path.clone());
+        Ok(path.to_string_lossy().into_owned())
     }
 
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
@@ -527,6 +539,7 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
             "mobile_activate_app",
             "mobile_start_screen_recording",
             "mobile_stop_screen_recording",
+            "mobile_read_screen_recording_chunk",
             "mobile_start_stream",
             "mobile_stop_stream",
             "mobile_scroll",
@@ -875,12 +888,35 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
         .unwrap();
     assert_eq!(
         recording_stopped["result"]["content"][0]["text"],
-        "Screen recording saved: artifacts/emulator-5554.mp4"
+        format!(
+            "Screen recording saved: {}",
+            robot.recording_files.lock().unwrap()[0].display()
+        )
     );
+    let recording_id = recording_stopped["result"]["structuredContent"]["recordingId"]
+        .as_str()
+        .expect("finalized recording transfer ID");
+    let chunk = server
+        .handle(request(
+            15,
+            "tools/call",
+            json!({
+                "name": "mobile_read_screen_recording_chunk",
+                "arguments": { "recordingId": recording_id, "offset": 0 }
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(chunk["result"]["structuredContent"]["offset"], 0);
+    assert_eq!(chunk["result"]["structuredContent"]["size"], 3);
+    assert_eq!(chunk["result"]["structuredContent"]["data"], "AQID");
     assert_eq!(
         &robot.actions.lock().unwrap()[6..],
         ["record-start:emulator-5554", "record-stop:emulator-5554"]
     );
+    for path in robot.recording_files.lock().unwrap().drain(..) {
+        std::fs::remove_file(path).unwrap();
+    }
 }
 
 #[tokio::test]

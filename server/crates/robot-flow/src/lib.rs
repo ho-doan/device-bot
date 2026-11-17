@@ -6,7 +6,7 @@ pub mod schema;
 mod trace;
 mod video;
 pub mod video_validation;
-pub use runner::{FlowReport, FlowRunner};
+pub use runner::{FlowReport, FlowRunner, FlowStepEvent, FlowStepEventSink, FlowStepPhase};
 pub use schema::{FlowDocument, Profile, Profiles};
 
 pub mod http_mcp;

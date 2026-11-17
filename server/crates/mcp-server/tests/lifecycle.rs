@@ -136,7 +136,7 @@ async fn initialization_and_tools_list_follow_the_lifecycle() {
         .await
         .unwrap();
     let advertised = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(advertised.len(), 35);
+    assert_eq!(advertised.len(), 36);
     for name in [
         "mobile_start_stream",
         "mobile_stop_stream",
@@ -147,6 +147,7 @@ async fn initialization_and_tools_list_follow_the_lifecycle() {
         "mobile_start_observation",
         "mobile_poll_observation",
         "mobile_stop_observation",
+        "mobile_read_screen_recording_chunk",
         "project_validate",
         "project_start",
         "project_status",

@@ -11,6 +11,7 @@ mod navigation;
 mod observation;
 mod project;
 mod recording;
+mod recording_transfer;
 mod runner_status;
 mod screen;
 mod stream;
@@ -25,6 +26,7 @@ pub(crate) struct ToolRegistry {
     robot: Arc<dyn Robot>,
     streams: robot_stream::StreamManager,
     projects: project::Jobs,
+    recordings: recording_transfer::RecordingTransfers,
 }
 
 impl ToolRegistry {
@@ -33,6 +35,7 @@ impl ToolRegistry {
             robot,
             streams: robot_stream::StreamManager::default(),
             projects: project::Jobs::default(),
+            recordings: recording_transfer::RecordingTransfers::default(),
         }
     }
 
@@ -56,6 +59,7 @@ impl ToolRegistry {
         definitions.extend(app::definitions());
         definitions.extend(apps::definitions());
         definitions.extend(recording::definitions());
+        definitions.push(recording_transfer::definition());
         definitions.extend(stream::definitions());
         definitions.extend(screen::definitions());
         definitions.extend(observation::definitions());
@@ -86,7 +90,10 @@ impl ToolRegistry {
             device::CAPABILITIES_NAME => device::capabilities(&self.robot, &params.arguments).await,
             device::BOOT_NAME => device::boot(&self.robot, &params.arguments).await,
             recording::START_NAME => recording::start(&self.robot, &params.arguments).await,
-            recording::STOP_NAME => recording::stop(&self.robot, &params.arguments).await,
+            recording::STOP_NAME => {
+                recording::stop(&self.robot, &self.recordings, &params.arguments).await
+            }
+            recording_transfer::NAME => self.recordings.read(&params.arguments).await,
             app::LAUNCH_NAME => app::launch(&self.robot, &params.arguments).await,
             app::TERMINATE_NAME => app::terminate(&self.robot, &params.arguments).await,
             app::TERMINATE_ALL_NAME => app::terminate_all(&self.robot, &params.arguments).await,

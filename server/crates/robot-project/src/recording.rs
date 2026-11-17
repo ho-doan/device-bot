@@ -81,24 +81,39 @@ impl Recorder {
             events: Arc::new(StdMutex::new(Vec::new())),
         }))
     }
-    pub fn step_sink(
-        &self,
-        case: usize,
-        default_target: String,
-    ) -> Option<robot_flow::runner::FlowEventSink> {
-        let origin = self.origin?;
-        let events = Arc::clone(&self.events);
-        Some(Arc::new(move |event| {
-            let target = event.resource.as_deref().unwrap_or(&default_target);
-            events.lock().unwrap().push(json!({"offset_ms":origin.elapsed().as_millis(),"event":event.phase,"case":case,"step":event.step,"action":event.action,"resource":target}));
-        }))
-    }
     pub fn event(&mut self, event: &'static str, case: Option<usize>) {
         if let Some(origin) = self.origin {
             self.events.lock().unwrap().push(
                 json!({"offset_ms":origin.elapsed().as_millis(), "event":event, "case":case}),
             );
         }
+    }
+
+    pub fn step_sink(
+        &self,
+        case: usize,
+        default_target: String,
+    ) -> Option<robot_flow::FlowStepEventSink> {
+        let origin = self.origin?;
+        let events = Arc::clone(&self.events);
+        Some(Arc::new(move |event| {
+            let target = event
+                .resource
+                .as_deref()
+                .or(event.platform.as_deref())
+                .unwrap_or(&default_target);
+            events.lock().unwrap().push(json!({
+                "offset_ms": origin.elapsed().as_millis(),
+                "event": "step",
+                "phase": event.phase.as_str(),
+                "case": case,
+                "step": event.step_id,
+                "action": event.action,
+                "target": target,
+                "resource": event.resource,
+                "platform": event.platform,
+            }));
+        }))
     }
 }
 
@@ -345,9 +360,18 @@ mod tests {
         async fn request(&mut self, method: &str, args: Value) -> mcp::Result<Value> {
             match method {
                 "initialize" => Ok(json!({"protocolVersion":"2025-11-25"})),
-                "tools/list" => Ok(
-                    json!({"tools":["mobile_start_screen_recording","mobile_stop_screen_recording","mobile_read_screen_recording_chunk","mobile_get_capabilities"].iter().map(|name| json!({"name":name,"inputSchema":{"type":"object"}})).collect::<Vec<_>>()}),
-                ),
+                "tools/list" => {
+                    let tools = [
+                        "mobile_start_screen_recording",
+                        "mobile_stop_screen_recording",
+                        "mobile_read_screen_recording_chunk",
+                        "mobile_get_capabilities",
+                    ]
+                    .iter()
+                    .map(|name| json!({"name":name,"inputSchema":{"type":"object"}}))
+                    .collect::<Vec<_>>();
+                    Ok(json!({"tools":tools}))
+                }
                 "tools/call" => {
                     let name = args["name"].as_str().unwrap();
                     self.calls.lock().unwrap().push(name.into());
@@ -393,6 +417,74 @@ mod tests {
         let project = Project::load(&root).unwrap();
         (root, project)
     }
+
+    #[tokio::test]
+    async fn step_sink_records_elapsed_case_step_and_scoped_or_default_target() {
+        let (root, project) = fixture();
+        let recorder = Recorder::new(&root, &project);
+        let sink = {
+            let mut recorder = recorder.lock().await;
+            recorder.origin = Some(Instant::now() - Duration::from_millis(10));
+            recorder.step_sink(2, "browser".into()).unwrap()
+        };
+
+        for (step_id, resource, platform, phase) in [
+            (
+                "native-popup",
+                Some("desktop-ui"),
+                None,
+                robot_flow::FlowStepPhase::Started,
+            ),
+            (
+                "native-popup",
+                Some("desktop-ui"),
+                None,
+                robot_flow::FlowStepPhase::Passed,
+            ),
+            (
+                "browser-return",
+                None,
+                None,
+                robot_flow::FlowStepPhase::Started,
+            ),
+        ] {
+            sink(robot_flow::FlowStepEvent {
+                phase,
+                step_id: step_id.into(),
+                action: "tap".into(),
+                resource: resource.map(str::to_owned),
+                platform: platform.map(str::to_owned),
+            });
+        }
+        sink(robot_flow::FlowStepEvent {
+            phase: robot_flow::FlowStepPhase::Started,
+            step_id: "platform-target".into(),
+            action: "wait".into(),
+            resource: None,
+            platform: Some("windows".into()),
+        });
+
+        let recorder = recorder.lock().await;
+        let events = recorder.events.lock().unwrap();
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0]["event"], "step");
+        assert_eq!(events[0]["phase"], "started");
+        assert_eq!(events[0]["case"], 2);
+        assert_eq!(events[0]["step"], "native-popup");
+        assert_eq!(events[0]["action"], "tap");
+        assert_eq!(events[0]["target"], "desktop-ui");
+        assert_eq!(events[1]["phase"], "passed");
+        assert_eq!(events[0]["resource"], "desktop-ui");
+        assert_eq!(events[2]["target"], "browser");
+        assert_eq!(events[3]["target"], "windows");
+        assert_eq!(events[3]["platform"], "windows");
+        assert!(events.iter().all(|event| {
+            event["offset_ms"].as_u64().is_some()
+                && !event.as_object().unwrap().contains_key("arguments")
+        }));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[tokio::test]
     async fn recorder_finalizes_once_and_validates_real_transferred_video() {
         let (root, project) = fixture();
@@ -405,6 +497,25 @@ mod tests {
         prepare(&recorder, &project, &factory).await.unwrap();
         start(&recorder).await.unwrap();
         recorder.lock().await.event("case_started", Some(1));
+        let sink = recorder
+            .lock()
+            .await
+            .step_sink(1, "browser".into())
+            .unwrap();
+        sink(robot_flow::FlowStepEvent {
+            phase: robot_flow::FlowStepPhase::Started,
+            step_id: "open-home".into(),
+            action: "open_url".into(),
+            resource: Some("browser".into()),
+            platform: None,
+        });
+        sink(robot_flow::FlowStepEvent {
+            phase: robot_flow::FlowStepPhase::Passed,
+            step_id: "open-home".into(),
+            action: "open_url".into(),
+            resource: Some("browser".into()),
+            platform: None,
+        });
         finish(&recorder).await.unwrap();
         finish(&recorder).await.unwrap();
         let calls = calls.lock().unwrap();
@@ -427,11 +538,18 @@ mod tests {
             std::fs::read(root.join("project-video.mp4")).unwrap(),
             VIDEO
         );
-        assert!(
-            std::fs::read_to_string(root.join("project-timeline.json"))
-                .unwrap()
-                .contains("case_started")
-        );
+        let timeline: Value =
+            serde_json::from_slice(&std::fs::read(root.join("project-timeline.json")).unwrap())
+                .unwrap();
+        assert!(timeline["events"].as_array().unwrap().iter().any(|event| {
+            event["event"] == "step"
+                && event["phase"] == "passed"
+                && event["case"] == 1
+                && event["step"] == "open-home"
+                && event["action"] == "open_url"
+                && event["target"] == "browser"
+                && event["offset_ms"].as_u64().is_some()
+        }));
         std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]

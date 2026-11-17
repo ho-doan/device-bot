@@ -19,7 +19,9 @@ use artifacts::collect_secrets;
 pub use elements::filter_elements;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, fs, future::Future, path::PathBuf, pin::Pin, time::Duration};
+use std::{
+    collections::BTreeMap, fs, future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration,
+};
 use tokio::time::timeout;
 
 const QUERY: &str = "mobile_list_elements_on_screen";
@@ -52,6 +54,37 @@ pub struct FlowReport {
     pub error_kind: Option<String>,
 }
 
+/// Boundary event for one flow step. This intentionally excludes action
+/// arguments so callers can attach timing metadata without copying user input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FlowStepEvent {
+    pub phase: FlowStepPhase,
+    pub step_id: String,
+    pub action: String,
+    pub resource: Option<String>,
+    pub platform: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlowStepPhase {
+    Started,
+    Passed,
+    Failed,
+}
+
+impl FlowStepPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// Synchronous observer invoked at step execution boundaries.
+pub type FlowStepEventSink = Arc<dyn Fn(FlowStepEvent) + Send + Sync>;
+
 pub struct FlowRunner {
     client: Option<Box<dyn Mcp>>,
     tools: BTreeMap<String, Value>,
@@ -74,6 +107,7 @@ pub struct FlowRunner {
     active_note: Option<String>,
     video_overlay: Option<crate::video::VideoOverlay>,
     execution_snapshot: Option<Value>,
+    step_event_sink: Option<FlowStepEventSink>,
 }
 
 impl FlowRunner {
@@ -100,7 +134,13 @@ impl FlowRunner {
             active_note: None,
             video_overlay: None,
             execution_snapshot: None,
+            step_event_sink: None,
         }
+    }
+
+    /// Observe step boundaries without receiving input values or MCP payloads.
+    pub fn set_step_event_sink(&mut self, sink: FlowStepEventSink) {
+        self.step_event_sink = Some(sink);
     }
 
     /// Set stable resource names to normalized device objects for scoped steps.
@@ -280,6 +320,7 @@ impl FlowRunner {
                 let (action, args) = step.action.iter().next().unwrap();
                 self.active_step = Some((step.id.clone().unwrap_or_default(), action.clone()));
                 self.active_note = step.note.clone();
+                self.emit_step_event(step, action, FlowStepPhase::Started);
                 if self.recording && action != "stop_screen_recording" {
                     if let Some(overlay) = self.video_overlay.as_mut() {
                         overlay.mark(step.id.as_deref().unwrap_or(""), action, args);
@@ -321,6 +362,15 @@ impl FlowRunner {
                     .into(),
                     error: result.as_ref().err().map(|e| self.redact(&e.to_string())),
                 });
+                self.emit_step_event(
+                    step,
+                    action,
+                    if result.is_err() {
+                        FlowStepPhase::Failed
+                    } else {
+                        FlowStepPhase::Passed
+                    },
+                );
                 if result.is_ok() {
                     self.active_step = parent.clone();
                     self.active_note = parent_note.clone();
@@ -334,6 +384,18 @@ impl FlowRunner {
             }
             Ok(())
         })
+    }
+
+    fn emit_step_event(&self, step: &Step, action: &str, phase: FlowStepPhase) {
+        if let Some(sink) = &self.step_event_sink {
+            sink(FlowStepEvent {
+                phase,
+                step_id: step.id.clone().unwrap_or_default(),
+                action: action.to_owned(),
+                resource: step.resource.clone(),
+                platform: step.platform.clone(),
+            });
+        }
     }
 
     async fn call(&mut self, name: &str, args: Value) -> Result<Value> {

@@ -2,6 +2,7 @@
 use crate::{
     Project,
     plan::{Capability, Host, HostBinding, HostPlatform, Preparation, Resource, ResourceKind},
+    recording::{self, Recorder, SharedRecorder, StartPhase},
 };
 use async_trait::async_trait;
 use robot_flow::{
@@ -133,12 +134,23 @@ async fn close_owned(sessions: Shared) -> bool {
 
 // If a caller drops the project future, still schedule closure of its own
 // sessions. Owned stdio children also have kill_on_drop as a last resort.
-struct CleanupGuard(Option<Shared>);
+struct CleanupGuard {
+    sessions: Option<Shared>,
+    recorder: Option<SharedRecorder>,
+}
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
-        if let (Some(sessions), Ok(handle)) = (self.0.take(), tokio::runtime::Handle::try_current())
-        {
-            handle.spawn(close_owned(sessions));
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let sessions = self.sessions.take();
+            let recorder = self.recorder.take();
+            handle.spawn(async move {
+                if let Some(recorder) = recorder {
+                    let _ = recording::finish(&recorder).await;
+                }
+                if let Some(sessions) = sessions {
+                    close_owned(sessions).await;
+                }
+            });
         }
     }
 }
@@ -377,7 +389,14 @@ where
         }
     }
     let sessions: Shared = Arc::new(Mutex::new(BTreeMap::new()));
-    let mut cleanup = CleanupGuard(Some(Arc::clone(&sessions)));
+    let recorder = project
+        .recording
+        .as_ref()
+        .map(|_| Recorder::new(&directory.join("recording"), project));
+    let mut cleanup = CleanupGuard {
+        sessions: Some(Arc::clone(&sessions)),
+        recorder: recorder.clone(),
+    };
     let context = RunContext {
         project,
         factory,
@@ -386,16 +405,42 @@ where
         case_timeout,
         history_root,
     };
+    let execute = async {
+        if let Some(recorder) = &recorder {
+            recording::prepare(recorder, project, factory).await?;
+            if project
+                .recording
+                .as_ref()
+                .is_some_and(|config| config.start == StartPhase::BeforePrepare)
+            {
+                recording::start(recorder).await?;
+            }
+        }
+        run_owned(
+            context,
+            environment,
+            cases,
+            Arc::clone(&sessions),
+            recorder.clone(),
+        )
+        .await
+    };
     let result = tokio::select! {
-        result = run_owned(context, environment, cases, Arc::clone(&sessions)) => result,
+        result = execute => result,
         error = interrupt => Err(error),
     };
+    let recording_clean = if let Some(recorder) = cleanup.recorder.take() {
+        recording::finish(&recorder).await
+    } else {
+        Ok(())
+    };
     let clean = close_owned(Arc::clone(&sessions)).await;
-    cleanup.0 = None;
-    match (result, clean) {
-        (Err(error), _) => Err(error),
-        (Ok(_), false) => Err("project MCP cleanup failed".into()),
-        (Ok(result), true) => Ok(result),
+    cleanup.sessions = None;
+    match result {
+        Err(error) => Err(error),
+        Ok(_) if !clean => Err("project MCP cleanup failed".into()),
+        Ok(_) if recording_clean.is_err() => Err(recording_clean.unwrap_err()),
+        Ok(result) => Ok(result),
     }
 }
 
@@ -450,6 +495,7 @@ async fn run_owned(
     environment: BTreeMap<String, String>,
     cases: Vec<Case>,
     sessions: Shared,
+    recorder: Option<SharedRecorder>,
 ) -> mcp::Result<SessionResult> {
     let RunContext {
         project,
@@ -697,6 +743,13 @@ async fn run_owned(
             .await?;
         }
     }
+    if project
+        .recording
+        .as_ref()
+        .is_some_and(|config| config.start == StartPhase::AfterPrepare)
+    {
+        recording::start(recorder.as_ref().ok_or("recorder setup missing")?).await?;
+    }
     let mut reports = Vec::new();
     for (index, case) in cases.iter().enumerate() {
         let default = devices
@@ -715,6 +768,15 @@ async fn run_owned(
         runner.set_environment(environment.clone());
         runner.set_named_resources(devices.clone());
         runner.set_default_device(default);
+        if let Some(recorder) = &recorder {
+            if let Some(sink) = recorder
+                .lock()
+                .await
+                .step_sink(index + 1, case.target.clone())
+            {
+                runner.set_step_event_sink(sink);
+            }
+        }
         let mut report = runner
             .run(&case.flow, &case.profile, confirmed, case_timeout)
             .await;

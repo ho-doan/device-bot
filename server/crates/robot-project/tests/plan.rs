@@ -68,7 +68,10 @@ fn plans_shared_flow_and_distinct_execution_display_hosts() {
         .iter()
         .find(|host| host.name == windows_resource.host)
         .unwrap();
-    assert_eq!(windows_host.platform, robot_project::plan::HostPlatform::Windows);
+    assert_eq!(
+        windows_host.platform,
+        robot_project::plan::HostPlatform::Windows
+    );
     assert!(matches!(
         &windows_host.binding,
         robot_project::plan::HostBinding::Mcp { endpoint, .. }

@@ -82,12 +82,14 @@ impl JsonEnvironment {
             .as_object()
             .ok_or_else(|| invalid("project JSON environment must be an object"))?;
         for (key, value) in object {
+            let Some(value) = value.as_str() else {
+                continue;
+            };
             if self.prefixes.iter().any(|prefix| key.starts_with(prefix))
                 && key
                     .bytes()
                     .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
                 && std::env::var_os(key).is_none()
-                && let Some(value) = value.as_str()
             {
                 if value.contains('\0') {
                     return Err(invalid(

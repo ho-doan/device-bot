@@ -262,7 +262,7 @@ impl VideoOverlay {
                 "+faststart",
             ])
             .arg(&rendered_absolute);
-        if let Err(error) = output(command, 120).await {
+        if let Err(error) = output(command, render_timeout_seconds(duration)).await {
             let _ = fs::remove_file(&rendered);
             return Err(format!(
                 "video step overlay failed: {error}. Install FFmpeg with drawtext (macOS: brew install ffmpeg-full), or set DEVICE_BOT_FFMPEG_PATH. Original recording retained."
@@ -544,6 +544,12 @@ fn ffmpeg_path() -> PathBuf {
     "ffmpeg".into()
 }
 
+fn render_timeout_seconds(duration: f64) -> u64 {
+    // Encoding time grows with the recording length. Keep a bounded allowance
+    // for long, high-resolution recordings while retaining a finite deadline.
+    (120.0 + duration * 4.0).ceil().clamp(120.0, 1800.0) as u64
+}
+
 async fn output(mut command: Command, seconds: u64) -> Result<Vec<u8>, String> {
     command.stdin(Stdio::null()).kill_on_drop(true);
     let result = timeout(Duration::from_secs(seconds), command.output())
@@ -577,6 +583,13 @@ fn wrap(text: &str, columns: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn video_render_deadline_grows_with_duration_and_remains_bounded() {
+        assert_eq!(render_timeout_seconds(0.0), 120);
+        assert_eq!(render_timeout_seconds(109.0), 556);
+        assert_eq!(render_timeout_seconds(10_000.0), 1800);
+    }
     use serde_json::json;
 
     #[test]

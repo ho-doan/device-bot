@@ -35,7 +35,7 @@ jobs:
   web:
     name: Build QC web and test Flutter
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-release-flutter
@@ -61,14 +61,6 @@ jobs:
       - name: Test QC browser stream lifecycle
         working-directory: server/flutter_app
         run: flutter test --platform chrome test/browser/streaming_adapter_test.dart
-      - name: Test the example app
-        working-directory: examples/flutter_app
-        run: |
-          flutter pub get
-          flutter test
-      - name: Build the example Android APK
-        working-directory: examples/flutter_app
-        run: flutter build apk --debug
       - name: Build the web app under test
         working-directory: server/flutter_app
         run: flutter build web --release --base-href /qc/
@@ -84,6 +76,24 @@ jobs:
           path: artifacts/recording-contracts
           if-no-files-found: error
           retention-days: 7
+
+  example-app:
+    name: Build and test the example app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.3'
+          channel: stable
+          cache: true
+      - name: Test and build the example Android APK
+        working-directory: examples/flutter_app
+        run: |
+          flutter pub get
+          flutter test
+          flutter build apk --debug
       - uses: actions/upload-artifact@v4
         with:
           name: automation-orbit-apk
@@ -93,7 +103,7 @@ jobs:
 
   project-example:
     name: Example project YAML validation
-    needs: web
+    needs: example-app
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:

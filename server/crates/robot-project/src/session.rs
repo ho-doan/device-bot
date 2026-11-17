@@ -232,11 +232,24 @@ fn compile_cases(
                     .ok_or_else(|| format!("unknown project profile {name}"))?,
                 None => Profile::default(),
             };
+            let (case_target, resource_name) = match (&binding.target, &binding.actor) {
+                (Some(target), None) => (target.clone(), target.as_str()),
+                (None, Some(actor_name)) => {
+                    let actor = project
+                        .plan
+                        .actors
+                        .iter()
+                        .find(|actor| actor.name == *actor_name)
+                        .ok_or("unknown project actor")?;
+                    (actor.name.clone(), actor.resource.as_str())
+                }
+                _ => return Err("flow binding must specify exactly one of target or actor".into()),
+            };
             let resource = project
                 .plan
                 .resources
                 .iter()
-                .find(|resource| resource.name == binding.target)
+                .find(|resource| resource.name == resource_name)
                 .ok_or("unknown project target")?;
             if !profile.device.is_object() {
                 profile.device = json!({});
@@ -253,11 +266,25 @@ fn compile_cases(
             cases.push(Case {
                 flow: document.clone(),
                 profile,
-                target: binding.target.clone(),
+                target: case_target,
             });
         }
     }
     Ok(cases)
+}
+
+fn named_resource_devices(
+    project: &Project,
+    resources: &BTreeMap<String, Value>,
+) -> mcp::Result<BTreeMap<String, Value>> {
+    let mut named = resources.clone();
+    for actor in &project.plan.actors {
+        let device = resources
+            .get(&actor.resource)
+            .ok_or("actor Chrome resource is not prepared")?;
+        named.insert(actor.name.clone(), device.clone());
+    }
+    Ok(named)
 }
 
 fn sanitize_case_error(
@@ -596,10 +623,11 @@ async fn run_owned(
         }
     }
     let tools = common_tools.unwrap_or_default();
+    let named_devices = named_resource_devices(project, &devices)?;
     for case in &cases {
         let mut runner = FlowRunner::new(None, directory.to_owned());
         runner.set_environment(environment.clone());
-        runner.set_named_resources(devices.clone());
+        runner.set_named_resources(named_devices.clone());
         runner
             .preflight_case(&case.flow, &case.profile, tools.clone())
             .map_err(|error| sanitize_case_error(error, &case.flow, &case.profile, &environment))?;
@@ -743,6 +771,7 @@ async fn run_owned(
             .await?;
         }
     }
+    let named_devices = named_resource_devices(project, &devices)?;
     if project
         .recording
         .as_ref()
@@ -752,7 +781,7 @@ async fn run_owned(
     }
     let mut reports = Vec::new();
     for (index, case) in cases.iter().enumerate() {
-        let default = devices
+        let default = named_devices
             .get(&case.target)
             .ok_or("project target is not prepared")?
             .clone();
@@ -766,7 +795,7 @@ async fn run_owned(
             directory.join(format!("case-{:03}", index + 1)),
         );
         runner.set_environment(environment.clone());
-        runner.set_named_resources(devices.clone());
+        runner.set_named_resources(named_devices.clone());
         runner.set_default_device(default);
         if let Some(recorder) = &recorder {
             if let Some(sink) = recorder

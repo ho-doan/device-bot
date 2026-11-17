@@ -7,14 +7,14 @@ hosts:
     platform: macos
     binding: {kind: local}
 resources:
-  - name: alice
+  - name: chrome-alice
     kind: chrome
     host: local
     display: {host: local}
     prepare: {kind: launch, url: '${env:CHAT_URL}'}
     timeout_ms: 30000
     requires: [input, elements]
-  - name: bob
+  - name: chrome-bob
     kind: chrome
     host: local
     display: {host: local}
@@ -28,8 +28,11 @@ resources:
     prepare: {kind: attach}
     timeout_ms: 30000
     requires: [input, elements]
+actors:
+  - {name: alice, resource: chrome-alice}
+  - {name: bob, resource: chrome-bob}
 flows:
-  - path: chat.yaml
+  - path: account1.yaml
     profiles: profiles.yaml
     bindings:
-      - {target: alice, profile: chat}
+      - {actor: alice, profile: chat}

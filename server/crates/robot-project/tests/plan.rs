@@ -129,6 +129,110 @@ flows:
 }
 
 #[test]
+fn named_actors_resolve_to_distinct_launched_chrome_resources() {
+    let temp = Temp::new();
+    fs::create_dir_all(temp.0.join("flows")).unwrap();
+    fs::write(
+        temp.0.join("flows/smoke.yaml"),
+        "version: 2\nname: actors\nsteps:\n  - tap: {x: 1, y: 2}\n",
+    )
+    .unwrap();
+    let manifest = r#"version: 1
+kind: project
+name: actor-project
+hosts:
+  - {name: desktop, platform: macos, binding: {kind: local}}
+resources:
+  - {name: chrome-alice, kind: chrome, host: desktop, display: {host: desktop}, prepare: {kind: launch, url: 'https://example.test/alice'}, timeout_ms: 5000}
+  - {name: chrome-bob, kind: chrome, host: desktop, display: {host: desktop}, prepare: {kind: launch, url: 'https://example.test/bob'}, timeout_ms: 5000}
+actors:
+  - {name: alice, resource: chrome-alice}
+  - {name: bob, resource: chrome-bob}
+flows:
+  - path: flows/smoke.yaml
+    bindings: [{target: chrome-alice}, {target: chrome-bob}]
+"#;
+
+    let project = temp.load(manifest).unwrap();
+    assert_eq!(project.plan.actors.len(), 2);
+    assert_eq!(project.plan.actors[0].name, "alice");
+    assert_eq!(project.plan.actors[0].resource, "chrome-alice");
+    assert_eq!(project.plan.actors[1].name, "bob");
+    assert_eq!(project.plan.actors[1].resource, "chrome-bob");
+    assert_ne!(
+        project.plan.actors[0].resource,
+        project.plan.actors[1].resource
+    );
+}
+
+#[test]
+fn rejects_actor_resource_sharing_unknown_resources_and_non_isolated_contexts() {
+    let temp = Temp::new();
+    fs::create_dir_all(temp.0.join("flows")).unwrap();
+    fs::write(
+        temp.0.join("flows/smoke.yaml"),
+        "version: 2\nname: actors\nsteps:\n  - tap: {x: 1, y: 2}\n",
+    )
+    .unwrap();
+    let manifest = r#"version: 1
+kind: project
+name: actor-project
+hosts:
+  - {name: desktop, platform: macos, binding: {kind: local}}
+resources:
+  - {name: chrome-alice, kind: chrome, host: desktop, display: {host: desktop}, prepare: {kind: launch, url: 'https://example.test/alice'}, timeout_ms: 5000}
+  - {name: chrome-bob, kind: chrome, host: desktop, display: {host: desktop}, prepare: {kind: launch, url: 'https://example.test/bob'}, timeout_ms: 5000}
+  - {name: attached-chrome, kind: chrome, host: desktop, display: {host: desktop}, prepare: {kind: attach}, timeout_ms: 5000}
+  - {name: native, kind: macos, host: desktop, display: {host: desktop}, prepare: {kind: attach}, timeout_ms: 5000}
+actors:
+  - {name: alice, resource: chrome-alice}
+  - {name: bob, resource: chrome-bob}
+flows:
+  - path: flows/smoke.yaml
+    bindings: [{target: chrome-alice}]
+"#;
+
+    for (bad, message) in [
+        (
+            manifest.replace("resource: chrome-bob", "resource: chrome-alice"),
+            "distinct Chrome resource",
+        ),
+        (
+            manifest.replace("resource: chrome-bob", "resource: missing"),
+            "unknown resource",
+        ),
+        (
+            manifest.replace("resource: chrome-bob", "resource: attached-chrome"),
+            "prepare: launch",
+        ),
+        (
+            manifest.replace("resource: chrome-bob", "resource: native"),
+            "must be Chrome",
+        ),
+        (
+            manifest.replace(
+                "name: bob, resource: chrome-bob",
+                "name: ALICE, resource: chrome-bob",
+            ),
+            "duplicate actor name",
+        ),
+        (
+            manifest.replace(
+                "name: alice, resource: chrome-alice",
+                "name: chrome-bob, resource: chrome-alice",
+            ),
+            "actor name collides with resource name",
+        ),
+    ] {
+        let error = temp.load(&bad).unwrap_err().to_string();
+        assert!(
+            error.contains(message),
+            "expected {message:?}, got {error:?}"
+        );
+    }
+}
+
+#[test]
 fn resolves_scoped_values_without_exposing_secrets() {
     let temp = Temp::new();
     let key = format!("PROJECT_SECRET_{}", uuid::Uuid::new_v4().simple());

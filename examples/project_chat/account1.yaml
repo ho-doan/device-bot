@@ -1,0 +1,36 @@
+version: 2
+name: account-one-send
+steps:
+  - id: alice-username
+    resource: alice
+    fill_field: {target: username, text_from_env: CHAT_ALICE_USER}
+  - id: alice-password
+    resource: alice
+    fill_field: {target: password, text_from_env: CHAT_ALICE_PASSWORD, sensitive: true}
+  - id: alice-login
+    resource: alice
+    tap_element: {label: Sign in}
+  - id: alice-ready
+    resource: alice
+    assert_element: {label: Signed in as alice}
+  - id: alice-search-bob
+    resource: alice
+    fill_field: {target: search, text_from_env: CHAT_BOB_USER}
+  - id: alice-search
+    resource: alice
+    tap_element: {label: Search contacts}
+  - id: alice-open-bob
+    resource: alice
+    tap_element: {label: Open conversation with bob}
+  - id: alice-conversation-ready
+    resource: alice
+    assert_element: {label: Conversation with bob}
+  - id: alice-compose-message
+    resource: alice
+    fill_field: {target: message, text_from_env: CHAT_ALICE_MESSAGE}
+  - id: alice-send-message
+    resource: alice
+    tap_element: {label: Send message}
+  - id: alice-message-sent
+    resource: alice
+    assert_element: {label: 'alice: ${env:CHAT_ALICE_MESSAGE}'}

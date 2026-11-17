@@ -31,6 +31,8 @@ struct Manifest {
     #[serde(default)]
     resources: Vec<plan::Resource>,
     #[serde(default)]
+    actors: Vec<plan::Actor>,
+    #[serde(default)]
     windows_fixture: Option<String>,
     #[serde(default)]
     recording: Option<recording::RecordingConfig>,
@@ -98,7 +100,13 @@ impl Project {
         } else {
             BTreeMap::new()
         };
-        let plan = plan::ProjectPlan::build(&root, model.hosts, model.resources, model.flows)?;
+        let plan = plan::ProjectPlan::build(
+            &root,
+            model.hosts,
+            model.resources,
+            model.actors,
+            model.flows,
+        )?;
         recording::validate_config(model.recording.as_ref(), &plan)?;
         let flows = plan.flows.iter().map(|flow| flow.path.clone()).collect();
         Ok(Self {

@@ -123,10 +123,21 @@ pub struct Resource {
     pub requires: Vec<Capability>,
 }
 
+/// A named browser actor owns one dedicated Chrome resource/session.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Actor {
+    pub name: String,
+    pub resource: String,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlowBinding {
-    pub target: String,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub actor: Option<String>,
     #[serde(default)]
     pub profile: Option<String>,
 }
@@ -159,6 +170,7 @@ pub struct PlannedFlow {
 pub struct ProjectPlan {
     pub hosts: Vec<Host>,
     pub resources: Vec<Resource>,
+    pub actors: Vec<Actor>,
     pub flows: Vec<PlannedFlow>,
 }
 
@@ -173,6 +185,7 @@ impl ProjectPlan {
         root: &Path,
         hosts: Vec<Host>,
         resources: Vec<Resource>,
+        actors: Vec<Actor>,
         entries: Vec<FlowEntry>,
     ) -> io::Result<Self> {
         let mut host_names = HashSet::new();
@@ -272,6 +285,32 @@ impl ProjectPlan {
                 }
             }
         }
+        let mut actor_names = HashSet::new();
+        let mut actor_resources = HashSet::new();
+        for actor in &actors {
+            name(&actor.name, "actor")?;
+            if !actor_names.insert(actor.name.to_ascii_lowercase()) {
+                return Err(invalid("duplicate actor name"));
+            }
+            if resource_path_names.contains(&actor.name.to_ascii_lowercase()) {
+                return Err(invalid("actor name collides with resource name"));
+            }
+            if !actor_resources.insert(actor.resource.as_str()) {
+                return Err(invalid("each actor must own a distinct Chrome resource"));
+            }
+            let resource = resources
+                .iter()
+                .find(|resource| resource.name == actor.resource)
+                .ok_or_else(|| invalid("actor references unknown resource"))?;
+            if resource.kind != ResourceKind::Chrome {
+                return Err(invalid("actor resource must be Chrome"));
+            }
+            if !matches!(&resource.prepare, Preparation::Launch { .. }) {
+                return Err(invalid(
+                    "actor resource must use prepare: launch for isolated context",
+                ));
+            }
+        }
         let mut flows = Vec::new();
         for entry in entries {
             let (path, profiles, bindings) = match entry {
@@ -282,11 +321,30 @@ impl ProjectPlan {
                     }
                     let mut targets = HashSet::new();
                     for binding in &flow.bindings {
-                        name(&binding.target, "flow target")?;
-                        if !resource_names.contains(binding.target.as_str()) {
-                            return Err(invalid("flow references unknown target"));
-                        }
-                        if !targets.insert(binding.target.as_str()) {
+                        let resource_name = match (&binding.target, &binding.actor) {
+                            (Some(target), None) => {
+                                name(target, "flow target")?;
+                                if !resource_names.contains(target.as_str()) {
+                                    return Err(invalid("flow references unknown target"));
+                                }
+                                target.as_str()
+                            }
+                            (None, Some(actor_name)) => {
+                                name(actor_name, "flow actor")?;
+                                let actor =
+                                    actors
+                                        .iter()
+                                        .find(|actor| actor.name == *actor_name)
+                                        .ok_or_else(|| invalid("flow references unknown actor"))?;
+                                actor.resource.as_str()
+                            }
+                            _ => {
+                                return Err(invalid(
+                                    "flow binding must specify exactly one of target or actor",
+                                ));
+                            }
+                        };
+                        if !targets.insert(resource_name) {
                             return Err(invalid("duplicate target binding in flow"));
                         }
                         if binding
@@ -332,6 +390,7 @@ impl ProjectPlan {
         Ok(Self {
             hosts,
             resources,
+            actors,
             flows,
         })
     }

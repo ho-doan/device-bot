@@ -42,6 +42,7 @@ struct Call {
     resource: String,
     name: String,
     device_id: Option<String>,
+    url: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -118,6 +119,10 @@ impl Mcp for Fake {
                     resource: self.resource.clone(),
                     name: name.to_owned(),
                     device_id,
+                    url: args
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned),
                 });
                 match name {
                     "mobile_list_available_devices" => Ok(json!({
@@ -200,16 +205,19 @@ async fn one_case_routes_chrome_native_and_back_on_macos_and_windows_hosts() {
                     resource: "browser".into(),
                     name: "mobile_click_on_screen_at_coordinates".into(),
                     device_id: Some("chrome:browser".into()),
+                    url: None,
                 },
                 Call {
                     resource: "native".into(),
                     name: "mobile_click_on_screen_at_coordinates".into(),
                     device_id: Some(format!("{native_kind}:native")),
+                    url: None,
                 },
                 Call {
                     resource: "browser".into(),
                     name: "mobile_click_on_screen_at_coordinates".into(),
                     device_id: Some("chrome:browser".into()),
+                    url: None,
                 },
             ],
             "the same compiled case must route web → native → the same Chrome session"
@@ -219,5 +227,71 @@ async fn one_case_routes_chrome_native_and_back_on_macos_and_windows_hosts() {
                 && call.name == "mobile_open_url"
                 && call.device_id.as_deref() == Some("chrome:browser")
         }));
+    }
+}
+
+#[tokio::test]
+async fn each_named_actor_uses_its_own_resource_owned_chrome_session() {
+    let temp = Temp::new();
+    temp.write(
+        "project.yaml",
+        "version: 1\nkind: project\nname: actor-sessions\nhosts:\n  - {name: desktop, platform: macos, binding: {kind: local}}\nresources:\n  - {name: chrome-alice, kind: chrome, host: desktop, display: {host: desktop}, prepare: {kind: launch, url: 'https://example.test/alice'}, timeout_ms: 1000}\n  - {name: chrome-bob, kind: chrome, host: desktop, display: {host: desktop}, prepare: {kind: launch, url: 'https://example.test/bob'}, timeout_ms: 1000}\nactors:\n  - {name: alice, resource: chrome-alice}\n  - {name: bob, resource: chrome-bob}\nflows:\n  - path: flow.yaml\n    bindings: [{target: chrome-alice}, {target: chrome-bob}]\n",
+    );
+    temp.write(
+        "flow.yaml",
+        "version: 2\nname: actor-sessions\nsteps:\n  - tap: {x: 12, y: 34}\n",
+    );
+    let project = temp.project();
+    let factory = Factory::default();
+    run(
+        &project,
+        &factory,
+        &temp.0.join("artifacts"),
+        &[],
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+
+    let calls = factory.calls.lock().unwrap();
+    for (actor, resource, url) in [
+        ("alice", "chrome-alice", "https://example.test/alice"),
+        ("bob", "chrome-bob", "https://example.test/bob"),
+    ] {
+        assert_eq!(
+            project
+                .plan
+                .actors
+                .iter()
+                .find(|entry| entry.name == actor)
+                .map(|entry| entry.resource.as_str()),
+            Some(resource)
+        );
+        assert!(calls.iter().any(|call| {
+            call.resource == resource
+                && call.name == "mobile_boot_device"
+                && call.device_id.as_deref() == Some("chrome:browser")
+        }));
+        assert!(calls.iter().any(|call| {
+            call.resource == resource
+                && call.name == "mobile_open_url"
+                && call.device_id.as_deref() == Some(&format!("chrome:{resource}"))
+                && call.url.as_deref() == Some(url)
+        }));
+        assert!(calls.iter().any(|call| {
+            call.resource == resource && call.name == "mobile_click_on_screen_at_coordinates"
+        }));
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| {
+                    call.resource == resource
+                        && call.name == "mobile_open_url"
+                        && call.url.as_deref() == Some(url)
+                })
+                .count(),
+            1,
+            "each actor's resource session should receive its own launch URL ({url})"
+        );
     }
 }

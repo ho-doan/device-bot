@@ -1,7 +1,7 @@
 //! Explicit per-case fixture preparation for path-only projects.
 use crate::{Project, invalid, plan::ProjectPlan};
 use serde::Deserialize;
-use std::{io, path::Path, process::Stdio, time::Duration};
+use std::{collections::BTreeMap, io, path::Path, process::Stdio, time::Duration};
 use tokio::process::Command;
 
 fn default_timeout() -> u64 {
@@ -41,12 +41,13 @@ impl Hook {
         project: &Project,
         platform: Option<&str>,
         artifact: Option<&str>,
+        environment: &BTreeMap<String, String>,
         flow: &Path,
         directory: &Path,
     ) -> io::Result<()> {
-        let mut command = Command::new(project.resolve(&self.command)?);
+        let mut command = Command::new(project.resolve_with(&self.command, environment)?);
         for argument in &self.args {
-            command.arg(project.resolve(argument)?);
+            command.arg(project.resolve_with(argument, environment)?);
         }
         let case_name = flow
             .file_stem()
@@ -54,6 +55,7 @@ impl Hook {
         command
             .current_dir(&project.root)
             .envs(&project.environment)
+            .envs(environment)
             .env("DEVICE_BOT_CASE_NAME", case_name)
             .env("DEVICE_BOT_CASE_PATH", flow)
             .env("DEVICE_BOT_CASE_DIR", directory)
@@ -111,7 +113,14 @@ mod tests {
         .unwrap();
         hook.validate(&project.plan).unwrap();
         let error = hook
-            .run(&project, None, None, &project.flows[0], &root)
+            .run(
+                &project,
+                None,
+                None,
+                &BTreeMap::new(),
+                &project.flows[0],
+                &root,
+            )
             .await
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);

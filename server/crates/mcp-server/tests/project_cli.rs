@@ -253,6 +253,36 @@ fn project_stops_on_failed_flow_and_returns_nonzero() {
 }
 
 #[test]
+fn web_url_artifact_is_available_to_profiles_through_the_project_cli() {
+    let project = ProjectDir::new();
+    fs::write(
+        project.0.join("profiles.yaml"),
+        "version: 1\ntargets:\n  chrome:\n    app_id: '${env:PROJECT_TEST_WEB_URL}'\n",
+    )
+    .unwrap();
+    fs::write(project.0.join("project.yaml"), "version: 1\nkind: project\nname: web\nflows: [flows]\nplatforms:\n  web:\n    profiles: profiles.yaml\n    target: chrome\n    prepare: {kind: web_url, base_url_env: PROJECT_TEST_WEB_URL}\n").unwrap();
+    let output = project.run(
+        &[
+            "--platform",
+            "web",
+            "--artifact",
+            "http://127.0.0.1:18080/app/#/",
+            "--dry-run",
+        ],
+        None,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let paths = reports(&project.0.join("artifacts"));
+    assert_eq!(paths.len(), 1);
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(&paths[0]).unwrap()).unwrap();
+    assert_eq!(report["dry_run"], true);
+}
+
+#[test]
 fn native_report_helper_runs_without_services_and_preserves_existing_report() {
     let project = ProjectDir::new();
     let output_dir = project.0.join("ci-error");

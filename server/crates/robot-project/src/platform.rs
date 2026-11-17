@@ -13,6 +13,8 @@ pub(crate) struct Platform {
     device: Option<String>,
     #[serde(default)]
     app_id: Option<String>,
+    #[serde(default)]
+    prepare: Option<crate::preparation::Preparation>,
 }
 
 pub(crate) fn validate(
@@ -42,6 +44,9 @@ pub(crate) fn validate(
                 "project platform requires a profiles file and nonempty target",
             ));
         }
+        if let Some(preparation) = &platform.prepare {
+            preparation.validate(platform.target.as_deref().unwrap_or(name))?;
+        }
     }
     Ok(())
 }
@@ -51,6 +56,7 @@ pub(crate) struct Selection {
     pub(crate) arguments: Vec<String>,
     pub(crate) platform: Option<String>,
     pub(crate) artifact: Option<String>,
+    pub(crate) environment: BTreeMap<String, String>,
 }
 
 pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<Selection> {
@@ -107,15 +113,18 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
             }
         }
     }
-    if artifact.is_some() && project.before_each.is_none() {
-        return Err(invalid("--artifact requires a before_each handler"));
-    }
     let Some(selected) = selected else {
         if project.platforms.is_empty() {
+            if artifact.is_some() && project.before_each.is_none() {
+                return Err(invalid(
+                    "--artifact requires a configured preparation adapter",
+                ));
+            }
             return Ok(Selection {
                 arguments: forwarded,
                 platform: None,
                 artifact,
+                environment: BTreeMap::new(),
             });
         }
         return Err(invalid("project requires --platform"));
@@ -124,6 +133,15 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
         .platforms
         .get(selected)
         .ok_or_else(|| invalid("unknown project platform"))?;
+    if artifact.is_some() && config.prepare.is_none() && project.before_each.is_none() {
+        return Err(invalid(
+            "--artifact requires a configured preparation adapter",
+        ));
+    }
+    let environment = match &config.prepare {
+        Some(preparation) => preparation.prepare(project, artifact.as_deref())?,
+        None => BTreeMap::new(),
+    };
     if flags.contains(&"--profiles") || flags.contains(&"--target") {
         return Err(invalid(
             "--profiles and --target cannot override a project platform",
@@ -147,7 +165,7 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
     for (flag, default) in [("--device", &config.device), ("--app-id", &config.app_id)] {
         if !flags.contains(&flag) {
             if let Some(value) = default {
-                let value = project.resolve(value)?;
+                let value = project.resolve_with(value, &environment)?;
                 if value.trim().is_empty() {
                     return Err(invalid(format!("project platform {flag} cannot be empty")));
                 }
@@ -159,6 +177,7 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
         arguments: forwarded,
         platform: Some(selected.to_owned()),
         artifact,
+        environment,
     })
 }
 
@@ -313,5 +332,55 @@ platforms:
             "other",
         ]);
         assert!(arguments(&f.project(), &duplicate).is_err());
+    }
+
+    #[test]
+    fn built_in_web_url_preparation_scopes_the_selected_url_to_the_run() {
+        let f = Fixture::new();
+        let manifest = f.0.join("project.yaml");
+        let content = fs::read_to_string(&manifest).unwrap().replace(
+            "    target: chrome\n",
+            "    target: chrome\n    prepare: {kind: web_url, base_url_env: PROJECT_TEST_WEB_URL}\n",
+        ).replace("${env:PROJECT_PLATFORM_APP}", "${env:PROJECT_TEST_WEB_URL}");
+        fs::write(manifest, content).unwrap();
+        let project = f.project();
+        let actual = arguments(
+            &project,
+            &args(&[
+                "--platform",
+                "web",
+                "--artifact",
+                "http://127.0.0.1:8080/app/#/",
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            actual.environment.get("PROJECT_TEST_WEB_URL").unwrap(),
+            "http://127.0.0.1:8080/app"
+        );
+        assert!(std::env::var_os("PROJECT_TEST_WEB_URL").is_none());
+        assert!(
+            actual
+                .arguments
+                .windows(2)
+                .any(|pair| pair == ["--app-id", "http://127.0.0.1:8080/app"])
+        );
+        for invalid in [
+            "ftp://example.test/app",
+            "https://user:password@example.test/",
+            "https://example.test/?token=secret",
+            "https://example.test/#/route",
+            "app.zip",
+        ] {
+            let error = arguments(
+                &project,
+                &args(&["--platform", "web", "--artifact", invalid]),
+            )
+            .err()
+            .expect("invalid input accepted")
+            .to_string();
+            assert!(!error.contains("password") && !error.contains("token=secret"));
+        }
+        assert!(arguments(&project, &args(&["--platform", "web"])).is_err());
     }
 }

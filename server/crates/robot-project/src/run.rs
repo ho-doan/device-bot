@@ -104,6 +104,7 @@ async fn run_flows(
                         project,
                         selection.platform.as_deref(),
                         selection.artifact.as_deref(),
+                        &selection.environment,
                         flow,
                         &directory,
                     )
@@ -122,6 +123,7 @@ async fn run_flows(
             .arg(&directory)
             .arg(flow)
             .envs(&project.environment)
+            .envs(&selection.environment)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())

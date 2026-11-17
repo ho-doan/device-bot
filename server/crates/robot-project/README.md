@@ -63,7 +63,7 @@ platforms:
     profiles: profiles/web.yaml
     target: chrome
     device: 'chrome:browser'
-    app_id: '${env:APP_URL}'
+    prepare: {kind: web_url, base_url_env: APP_URL}
   android:
     profiles: profiles/native.yaml
     device: '${env:ANDROID_DEVICE_ID}'
@@ -75,9 +75,12 @@ name; `profiles` is relative to the project root. `device` and `app_id` are
 optional, support `${env:NAME}`, and can be overridden with `--device` and
 `--app-id`. `--profiles` and `--target` cannot override a selected platform.
 Each project with `platforms` requires `--platform`; named resource projects do
-not yet support platform defaults. These settings select an existing profile and
-target; they do not download an artifact, install an application or reset its
-state.
+not yet support platform defaults. `web_url` accepts the URL of an already
+running HTTP(S) application through `--artifact` (or the named environment
+variable), normalizes a trailing `/#/`, and passes the base URL to flow and
+fixture environments without modifying the parent. It does not accept URL
+credentials, query strings or route fragments. A Web ZIP is not yet supported.
+These settings do not install an application or reset its state.
 
 Projects may declare a per-case fixture preparation command. This is useful when
 the application must be reset between cases, as launching it does not itself
@@ -101,7 +104,8 @@ use `${env:NAME}`. The command must perform and verify the application-specific
 reset; declaring this hook does not itself reset a device or test account. It is
 currently available only for path-only projects.
 
-`device-bot run . --platform web --artifact <file-or-link>` passes the supplied
+For platforms without a built-in preparation adapter,
+`device-bot run . --platform NAME --artifact <file-or-link>` passes the supplied
 value to `before_each` as `DEVICE_BOT_ARTIFACT`. The option requires a hook so
 an artifact is never silently ignored. The hook is responsible for resolving
 relative paths, downloading links, validating the artifact and preparing the

@@ -16,6 +16,7 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 dotenvy = "0.15.7"
 tokio = { workspace = true, features = ["signal"] }
+url = "2.5.8"
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

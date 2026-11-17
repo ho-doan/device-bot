@@ -2,6 +2,7 @@
 mod hook;
 pub mod plan;
 mod platform;
+mod preparation;
 mod recording;
 mod report;
 mod run;
@@ -152,6 +153,14 @@ impl Project {
     }
 
     pub fn resolve(&self, value: &str) -> io::Result<String> {
+        self.resolve_with(value, &BTreeMap::new())
+    }
+
+    pub(crate) fn resolve_with(
+        &self,
+        value: &str,
+        overrides: &BTreeMap<String, String>,
+    ) -> io::Result<String> {
         let mut resolved = String::new();
         let mut rest = value;
         while let Some((prefix, reference)) = rest.split_once("${env:") {
@@ -160,9 +169,13 @@ impl Project {
                 .split_once('}')
                 .ok_or_else(|| invalid("unclosed project env reference"))?;
             resolved.push_str(
-                &self.environment_value(name).ok_or_else(|| {
-                    invalid(format!("missing project environment variable {name}"))
-                })?,
+                &overrides
+                    .get(name)
+                    .cloned()
+                    .or_else(|| self.environment_value(name))
+                    .ok_or_else(|| {
+                        invalid(format!("missing project environment variable {name}"))
+                    })?,
             );
             rest = suffix;
         }

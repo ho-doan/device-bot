@@ -1815,6 +1815,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tokio",
+ "url",
  "uuid",
  "windows-sys 0.61.2",
 ]

@@ -59,9 +59,70 @@ fn plans_shared_flow_and_distinct_execution_display_hosts() {
     let project = temp.load(MANIFEST).unwrap();
     assert!(!project.plan.is_legacy());
     assert_eq!(project.plan.flows[0].bindings.len(), 2);
+    let windows_resource = &project.plan.resources[1];
+    assert_eq!(windows_resource.host, "win");
+    assert_eq!(windows_resource.display.host, "desktop");
+    let windows_host = project
+        .plan
+        .hosts
+        .iter()
+        .find(|host| host.name == windows_resource.host)
+        .unwrap();
+    assert_eq!(windows_host.platform, robot_project::plan::HostPlatform::Windows);
+    assert!(matches!(
+        &windows_host.binding,
+        robot_project::plan::HostBinding::Mcp { endpoint, .. }
+            if endpoint == "${env:REMOTE_MCP}"
+    ));
     assert_eq!(project.plan.resources[1].display.host, "desktop");
     assert_eq!(project.flows[0], project.root.join("flows/smoke.yaml"));
     assert!(!format!("{project:?}").contains("REMOTE_MCP"));
+}
+
+#[test]
+fn accepts_named_mobile_web_windows_and_desktop_resources() {
+    use robot_project::plan::ResourceKind;
+
+    let temp = Temp::new();
+    let manifest = r#"version: 1
+kind: project
+name: all-targets
+hosts:
+  - name: mac
+    platform: macos
+    binding: {kind: local}
+  - name: win
+    platform: windows
+    binding: {kind: mcp, endpoint: 'http://windows-host'}
+resources:
+  - {name: android, kind: android, host: mac, display: {host: mac}, prepare: {kind: attach}, timeout_ms: 5000}
+  - {name: ios-simulator, kind: ios_simulator, host: mac, display: {host: mac}, prepare: {kind: attach}, timeout_ms: 5000}
+  - {name: ios-device, kind: ios_real, host: mac, display: {host: mac}, prepare: {kind: attach}, timeout_ms: 5000}
+  - {name: web, kind: chrome, host: mac, display: {host: mac}, prepare: {kind: attach}, timeout_ms: 5000}
+  - {name: windows, kind: windows, host: win, display: {host: mac, via: remote_desktop}, prepare: {kind: attach}, timeout_ms: 5000}
+  - {name: desktop, kind: macos, host: mac, display: {host: mac}, prepare: {kind: attach}, timeout_ms: 5000}
+flows:
+  - path: flows/smoke.yaml
+    bindings:
+      - {target: android}
+      - {target: ios-simulator}
+      - {target: ios-device}
+      - {target: web}
+      - {target: windows}
+      - {target: desktop}
+"#;
+
+    let project = temp.load(manifest).unwrap();
+
+    assert_eq!(project.plan.hosts.len(), 2);
+    assert_eq!(project.plan.resources.len(), 6);
+    assert_eq!(project.plan.resources[0].kind, ResourceKind::Android);
+    assert_eq!(project.plan.resources[1].kind, ResourceKind::IosSimulator);
+    assert_eq!(project.plan.resources[2].kind, ResourceKind::IosReal);
+    assert_eq!(project.plan.resources[3].kind, ResourceKind::Chrome);
+    assert_eq!(project.plan.resources[4].kind, ResourceKind::Windows);
+    assert_eq!(project.plan.resources[5].kind, ResourceKind::Macos);
+    assert_eq!(project.plan.flows[0].bindings.len(), 6);
 }
 
 #[test]

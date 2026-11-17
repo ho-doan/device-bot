@@ -68,7 +68,10 @@ impl Mcp for CaseMcp {
     }
 
     async fn close(&mut self) -> Result<()> {
-        self.server.shutdown().await.map_err(|e| e.to_string().into())
+        self.server
+            .shutdown()
+            .await
+            .map_err(|e| e.to_string().into())
     }
 }
 

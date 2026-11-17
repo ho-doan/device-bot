@@ -54,27 +54,32 @@ Không coi cross-compilation hoặc process mock là bằng chứng live Windows
 
 ## Mốc 3 — Một phiên project chứa nhiều target
 
-- [ ] Khai báo named resources: Android, iOS, web, Windows và desktop host.
-- [ ] Binding rõ mỗi target ở host/agent/MCP endpoint nào; không nhầm host
+- [x] Khai báo named resources: Android, iOS, web, Windows và desktop host.
+- [x] Binding rõ mỗi target ở host/agent/MCP endpoint nào; không nhầm host
   điều phối với host đang hiển thị và ghi màn hình.
-- [ ] Preflight capability/availability trước khi thực hiện flow; báo rõ target
+- [x] Preflight capability/availability trước khi thực hiện flow; báo rõ target
   không hỗ trợ thay vì skip rồi tính PASS.
-- [ ] Prepare/mở đủ target trước khi bắt đầu vòng chạy flow.
-- [ ] Giữ resource sống tới cuối project, không teardown sau từng flow/target.
-- [ ] Cùng một file flow chạy trên từng target qua profile/selector/recipe phù hợp.
+- [x] Prepare/mở đủ target trước khi bắt đầu vòng chạy flow.
+- [x] Giữ resource sống tới cuối project, không teardown sau từng flow/target.
+- [x] Cùng một file flow chạy trên từng target qua profile/selector/recipe phù hợp.
 - [ ] Flow kết hợp Chrome + macOS và Chrome + Windows chạy trong cùng case/session;
   đổi scope từng step mà không mất tab/actor, target đang chọn hoặc owner recording.
 - [ ] Điều phối foreground/input có ownership; các target không tranh chuột/phím.
-- [ ] Có timeout, cancellation và cleanup cho resource do project tạo; không
+- [x] Có timeout, cancellation và cleanup cho resource do project tạo; không
   đóng app/device/session của người dùng hoặc project khác.
-- [ ] CLI và QC dùng cùng project runtime, cùng MCP contract.
-- [ ] Test Rust ở đúng seam và commit mốc.
+- [x] CLI và QC dùng cùng project runtime, cùng MCP contract.
+- [x] Test Rust ở đúng seam và commit mốc.
 
-Bằng chứng từng phần: runtime dùng `FlowRunner` với MCP session riêng theo
-resource; seam tests kiểm alias, thứ tự prepare, cleanup và scoped env. Smoke
-CLI/MCP thật trên macOS dùng hai binding attach và bước `wait`, không xác minh
-UI control hay platform parity. Chrome launch, remote host, input lease và
-capability thực tế vẫn cần kiểm chứng live; không đánh dấu hoàn tất từ mock.
+Bằng chứng phần Rust: tests phủ named resource/schema và host/display/MCP
+binding, capability preflight error, prepare-before-flow, session lifetime,
+shared-flow profile/selector routing, Chrome → native → Chrome alias routing,
+cleanup/cancellation/ownership, và tuần tự hóa input trong cùng project run.
+`cargo test --manifest-path server/Cargo.toml -p robot-project -p device-bot`
+đạt. Mục Chrome/native vẫn chờ live macOS/Windows xác nhận focus, tab và cửa sổ;
+project-wide recording owner thuộc mốc 4. Input hiện chỉ được tuần tự hóa trong
+một project run; lease giữa các project/host chưa có. Flutter test chưa chạy
+được vì môi trường không có lệnh `flutter`. Remote display/mirroring, capability
+thực tế và platform parity vẫn cần live verification.
 
 Target khác host phải có cách hiển thị remote/mirror trên desktop được record.
 Không giả định iOS Simulator chạy native trên Windows hoặc Windows app chạy

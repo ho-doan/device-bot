@@ -9,6 +9,7 @@ mod flow;
 mod input;
 mod navigation;
 mod observation;
+mod project;
 mod recording;
 mod runner_status;
 mod screen;
@@ -23,6 +24,7 @@ use robot_core::Robot;
 pub(crate) struct ToolRegistry {
     robot: Arc<dyn Robot>,
     streams: robot_stream::StreamManager,
+    projects: project::Jobs,
 }
 
 impl ToolRegistry {
@@ -30,10 +32,12 @@ impl ToolRegistry {
         Self {
             robot,
             streams: robot_stream::StreamManager::default(),
+            projects: project::Jobs::default(),
         }
     }
 
     pub(crate) async fn stop_streams(&self) {
+        self.projects.shutdown().await;
         self.streams.stop_all().await;
     }
 
@@ -55,6 +59,7 @@ impl ToolRegistry {
         definitions.extend(stream::definitions());
         definitions.extend(screen::definitions());
         definitions.extend(observation::definitions());
+        definitions.extend(project::definitions());
         definitions.push(flow::definition());
         definitions
     }
@@ -64,6 +69,11 @@ impl ToolRegistry {
         params: CallToolParams,
     ) -> Result<ToolResult, device_mcp_protocol::RpcError> {
         let mut result = match params.name.as_str() {
+            project::VALIDATE | project::START | project::STATUS | project::CANCEL => {
+                self.projects
+                    .call(&self.robot, &params.name, &params.arguments)
+                    .await
+            }
             observation::START | observation::POLL | observation::STOP => {
                 observation::call(&self.robot, &params.name, &params.arguments).await
             }

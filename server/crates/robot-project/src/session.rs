@@ -12,11 +12,12 @@ use robot_flow::{
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
+    future::Future,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 
 /// Factory seam for creating one isolated MCP connection per resource.
 #[async_trait]
@@ -303,6 +304,64 @@ pub async fn run_with_history(
     case_timeout: Duration,
     history_root: Option<&Path>,
 ) -> mcp::Result<SessionResult> {
+    run_with_history_interruptible(
+        project,
+        factory,
+        directory,
+        confirmed,
+        case_timeout,
+        history_root,
+        interrupted(),
+    )
+    .await
+}
+
+/// As `run_with_history`, with cancellation supplied by an owning project job.
+/// Owned MCP sessions are closed before this returns, including on cancellation.
+pub async fn run_with_history_cancel(
+    project: &Project,
+    factory: &dyn SessionFactory,
+    directory: &Path,
+    confirmed: &[String],
+    case_timeout: Duration,
+    history_root: Option<&Path>,
+    cancel: watch::Receiver<bool>,
+) -> mcp::Result<SessionResult> {
+    let cancelled = async move {
+        let mut cancel = cancel;
+        loop {
+            if *cancel.borrow() {
+                return mcp::FlowError::new(mcp::ErrorKind::Interrupted, "project cancelled");
+            }
+            if cancel.changed().await.is_err() {
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    run_with_history_interruptible(
+        project,
+        factory,
+        directory,
+        confirmed,
+        case_timeout,
+        history_root,
+        cancelled,
+    )
+    .await
+}
+
+async fn run_with_history_interruptible<F>(
+    project: &Project,
+    factory: &dyn SessionFactory,
+    directory: &Path,
+    confirmed: &[String],
+    case_timeout: Duration,
+    history_root: Option<&Path>,
+    interrupt: F,
+) -> mcp::Result<SessionResult>
+where
+    F: Future<Output = mcp::FlowError>,
+{
     let environment = project.environment();
     let cases = compile_cases(project, &environment, confirmed)?;
     for resource in &project.plan.resources {
@@ -329,7 +388,7 @@ pub async fn run_with_history(
     };
     let result = tokio::select! {
         result = run_owned(context, environment, cases, Arc::clone(&sessions)) => result,
-        _ = interrupted() => Err("project interrupted".into()),
+        error = interrupt => Err(error),
     };
     let clean = close_owned(Arc::clone(&sessions)).await;
     cleanup.0 = None;
@@ -340,17 +399,18 @@ pub async fn run_with_history(
     }
 }
 
-async fn interrupted() {
+async fn interrupted() -> mcp::FlowError {
     #[cfg(unix)]
     {
         if let Ok(mut term) =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         {
             tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = term.recv() => {} }
-            return;
+            return "project interrupted".into();
         }
     }
     let _ = tokio::signal::ctrl_c().await;
+    "project interrupted".into()
 }
 
 /// Compile all cases without creating sessions or performing device actions.
@@ -701,7 +761,13 @@ async fn run_owned(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, sync::Mutex as StdMutex};
+    use std::{
+        fs,
+        sync::{
+            Mutex as StdMutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
 
     struct Fixture {
         root: PathBuf,
@@ -851,6 +917,113 @@ flows:
             Ok(())
         }
     }
+
+    #[derive(Clone, Default)]
+    struct RequestConcurrency {
+        active: Arc<AtomicUsize>,
+        maximum: Arc<AtomicUsize>,
+        calls: Arc<StdMutex<Vec<(String, String)>>>,
+    }
+
+    struct ConcurrentFake {
+        resource: String,
+        state: RequestConcurrency,
+    }
+
+    #[async_trait]
+    impl Mcp for ConcurrentFake {
+        async fn request(&mut self, method: &str, params: Value) -> mcp::Result<Value> {
+            if method != "tools/call" {
+                return Err("unexpected method".into());
+            }
+            let device_id = params["arguments"]["deviceId"]
+                .as_str()
+                .ok_or("device ID missing")?
+                .to_owned();
+            let active = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.state.maximum.fetch_max(active, Ordering::SeqCst);
+            self.state
+                .calls
+                .lock()
+                .unwrap()
+                .push((self.resource.clone(), device_id));
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            self.state.active.fetch_sub(1, Ordering::SeqCst);
+            Ok(json!({"content":[]}))
+        }
+
+        async fn notify(&mut self, _: &str, _: Value) -> mcp::Result<()> {
+            Ok(())
+        }
+
+        async fn close(&mut self) -> mcp::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn router_serializes_input_calls_across_resource_sessions() {
+        let state = RequestConcurrency::default();
+        let sessions: Shared = Arc::new(Mutex::new(BTreeMap::from([
+            (
+                "project:a".into(),
+                Connected {
+                    client: Box::new(ConcurrentFake {
+                        resource: "a".into(),
+                        state: state.clone(),
+                    }),
+                    real_id: "native-a".into(),
+                    device: json!({"id":"project:a"}),
+                },
+            ),
+            (
+                "project:b".into(),
+                Connected {
+                    client: Box::new(ConcurrentFake {
+                        resource: "b".into(),
+                        state: state.clone(),
+                    }),
+                    real_id: "native-b".into(),
+                    device: json!({"id":"project:b"}),
+                },
+            ),
+        ])));
+        let mut router_a = Router {
+            sessions: Arc::clone(&sessions),
+            devices: BTreeMap::new(),
+            tools: BTreeMap::new(),
+        };
+        let mut router_b = Router {
+            sessions,
+            devices: BTreeMap::new(),
+            tools: BTreeMap::new(),
+        };
+
+        let (result_a, result_b) = tokio::join!(
+            router_a.request(
+                "tools/call",
+                json!({"name":"mobile_click_on_screen_at_coordinates","arguments":{"deviceId":"project:a","x":1,"y":1}}),
+            ),
+            router_b.request(
+                "tools/call",
+                json!({"name":"mobile_click_on_screen_at_coordinates","arguments":{"deviceId":"project:b","x":2,"y":2}}),
+            ),
+        );
+
+        assert!(result_a.is_ok());
+        assert!(result_b.is_ok());
+        assert_eq!(state.maximum.load(Ordering::SeqCst), 1);
+        let mut calls = state.calls.lock().unwrap().clone();
+        calls.sort();
+        assert_eq!(
+            calls,
+            vec![
+                ("a".to_owned(), "native-a".to_owned()),
+                ("b".to_owned(), "native-b".to_owned()),
+            ]
+        );
+    }
+
     const PROFILES: &str = "version: 1\ntargets:\n  first: {}\n  second: {}\n";
     #[tokio::test]
     async fn prepares_all_owned_sessions_then_routes_each_case_to_its_own_native_id() {
@@ -897,6 +1070,17 @@ flows:
         );
         assert!(events.iter().any(|v| v == "close:a"));
         assert!(events.iter().any(|v| v == "close:b"));
+        let last_case_action = events
+            .iter()
+            .rposition(|v| v.starts_with("mobile_click_on_screen_at_coordinates:"))
+            .unwrap();
+        let first_close = events.iter().position(|v| v.starts_with("close:")).unwrap();
+        assert!(
+            first_close > last_case_action,
+            "project-owned sessions must stay open through every target case"
+        );
+        assert_eq!(events.iter().filter(|v| *v == "close:a").count(), 1);
+        assert_eq!(events.iter().filter(|v| *v == "close:b").count(), 1);
     }
     #[tokio::test]
     async fn missing_tool_and_profile_fail_before_launch_and_close_owned_connections() {
@@ -949,6 +1133,72 @@ flows:
         );
         assert!(factory.events.lock().unwrap().is_empty());
     }
+
+    #[tokio::test]
+    async fn explicit_project_cancellation_closes_owned_sessions() {
+        let fixture = Fixture::new(
+            "version: 2\nname: test\nsteps:\n  - tap: {x: 1, y: 2}\n",
+            PROFILES,
+        );
+        let factory = Factory {
+            hang_tap: true,
+            ..Factory::default()
+        };
+        let owned_factory = factory.clone();
+        let project = fixture.load();
+        let output = fixture.root.join("cancel-out");
+        let (cancel, receiver) = watch::channel(false);
+        let task = tokio::spawn(async move {
+            run_with_history_cancel(
+                &project,
+                &owned_factory,
+                &output,
+                &[],
+                Duration::from_secs(10),
+                None,
+                receiver,
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if factory
+                    .events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|event| event.starts_with("mobile_click"))
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        cancel.send(true).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap();
+        let error = match result {
+            Ok(_) => panic!("project cancellation should interrupt the run"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), robot_flow::outcome::ErrorKind::Interrupted);
+        assert_eq!(
+            factory
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|event| event.starts_with("close:"))
+                .count(),
+            2
+        );
+    }
+
     #[tokio::test]
     async fn setup_failure_closes_every_owned_session() {
         let fixture = Fixture::new(
@@ -1155,10 +1405,27 @@ flows:
     }
     #[tokio::test]
     async fn capability_and_host_failures_stop_before_url_navigation() {
-        for (status, host) in [
-            (Some("blocked"), None),
-            (Some("unknown"), None),
-            (None, Some("windows")),
+        for (status, host, expected_error) in [
+            (
+                Some("blocked"),
+                None,
+                "resource a requires input, capability status blocked",
+            ),
+            (
+                Some("unsupported"),
+                None,
+                "resource a requires input, capability status unsupported",
+            ),
+            (
+                Some("unknown"),
+                None,
+                "resource a requires input, capability status unknown",
+            ),
+            (
+                None,
+                Some("windows"),
+                "resource a host OS does not match declared host",
+            ),
         ] {
             let fixture = Fixture::new(
                 "version: 2\nname: test\nsteps:\n  - tap: {x: 1, y: 2}\n",
@@ -1177,17 +1444,19 @@ flows:
                 host_os: host.map(str::to_owned),
                 ..Factory::default()
             };
-            assert!(
-                run(
-                    &fixture.load(),
-                    &factory,
-                    &fixture.root.join("out"),
-                    &[],
-                    Duration::from_secs(5)
-                )
-                .await
-                .is_err()
-            );
+            let result = run(
+                &fixture.load(),
+                &factory,
+                &fixture.root.join("out"),
+                &[],
+                Duration::from_secs(5),
+            )
+            .await;
+            let error = match result {
+                Err(error) => error,
+                Ok(_) => panic!("unsupported or mismatched targets must fail setup"),
+            };
+            assert!(error.to_string().contains(expected_error), "{error}");
             let events = factory.events.lock().unwrap();
             assert!(
                 !events

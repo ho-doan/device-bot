@@ -509,6 +509,7 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
         [
             "mobile_list_available_devices",
             "mobile_boot_device",
+            "mobile_get_capabilities",
             "mobile_open_url",
             "mobile_type_keys",
             "mobile_press_ime_action",
@@ -533,6 +534,13 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
             "mobile_take_screenshot",
             "mobile_click_on_screen_at_coordinates",
             "mobile_swipe_on_screen",
+            "mobile_start_observation",
+            "mobile_poll_observation",
+            "mobile_stop_observation",
+            "project_validate",
+            "project_start",
+            "project_status",
+            "project_cancel",
             "mobile_run_flow"
         ]
     );

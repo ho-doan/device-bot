@@ -4,6 +4,21 @@ Minimal project orchestration for the installed `device-bot` CLI. A project list
 existing YAML flows and project-local environment defaults; each flow executes
 through the existing `robot-flow` binary and MCP backend.
 
+Projects can load string-valued test data from a JSON object without a wrapper
+script. `prefixes` is required and selects the environment names to import:
+
+```yaml
+env_json:
+  path: ../test-data.json
+  prefixes: [TEST_, MY_APP_]
+```
+
+The path is relative to the project directory. Only uppercase names matching a
+prefix and string values are imported; other entries are ignored. Process
+environment values take precedence, followed by `env_file`, then JSON defaults.
+Data remains scoped to the project and is not printed. Protect the JSON file as
+you would an `.env` file when it contains credentials.
+
 ```sh
 cargo build --manifest-path server/Cargo.toml -p device-bot -p robot-flow
 server/target/debug/device-bot init /tmp/my-project
@@ -114,6 +129,28 @@ For a protected GitLab artifact URL, add
 The initial URL must match `CI_SERVER_URL`'s origin; a different environment
 variable can be named with `origin_env`. The `JOB-TOKEN` header is not sent to
 a different origin reached by a redirect.
+
+Projects may run YAML preparation flows once per suite and before each case:
+
+```yaml
+before_all_flow: setup/install.yaml
+before_each_flow: setup/fixture.yaml
+```
+
+Place either key under a platform to override the corresponding project-wide
+flow for that platform. `before_all_flow` can use a staged artifact path to call
+an existing installation tool. The target MCP server must be able to access that
+path. Both preparation flows require a full `PASS` before cases run.
+
+It runs with the selected case's profile and environment, with its evidence in
+that case's `fixture-setup/` directory. The suite stops if setup fails, lacks a
+report, or reports anything other than `PASS`; a `PARTIAL` setup is not treated
+as a prepared fixture. A dry-run validates setup and cases without device actions.
+Put the setup file outside the directories listed under `flows`. This is currently
+available to path-only projects and cannot be combined with `before_each`. Setup
+must actually restore and verify the application's state; a readiness assertion
+alone does not reset data. Each flow uses a separate runner/MCP session, so setup
+cannot transfer session-owned browser contexts to the next flow.
 
 Projects may declare a per-case fixture preparation command. This is useful when
 the application must be reset between cases, as launching it does not itself

@@ -29,6 +29,8 @@ struct Manifest {
     name: String,
     #[serde(default)]
     env_file: Option<PathBuf>,
+    #[serde(default)]
+    env_json: Option<JsonEnvironment>,
     flows: Vec<plan::FlowEntry>,
     #[serde(default)]
     hosts: Vec<plan::Host>,
@@ -44,6 +46,61 @@ struct Manifest {
     platforms: BTreeMap<String, platform::Platform>,
     #[serde(default)]
     before_each: Option<hook::Hook>,
+    #[serde(default)]
+    before_each_flow: Option<PathBuf>,
+    #[serde(default)]
+    before_all_flow: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonEnvironment {
+    path: PathBuf,
+    prefixes: Vec<String>,
+}
+
+impl JsonEnvironment {
+    fn load(&self, root: &Path, environment: &mut BTreeMap<String, String>) -> io::Result<()> {
+        if self.prefixes.is_empty()
+            || self.prefixes.iter().any(|prefix| {
+                prefix.is_empty()
+                    || !prefix.bytes().all(|byte| {
+                        byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+                    })
+            })
+        {
+            return Err(invalid(
+                "project JSON environment requires nonempty uppercase prefixes",
+            ));
+        }
+        let input = fs::read(root.join(&self.path))
+            .map_err(|_| invalid("cannot read project JSON environment file"))?;
+        let input = input.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&input);
+        let data: serde_json::Value = serde_json::from_slice(input)
+            .map_err(|_| invalid("invalid project JSON environment file"))?;
+        let object = data
+            .as_object()
+            .ok_or_else(|| invalid("project JSON environment must be an object"))?;
+        for (key, value) in object {
+            if self.prefixes.iter().any(|prefix| key.starts_with(prefix))
+                && key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+                && std::env::var_os(key).is_none()
+                && let Some(value) = value.as_str()
+            {
+                if value.contains('\0') {
+                    return Err(invalid(
+                        "project JSON environment value contains a null byte",
+                    ));
+                }
+                environment
+                    .entry(key.clone())
+                    .or_insert_with(|| value.to_owned());
+            }
+        }
+        Ok(())
+    }
 }
 
 pub struct Project {
@@ -56,6 +113,8 @@ pub struct Project {
     windows_fixture: Option<String>,
     platforms: BTreeMap<String, platform::Platform>,
     before_each: Option<hook::Hook>,
+    before_each_flow: Option<PathBuf>,
+    before_all_flow: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for Project {
@@ -73,6 +132,30 @@ impl std::fmt::Debug for Project {
 
 pub(crate) fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message.into())
+}
+
+pub(crate) fn fixture_flow_path(
+    root: &Path,
+    plan: &plan::ProjectPlan,
+    path: &Path,
+) -> io::Result<PathBuf> {
+    let path = root.join(path);
+    if !plan.is_legacy() || !path.is_file() {
+        return Err(invalid(
+            "fixture setup requires a readable flow in a path-only project",
+        ));
+    }
+    let setup_path = fs::canonicalize(&path)?;
+    if plan
+        .flows
+        .iter()
+        .any(|flow| fs::canonicalize(&flow.path).ok().as_ref() == Some(&setup_path))
+    {
+        return Err(invalid(
+            "fixture setup flow must not also be a project case",
+        ));
+    }
+    Ok(path)
 }
 
 impl Project {
@@ -94,7 +177,7 @@ impl Project {
                 "project requires version: 1, kind: project, a name and at least one flow",
             ));
         }
-        let environment = if let Some(env_file) = model.env_file {
+        let mut environment = if let Some(env_file) = model.env_file {
             let path = root.join(env_file);
             let entries = dotenvy::from_path_iter(&path)
                 .map_err(|_| invalid(format!("cannot read project env file {}", path.display())))?;
@@ -110,6 +193,9 @@ impl Project {
         } else {
             BTreeMap::new()
         };
+        if let Some(json) = &model.env_json {
+            json.load(&root, &mut environment)?;
+        }
         let plan = plan::ProjectPlan::build(
             &root,
             model.hosts,
@@ -117,10 +203,25 @@ impl Project {
             model.actors,
             model.flows,
         )?;
-        platform::validate(&model.platforms, &plan)?;
+        platform::validate(&model.platforms, &plan, &root, model.before_each.is_some())?;
         if let Some(hook) = &model.before_each {
             hook.validate(&plan)?;
         }
+        if model.before_each.is_some() && model.before_each_flow.is_some() {
+            return Err(invalid(
+                "before_each and before_each_flow cannot be combined",
+            ));
+        }
+        let before_each_flow = model
+            .before_each_flow
+            .as_deref()
+            .map(|path| fixture_flow_path(&root, &plan, path))
+            .transpose()?;
+        let before_all_flow = model
+            .before_all_flow
+            .as_deref()
+            .map(|path| fixture_flow_path(&root, &plan, path))
+            .transpose()?;
         recording::validate_config(model.recording.as_ref(), &plan)?;
         let flows = plan.flows.iter().map(|flow| flow.path.clone()).collect();
         Ok(Self {
@@ -133,6 +234,8 @@ impl Project {
             windows_fixture: model.windows_fixture,
             platforms: model.platforms,
             before_each: model.before_each,
+            before_each_flow,
+            before_all_flow,
         })
     }
 

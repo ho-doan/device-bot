@@ -1,7 +1,11 @@
 //! Platform-specific defaults for path-only project runs.
 use crate::{Project, invalid, plan::ProjectPlan};
 use serde::Deserialize;
-use std::{collections::BTreeMap, io};
+use std::{
+    collections::BTreeMap,
+    io,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -15,11 +19,17 @@ pub(crate) struct Platform {
     app_id: Option<String>,
     #[serde(default)]
     prepare: Option<crate::preparation::Preparation>,
+    #[serde(default)]
+    before_each_flow: Option<PathBuf>,
+    #[serde(default)]
+    before_all_flow: Option<PathBuf>,
 }
 
 pub(crate) fn validate(
     platforms: &BTreeMap<String, Platform>,
     plan: &ProjectPlan,
+    root: &Path,
+    has_command_hook: bool,
 ) -> io::Result<()> {
     if !platforms.is_empty() && !plan.is_legacy() {
         return Err(invalid(
@@ -47,6 +57,17 @@ pub(crate) fn validate(
         if let Some(preparation) = &platform.prepare {
             preparation.validate(platform.target.as_deref().unwrap_or(name))?;
         }
+        if let Some(path) = &platform.before_each_flow {
+            if has_command_hook {
+                return Err(invalid(
+                    "before_each and before_each_flow cannot be combined",
+                ));
+            }
+            crate::fixture_flow_path(root, plan, path)?;
+        }
+        if let Some(path) = &platform.before_all_flow {
+            crate::fixture_flow_path(root, plan, path)?;
+        }
     }
     Ok(())
 }
@@ -59,6 +80,8 @@ pub(crate) struct Selection {
     pub(crate) environment: BTreeMap<String, String>,
     pub(crate) file_preparation: Option<crate::artifact::FilePreparation>,
     pub(crate) file_argument_indexes: Vec<usize>,
+    pub(crate) before_each_flow: Option<PathBuf>,
+    pub(crate) before_all_flow: Option<PathBuf>,
 }
 
 pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<Selection> {
@@ -129,6 +152,8 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
                 environment: BTreeMap::new(),
                 file_preparation: None,
                 file_argument_indexes: Vec::new(),
+                before_each_flow: project.before_each_flow.clone(),
+                before_all_flow: project.before_all_flow.clone(),
             });
         }
         return Err(invalid("project requires --platform"));
@@ -195,6 +220,16 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
         environment,
         file_preparation,
         file_argument_indexes,
+        before_each_flow: config
+            .before_each_flow
+            .as_ref()
+            .map(|path| project.root.join(path))
+            .or_else(|| project.before_each_flow.clone()),
+        before_all_flow: config
+            .before_all_flow
+            .as_ref()
+            .map(|path| project.root.join(path))
+            .or_else(|| project.before_all_flow.clone()),
     })
 }
 

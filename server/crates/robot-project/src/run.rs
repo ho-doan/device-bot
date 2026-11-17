@@ -164,6 +164,20 @@ async fn run_flows(
 ) -> io::Result<i32> {
     let arguments = &selection.arguments;
     let dry = arguments.iter().any(|arg| arg == "--dry-run");
+    if let Some(setup) = &selection.before_all_flow {
+        let directory = output.join("project-setup");
+        fs::create_dir_all(&directory)?;
+        let code = run_flow_process(
+            project, selection, runner, server, reports, setup, &directory,
+        )
+        .await?;
+        if code != 0 || (!dry && !setup_passed(&directory)?) {
+            ensure_report(&directory)?;
+            return Err(io::Error::other(
+                "before_all_flow fixture preparation failed or did not pass",
+            ));
+        }
+    }
     for (index, flow) in project.flows.iter().enumerate() {
         let directory = output.join(format!("case-{:03}", index + 1));
         fs::create_dir_all(&directory)?;
@@ -181,6 +195,20 @@ async fn run_flows(
         } else {
             None
         };
+        if let Some(setup) = &selection.before_each_flow {
+            let setup_dir = directory.join("fixture-setup");
+            fs::create_dir_all(&setup_dir)?;
+            let code = run_flow_process(
+                project, selection, runner, server, reports, setup, &setup_dir,
+            )
+            .await?;
+            if code != 0 || (!dry && !setup_passed(&setup_dir)?) {
+                ensure_report(&directory)?;
+                return Err(io::Error::other(
+                    "before_each_flow fixture preparation failed or did not pass",
+                ));
+            }
+        }
         if !dry {
             if let Some(hook) = &project.before_each {
                 if let Err(error) = hook
@@ -199,61 +227,109 @@ async fn run_flows(
                 }
             }
         }
-        let mut command = Command::new(runner);
-        command
-            .current_dir(&project.root)
-            .args(arguments)
-            .arg("--artifacts")
-            .arg(&directory)
-            .arg(flow)
-            .envs(&project.environment)
-            .envs(&selection.environment)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true);
-        if project.environment_value("DEVICE_BOT_BIN").is_none() {
-            command.env("DEVICE_BOT_BIN", server);
-        }
-        if project
-            .environment_value("DEVICE_BOT_REPORT_DATA_DIR")
-            .is_none()
-        {
-            command.env("DEVICE_BOT_REPORT_DATA_DIR", reports);
-        }
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(error) => {
-                ensure_report(&directory)?;
-                return Err(error);
-            }
-        };
-        let status = tokio::select! {
-            status = child.wait() => status?,
-            _ = interrupted() => {
-                #[cfg(unix)]
-                if let Some(pid) = child.id() {
-                    // SAFETY: signal only this child process, never a name/group.
-                    unsafe { libc::kill(pid as i32, libc::SIGTERM); }
-                }
-                if tokio::time::timeout(Duration::from_secs(5), child.wait()).await.is_err() {
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
-                }
-                ensure_report(&directory.join("interrupted"))?;
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "project interrupted"));
-            }
-        };
+        let status = run_flow_process(
+            project, selection, runner, server, reports, flow, &directory,
+        )
+        .await?;
         if let Some(fixture) = fixture {
             fixture.stop()?;
         }
-        let missing = ensure_report(&directory)?;
-        if !status.success() {
-            return Ok(status.code().unwrap_or(1));
+        if status != 0 {
+            return Ok(status);
         }
-        if missing {
-            return Err(io::Error::other("flow exited without a JUnit report"));
+    }
+    Ok(0)
+}
+
+fn setup_passed(directory: &Path) -> io::Result<bool> {
+    let mut reports = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() && entry.file_name().to_string_lossy().starts_with("case-") {
+            let report = entry.path().join("report.json");
+            if report.is_file() {
+                reports.push(report);
+            }
         }
+    }
+    if reports.len() != 1 {
+        return Ok(false);
+    }
+    let Ok(bytes) = fs::read(&reports[0]) else {
+        return Ok(false);
+    };
+    let Ok(report) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Ok(false);
+    };
+    Ok(report["status"] == "PASS"
+        && report["dry_run"] == false
+        && report["error"].is_null()
+        && report["limitations"]
+            .as_array()
+            .is_some_and(|limitations| limitations.is_empty()))
+}
+
+async fn run_flow_process(
+    project: &Project,
+    selection: &crate::platform::Selection,
+    runner: &Path,
+    server: &Path,
+    reports: &Path,
+    flow: &Path,
+    directory: &Path,
+) -> io::Result<i32> {
+    let arguments = &selection.arguments;
+    let mut command = Command::new(runner);
+    command
+        .current_dir(&project.root)
+        .args(arguments)
+        .arg("--artifacts")
+        .arg(directory)
+        .arg(flow)
+        .envs(&project.environment)
+        .envs(&selection.environment)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true);
+    if project.environment_value("DEVICE_BOT_BIN").is_none() {
+        command.env("DEVICE_BOT_BIN", server);
+    }
+    if project
+        .environment_value("DEVICE_BOT_REPORT_DATA_DIR")
+        .is_none()
+    {
+        command.env("DEVICE_BOT_REPORT_DATA_DIR", reports);
+    }
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            ensure_report(directory)?;
+            return Err(error);
+        }
+    };
+    let status = tokio::select! {
+        status = child.wait() => status?,
+        _ = interrupted() => {
+            #[cfg(unix)]
+            if let Some(pid) = child.id() {
+                // SAFETY: signal only this child process, never a name/group.
+                unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+            }
+            if tokio::time::timeout(Duration::from_secs(5), child.wait()).await.is_err() {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
+            ensure_report(&directory.join("interrupted"))?;
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "project interrupted"));
+        }
+    };
+    let missing = ensure_report(directory)?;
+    if !status.success() {
+        return Ok(status.code().unwrap_or(1));
+    }
+    if missing {
+        return Err(io::Error::other("flow exited without a JUnit report"));
     }
     Ok(0)
 }

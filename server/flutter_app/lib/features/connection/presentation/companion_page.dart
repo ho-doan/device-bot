@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 
 import 'package:mobile_mcp_companion/features/live/presentation/live_dialog.dart';
 import 'package:mobile_mcp_companion/features/flows/presentation/flow_run_dialog.dart';
+import 'package:mobile_mcp_companion/features/projects/presentation/project_dialog.dart';
 import 'package:mobile_mcp_companion/features/devices/presentation/dashboard.dart';
 import 'package:mobile_mcp_companion/features/devices/presentation/desktop_capture_dialog.dart';
 import 'package:mobile_mcp_companion/features/devices/presentation/window_picker_dialog.dart';
@@ -91,6 +92,20 @@ class _CompanionHomeState extends State<_CompanionView> {
         fileName: file.name,
         yaml: yaml,
         onRun: () async => formatFlowReport(await _client().runFlow(yaml)),
+      ),
+    );
+  }
+
+  Future<void> _runProject() async {
+    final generation = _connection.generation;
+    final client = _client();
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => ProjectDialog(
+        isCurrent: () => _connection.generation == generation,
+        call: (name, args) async =>
+            (await client.callTool(name, args)).structuredContent ?? const {},
       ),
     );
   }
@@ -400,6 +415,7 @@ class _CompanionHomeState extends State<_CompanionView> {
                       tokenController: _tokenController,
                       onRefresh: _refresh,
                       onImportFlow: _importFlow,
+                      onRunProject: _runProject,
                       activityStatus: _activityStatus,
                     ),
                     const SizedBox(height: 20),
@@ -421,6 +437,7 @@ class _ConnectionForm extends StatelessWidget {
     required this.tokenController,
     required this.onRefresh,
     required this.onImportFlow,
+    required this.onRunProject,
     required this.activityStatus,
   });
 
@@ -428,6 +445,7 @@ class _ConnectionForm extends StatelessWidget {
   final TextEditingController tokenController;
   final VoidCallback onRefresh;
   final VoidCallback onImportFlow;
+  final VoidCallback onRunProject;
   final String activityStatus;
 
   @override
@@ -491,6 +509,12 @@ class _ConnectionForm extends StatelessWidget {
               onPressed: onImportFlow,
               icon: const Icon(Icons.file_open),
               label: const Text('Import flow'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('run-project'),
+              onPressed: onRunProject,
+              icon: const Icon(Icons.folder_open),
+              label: const Text('Project'),
             ),
             SizedBox(
               width: 340,

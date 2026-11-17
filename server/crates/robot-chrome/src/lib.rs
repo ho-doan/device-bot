@@ -784,6 +784,78 @@ fn value_i32(value: &Value, key: &str) -> i32 {
 
 #[async_trait]
 impl Robot for ChromeRobot {
+    async fn capabilities(&self, id: &str) -> Result<robot_core::CapabilityReport, RobotError> {
+        let mut report = robot_core::CapabilityReport::new(id);
+        let target = self.page(id).await?;
+        report.capabilities.discovery =
+            robot_core::Capability::available("Chrome page is discoverable");
+        let domains = self.cdp(&target, "Schema.getDomains", json!({})).await;
+        let domains = domains
+            .ok()
+            .and_then(|value| value.get("domains").and_then(Value::as_array).cloned());
+        if let Some(domains) = domains {
+            let supports = |name: &str| {
+                domains
+                    .iter()
+                    .any(|domain| domain.get("name").and_then(Value::as_str) == Some(name))
+            };
+            if supports("Page") {
+                report.capabilities.launch = robot_core::Capability::available(
+                    "Page domain is reachable for browser navigation; later navigation can fail",
+                );
+                let layout = self
+                    .cdp(&target, "Page.getLayoutMetrics", json!({}))
+                    .await
+                    .is_ok();
+                if layout {
+                    report.capabilities.screenshot = robot_core::Capability::available(
+                        "Page domain and layout query are responsive; capture can still fail",
+                    );
+                }
+            }
+            if supports("Runtime") && self.query_dom(&target).await.is_ok() {
+                report.capabilities.elements = robot_core::Capability::available(
+                    "Read-only page element query succeeded; later queries can fail",
+                );
+                if supports("Input") {
+                    report.capabilities.input = robot_core::Capability::available(
+                        "Input domain and page query are responsive; later input can fail",
+                    );
+                }
+            }
+            if supports("Runtime") && supports("Network") {
+                let browser_ready = match self.running_browser_endpoint().await {
+                    Ok(endpoint) => match connection::BrowserConnection::connect(&endpoint).await {
+                        Ok(mut browser) => browser
+                            .request("Browser.getVersion", json!({}), None)
+                            .await
+                            .is_ok(),
+                        Err(_) => false,
+                    },
+                    Err(_) => false,
+                };
+                report.capabilities.observation = if browser_ready {
+                    robot_core::Capability::available(
+                        "Browser connection and Runtime/Network domains are reachable; observer attachment and event delivery can still fail",
+                    )
+                } else {
+                    robot_core::Capability::blocked(
+                        "Check browser-level DevTools connectivity for observation",
+                    )
+                };
+            }
+        } else {
+            let blocked =
+                robot_core::Capability::blocked("Check the selected page's DevTools connection");
+            report.capabilities.input = blocked.clone();
+            report.capabilities.screenshot = blocked.clone();
+            report.capabilities.elements = blocked.clone();
+            report.capabilities.screen_recording = blocked.clone();
+            report.capabilities.observation = blocked;
+        }
+        Ok(report)
+    }
+
     async fn start_observation(
         &self,
         id: &str,

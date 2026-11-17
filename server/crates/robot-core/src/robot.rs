@@ -32,6 +32,11 @@ pub struct UiRunnerStatus {
 /// Async, platform-independent device control boundary.
 #[async_trait]
 pub trait Robot: Send + Sync {
+    /// Read-only readiness. Unknown is never equivalent to available.
+    async fn capabilities(&self, device_id: &str) -> Result<crate::CapabilityReport, RobotError> {
+        Ok(crate::CapabilityReport::new(device_id))
+    }
+
     async fn start_observation(
         &self,
         id: &str,

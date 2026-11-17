@@ -180,7 +180,7 @@ impl Drop for ProbeImage {
     }
 }
 
-async fn display_probe(xcrun: &str, device: &str) -> Result<Output, String> {
+pub(super) async fn display_probe(xcrun: &str, device: &str) -> Result<Output, String> {
     use std::io::Read;
     let sequence = crate::ARTIFACT_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!(

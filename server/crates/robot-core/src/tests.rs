@@ -12,6 +12,12 @@ struct StubRobot {
 
 #[async_trait]
 impl Robot for StubRobot {
+    async fn capabilities(&self, id: &str) -> Result<CapabilityReport, RobotError> {
+        let mut report = CapabilityReport::new(id);
+        report.capabilities.input = Capability::blocked("routed to selected driver");
+        Ok(report)
+    }
+
     async fn type_text_in_context(
         &self,
         id: &str,
@@ -373,4 +379,30 @@ async fn routes_to_a_healthy_driver_when_another_driver_is_unavailable() {
 
     assert_eq!(registry.list_devices().await.unwrap().len(), 1);
     assert_eq!(registry.take_screenshot("ios-sim").await.unwrap(), vec![7]);
+}
+
+#[tokio::test]
+async fn capability_report_routes_to_selected_driver_and_defaults_are_conservative() {
+    let driver: Arc<dyn Robot> = Arc::new(StubRobot {
+        device: Some(RobotDevice {
+            id: "device-1".into(),
+            name: "test".into(),
+            platform: Platform::Android,
+            state: DeviceState::Available,
+        }),
+        list_error: false,
+    });
+    let registry = RobotRegistry::new(vec![driver]);
+    let report = registry.capabilities("device-1").await.unwrap();
+    assert_eq!(report.host_os, std::env::consts::OS);
+    assert_eq!(report.capabilities.input.status, CapabilityStatus::Blocked);
+    assert_eq!(
+        report.capabilities.input.reason,
+        "routed to selected driver"
+    );
+    assert_eq!(
+        report.capabilities.screen_recording.status,
+        CapabilityStatus::Unknown
+    );
+    assert!(registry.capabilities("missing").await.is_err());
 }

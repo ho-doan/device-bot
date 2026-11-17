@@ -740,6 +740,104 @@ impl IosXCTestRobot {
 
 #[async_trait]
 impl Robot for IosXCTestRobot {
+    async fn capabilities(&self, id: &str) -> Result<robot_core::CapabilityReport, RobotError> {
+        let device = self
+            .list_devices()
+            .await?
+            .into_iter()
+            .find(|device| device.id == id)
+            .ok_or_else(|| RobotError::DeviceNotFound(id.into()))?;
+        let mut report = robot_core::CapabilityReport::new(id);
+        report.capabilities.observation = robot_core::Capability::unsupported(
+            "Native application log and network observation is not implemented",
+        );
+        report.capabilities.discovery =
+            robot_core::Capability::available("Device was routed to the iOS driver");
+        if device.state != DeviceState::Available {
+            let blocked =
+                robot_core::Capability::blocked("Connect, trust and unlock the iOS device");
+            report.capabilities.launch = blocked.clone();
+            report.capabilities.input = blocked.clone();
+            report.capabilities.elements = blocked.clone();
+            report.capabilities.screenshot = blocked.clone();
+            report.capabilities.screen_recording = blocked;
+            return Ok(report);
+        }
+        let runner = self.check_device_health(id).await;
+        if runner.as_ref().is_ok_and(|status| {
+            status.ready
+                && status
+                    .diagnostics
+                    .as_ref()
+                    .and_then(|d| d.get("screenLocked"))
+                    .and_then(Value::as_bool)
+                    == Some(false)
+        }) {
+            report.capabilities.launch = robot_core::Capability::available(
+                "Connected unlocked device and current UI runner are responsive; launching an app can still fail",
+            );
+            let shot = self
+                .agent
+                .dispatch_for(id, "screenshot", json!({}), Duration::from_secs(8))
+                .await;
+            report.capabilities.screenshot = if shot
+                .ok()
+                .and_then(|v| {
+                    v.get("pngBase64")
+                        .and_then(Value::as_str)
+                        .map(|s| s.starts_with("iVBORw0KGgo"))
+                })
+                .unwrap_or(false)
+            {
+                robot_core::Capability::available("The iOS UI runner returned a PNG screenshot")
+            } else {
+                robot_core::Capability::blocked(
+                    "Check the iOS UI runner and device screenshot service",
+                )
+            };
+        }
+        let status = match runner {
+            Ok(status)
+                if status.ready
+                    && status
+                        .diagnostics
+                        .as_ref()
+                        .and_then(|d| d.get("screenLocked"))
+                        .and_then(Value::as_bool)
+                        != Some(false) =>
+            {
+                robot_core::Capability::unknown(
+                    "The iPhone lock state could not be verified; unlock the device and check its connection",
+                )
+            }
+            Ok(status) if status.ready => {
+                let response = self
+                    .agent
+                    .dispatch_for(id, "dump", json!({"maxResults":1}), Duration::from_secs(5))
+                    .await;
+                if response
+                    .ok()
+                    .and_then(|value| value.get("elements").and_then(Value::as_array).cloned())
+                    .is_some()
+                {
+                    robot_core::Capability::available(
+                        "UI runner and target responded to a read-only element query; later actions can still fail",
+                    )
+                } else {
+                    robot_core::Capability::blocked(
+                        "Check the selected app and iOS UI runner; element query failed",
+                    )
+                }
+            }
+            _ => robot_core::Capability::blocked(
+                "Prepare the iOS UI runner and select its target app",
+            ),
+        };
+        report.capabilities.input = status.clone();
+        report.capabilities.elements = status;
+        Ok(report)
+    }
+
     async fn scroll_in_context(
         &self,
         id: &str,

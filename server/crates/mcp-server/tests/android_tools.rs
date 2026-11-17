@@ -21,6 +21,13 @@ struct RecordingRobot {
 
 #[async_trait]
 impl Robot for RecordingRobot {
+    async fn capabilities(&self, id: &str) -> Result<robot_core::CapabilityReport, RobotError> {
+        if id == "failure" {
+            return Err(RobotError::CommandFailed("secret-token-from-driver".into()));
+        }
+        Ok(robot_core::CapabilityReport::new(id))
+    }
+
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
         Ok(vec![RobotDevice {
             id: "emulator-5554".into(),
@@ -1179,5 +1186,52 @@ async fn running_app_and_window_selection_is_independent_of_activation() {
     assert_eq!(
         robot.actions.lock().unwrap().last().unwrap(),
         "activate:emulator-5554:42:7"
+    );
+}
+
+#[tokio::test]
+async fn capability_tool_validates_arguments_and_redacts_driver_errors() {
+    let mut server = Server::new(Arc::new(RecordingRobot::default()));
+    ready(&mut server).await;
+    for arguments in [
+        json!({}),
+        json!({"deviceId": "  "}),
+        json!({"deviceId": "x", "extra": true}),
+    ] {
+        let result = server
+            .handle(request(
+                2,
+                "tools/call",
+                json!({"name":"mobile_get_capabilities", "arguments":arguments}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(result["result"]["isError"], true);
+    }
+    let result = server
+        .handle(request(
+            3,
+            "tools/call",
+            json!({"name":"mobile_get_capabilities", "arguments":{"deviceId":"failure"}}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(result["result"]["isError"], true);
+    assert!(!result.to_string().contains("secret-token-from-driver"));
+    let result = server
+        .handle(request(
+            4,
+            "tools/call",
+            json!({"name":"mobile_get_capabilities", "arguments":{"deviceId":"emulator-5554"}}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        result["result"]["structuredContent"]["hostOs"],
+        std::env::consts::OS
+    );
+    assert_eq!(
+        result["result"]["structuredContent"]["capabilities"]["input"]["status"],
+        "unknown"
     );
 }

@@ -29,6 +29,14 @@ use url::Url;
 mod emulator;
 mod video;
 
+fn android_probe_readiness(ok: bool, ready: &str, blocked: &str) -> robot_core::Capability {
+    if ok {
+        robot_core::Capability::available(format!("{ready}; later operations can fail"))
+    } else {
+        robot_core::Capability::blocked(blocked)
+    }
+}
+
 static TREE_DUMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -198,6 +206,117 @@ impl<R> AndroidRobot<R> {
 
 #[async_trait]
 impl<R: CommandRunner> Robot for AndroidRobot<R> {
+    async fn capabilities(&self, id: &str) -> Result<robot_core::CapabilityReport, RobotError> {
+        let device = self
+            .list_devices()
+            .await?
+            .into_iter()
+            .find(|device| device.id == id)
+            .ok_or_else(|| RobotError::DeviceNotFound(id.into()))?;
+        let mut report = robot_core::CapabilityReport::new(id);
+        report.capabilities.discovery =
+            robot_core::Capability::available("Android device is discoverable");
+        report.capabilities.observation = robot_core::Capability::unsupported(
+            "Native application log and network observation is not implemented",
+        );
+        if device.state != DeviceState::Available {
+            let blocked =
+                robot_core::Capability::blocked("Connect, authorize and unlock the Android device");
+            report.capabilities.launch = blocked.clone();
+            report.capabilities.input = blocked.clone();
+            report.capabilities.screenshot = blocked.clone();
+            report.capabilities.elements = blocked.clone();
+            report.capabilities.screen_recording = blocked;
+        } else {
+            // Query the live hierarchy through stdout: no file on the device is created.
+            let command = |args: Vec<String>| async move {
+                tokio::time::timeout(std::time::Duration::from_secs(8), self.run_adb(&args))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+            };
+            let prefix = || vec!["-s".to_owned(), id.to_owned()];
+            let mut hierarchy_args = prefix();
+            hierarchy_args
+                .extend(["exec-out", "uiautomator", "dump", "/dev/stdout"].map(str::to_owned));
+            let mut input_args = prefix();
+            input_args.extend(["shell", "command", "-v", "input"].map(str::to_owned));
+            let mut launch_args = prefix();
+            launch_args.extend(["shell", "dumpsys", "activity", "activities"].map(str::to_owned));
+            let mut screenshot_args = prefix();
+            screenshot_args.extend(["exec-out", "screencap", "-p"].map(str::to_owned));
+            let mut recording_args = prefix();
+            recording_args.extend(["shell", "command", "-v", "screenrecord"].map(str::to_owned));
+            let hierarchy_probe = async {
+                let gate = {
+                    let mut gates = self.tree_dump_locks.lock().await;
+                    gates.entry(id.to_owned()).or_default().clone()
+                };
+                let Ok(_guard) =
+                    tokio::time::timeout(std::time::Duration::from_secs(8), gate.lock()).await
+                else {
+                    return None;
+                };
+                command(hierarchy_args).await
+            };
+            let mut setsid_args = prefix();
+            setsid_args.extend(["shell", "command", "-v", "setsid"].map(str::to_owned));
+            let (hierarchy, input, launch, screenshot, recording, setsid) = tokio::join!(
+                hierarchy_probe,
+                command(input_args),
+                command(launch_args),
+                command(screenshot_args),
+                command(recording_args),
+                command(setsid_args)
+            );
+            let hierarchy_ok = hierarchy
+                .as_ref()
+                .is_some_and(|out| String::from_utf8_lossy(&out.stdout).contains("<hierarchy"));
+            let input_ok = input.as_ref().is_some_and(|out| !out.stdout.is_empty());
+            report.capabilities.elements = android_probe_readiness(
+                hierarchy_ok,
+                "Android UI hierarchy responded",
+                "Unlock the device and check UI Automator",
+            );
+            report.capabilities.input = android_probe_readiness(
+                hierarchy_ok && input_ok,
+                "Android UI hierarchy and input command are responsive",
+                "Unlock the device and check UI Automator and input command",
+            );
+            report.capabilities.launch = android_probe_readiness(
+                launch.as_ref().is_some_and(|out| !out.stdout.is_empty()),
+                "Android activity service is responsive",
+                "Check Android activity service and device authorization",
+            );
+            report.capabilities.screenshot = android_probe_readiness(
+                screenshot
+                    .as_ref()
+                    .is_some_and(|out| out.stdout.starts_with(b"\x89PNG\r\n\x1a\n")),
+                "Android returned a PNG screenshot",
+                "Check device display and screencap availability",
+            );
+            let recorder_tools = recording.as_ref().is_some_and(|out| !out.stdout.is_empty())
+                && setsid.as_ref().is_some_and(|out| !out.stdout.is_empty());
+            let screenshot_ok = screenshot
+                .as_ref()
+                .is_some_and(|out| out.stdout.starts_with(b"\x89PNG\r\n\x1a\n"));
+            report.capabilities.screen_recording = if !recorder_tools {
+                robot_core::Capability::blocked(
+                    "Install or enable Android screenrecord and setsid on the device",
+                )
+            } else if !screenshot_ok || self.recordings.lock().await.contains_key(id) {
+                robot_core::Capability::blocked(
+                    "Check the device display and stop any active Device Bot recording",
+                )
+            } else {
+                robot_core::Capability::available(
+                    "Display and recording commands are present; recording or encoding can still fail",
+                )
+            };
+        }
+        Ok(report)
+    }
+
     async fn start_video_stream(
         &self,
         device_id: &str,
@@ -1570,5 +1689,87 @@ mod tests {
         assert_eq!(calls[3].1[2], "pull");
         assert_eq!(calls[3].1[4], stopped);
         assert_eq!(calls[4].1[2..5], ["shell", "rm", "-f"]);
+    }
+}
+
+#[cfg(test)]
+mod capability_probe_tests {
+    use super::*;
+    #[test]
+    fn responsive_and_failed_probes_have_distinct_statuses() {
+        assert_eq!(
+            android_probe_readiness(true, "ready", "blocked").status,
+            robot_core::CapabilityStatus::Available
+        );
+        assert_eq!(
+            android_probe_readiness(false, "ready", "blocked").status,
+            robot_core::CapabilityStatus::Blocked
+        );
+    }
+    struct ProbeRunner {
+        healthy: bool,
+        calls: std::sync::Mutex<Vec<Vec<String>>>,
+    }
+    #[async_trait::async_trait]
+    impl CommandRunner for ProbeRunner {
+        async fn run(
+            &self,
+            executable: &str,
+            args: &[String],
+        ) -> Result<CommandOutput, RobotError> {
+            self.calls.lock().unwrap().push(args.to_vec());
+            let text = args.join(" ");
+            let output = if executable != "adb" {
+                Vec::new()
+            } else if text.starts_with("devices") {
+                b"List of devices attached\nserial device\n".to_vec()
+            } else if text.contains("uiautomator dump") {
+                if self.healthy {
+                    b"<hierarchy/>".to_vec()
+                } else {
+                    Vec::new()
+                }
+            } else if text.contains("screencap") {
+                b"\x89PNG\r\n\x1a\n".to_vec()
+            } else if text.contains("screenrecord") && !self.healthy {
+                Vec::new()
+            } else {
+                b"ready".to_vec()
+            };
+            Ok(CommandOutput {
+                success: true,
+                exit_code: Some(0),
+                stdout: output,
+                stderr: b"secret from helper".to_vec(),
+            })
+        }
+    }
+    #[tokio::test]
+    async fn driver_probes_readiness_without_input_and_never_reports_helper_output() {
+        for healthy in [true, false] {
+            let runner = ProbeRunner {
+                healthy,
+                calls: std::sync::Mutex::new(Vec::new()),
+            };
+            let robot = AndroidRobot::with_runner("adb", runner).with_emulator_path("emulator");
+            let report = robot.capabilities("serial").await.unwrap();
+            let expected = if healthy {
+                robot_core::CapabilityStatus::Available
+            } else {
+                robot_core::CapabilityStatus::Blocked
+            };
+            assert_eq!(report.capabilities.input.status, expected);
+            assert_eq!(report.capabilities.screen_recording.status, expected);
+            assert!(
+                !serde_json::to_string(&report)
+                    .unwrap()
+                    .contains("secret from helper")
+            );
+            let calls = robot.runner.calls.lock().unwrap();
+            assert!(!calls.iter().any(|args| {
+                args.iter()
+                    .any(|arg| ["tap", "launch", "recordVideo"].contains(&arg.as_str()))
+            }));
+        }
     }
 }

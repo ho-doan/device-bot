@@ -74,6 +74,70 @@ where
     })
 }
 
+#[cfg(target_os = "macos")]
+async fn capability_ffmpeg_listing(path: &str, argument: &str) -> Option<String> {
+    use tokio::io::AsyncReadExt;
+    let mut child = Command::new(path)
+        .args(["-hide_banner", argument])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+    let stdout = child.stdout.take()?;
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut bytes = Vec::new();
+        stdout.take(1_048_577).read_to_end(&mut bytes).await.ok()?;
+        if bytes.len() > 1_048_576 {
+            return None;
+        }
+        if !child.wait().await.ok()?.success() {
+            return None;
+        }
+        String::from_utf8(bytes).ok()
+    })
+    .await
+    .ok()
+    .flatten();
+    if result.is_none() {
+        let _ = child.kill().await;
+    }
+    result
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn mac_ax_readiness(trusted: bool, query_ok: bool) -> robot_core::Capability {
+    if !trusted {
+        robot_core::Capability::blocked(
+            "Grant Accessibility permission to the server process in System Settings",
+        )
+    } else if !query_ok {
+        robot_core::Capability::blocked(
+            "Select an accessible foreground app on an interactive desktop",
+        )
+    } else {
+        robot_core::Capability::available(
+            "Accessibility permission and read-only target query succeeded; later input can still fail",
+        )
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn mac_display_readiness(permitted: bool, display_ready: bool) -> robot_core::Capability {
+    if !permitted {
+        robot_core::Capability::blocked(
+            "Grant Screen Recording permission to the server process in System Settings",
+        )
+    } else if !display_ready {
+        robot_core::Capability::blocked("Connect an active display to the macOS desktop session")
+    } else {
+        robot_core::Capability::available(
+            "Screen Recording permission and active display are present; capture can still fail",
+        )
+    }
+}
+
 static SCREENSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -425,6 +489,72 @@ fn non_empty(value: &str) -> Option<String> {
 
 #[async_trait]
 impl Robot for MacosRobot {
+    async fn capabilities(&self, id: &str) -> Result<robot_core::CapabilityReport, RobotError> {
+        self.require_device(id)?;
+        let mut report = robot_core::CapabilityReport::new(id);
+        report.capabilities.discovery =
+            robot_core::Capability::available("macOS host driver is present");
+        report.capabilities.observation = robot_core::Capability::unsupported(
+            "Native application log and network observation is not implemented",
+        );
+        #[cfg(target_os = "macos")]
+        {
+            // These APIs never request permission or display a system prompt.
+            let ax = unsafe { AXIsProcessTrusted() };
+            let capture = unsafe { CGPreflightScreenCaptureAccess() };
+            let ax_ready = if ax {
+                self.accessibility_elements(None, Some(1)).await.is_ok()
+            } else {
+                false
+            };
+            let ax_status = mac_ax_readiness(ax, ax_ready);
+            report.capabilities.input = ax_status.clone();
+            report.capabilities.elements = ax_status;
+            if id != DEVICE_ID {
+                let unknown = robot_core::Capability::unknown(
+                    "Window-scoped target readiness is not verified by the host accessibility probe",
+                );
+                report.capabilities.input = unknown.clone();
+                report.capabilities.elements = unknown;
+                report.capabilities.launch =
+                    robot_core::Capability::unsupported("Window-scoped targets cannot launch apps");
+            }
+            let display_ready = if capture {
+                self.desktop_displays().await.is_ok()
+            } else {
+                false
+            };
+            let display_status = mac_display_readiness(capture, display_ready);
+            report.capabilities.screenshot = display_status.clone();
+            report.capabilities.screen_recording = display_status;
+            if capture && display_ready {
+                let (devices, encoders) = tokio::join!(
+                    capability_ffmpeg_listing(&self.ffmpeg_path, "-devices"),
+                    capability_ffmpeg_listing(&self.ffmpeg_path, "-encoders")
+                );
+                report.capabilities.screen_recording = if devices
+                    .as_deref()
+                    .is_some_and(|s| s.contains("avfoundation"))
+                    && encoders.as_deref().is_some_and(|s| s.contains("libx264"))
+                {
+                    robot_core::Capability::available(
+                        "Screen permission, active display and ffmpeg AVFoundation/libx264 support are present; recording can still fail",
+                    )
+                } else {
+                    robot_core::Capability::blocked(
+                        "Install ffmpeg with AVFoundation and libx264 support or configure DEVICE_BOT_FFMPEG_PATH",
+                    )
+                };
+            }
+            if self.recording.lock().await.is_some() {
+                report.capabilities.screen_recording = robot_core::Capability::blocked(
+                    "Stop the current macOS recording before starting another",
+                );
+            }
+        }
+        Ok(report)
+    }
+
     async fn stream_context(&self, id: &str) -> Result<Value, RobotError> {
         self.live_context(id).await
     }
@@ -935,5 +1065,38 @@ mod recorder_ownership_regression {
         assert!(fork.stop_screen_recording(DEVICE_ID).await.is_err());
         assert!(robot.recording.lock().await.is_some());
         let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(test)]
+mod capability_readiness_tests {
+    use super::*;
+    use robot_core::CapabilityStatus;
+    #[test]
+    fn permission_and_read_only_target_probes_gate_readiness() {
+        assert_eq!(
+            mac_ax_readiness(false, true).status,
+            CapabilityStatus::Blocked
+        );
+        assert_eq!(
+            mac_ax_readiness(true, false).status,
+            CapabilityStatus::Blocked
+        );
+        assert_eq!(
+            mac_ax_readiness(true, true).status,
+            CapabilityStatus::Available
+        );
+        assert_eq!(
+            mac_display_readiness(false, true).status,
+            CapabilityStatus::Blocked
+        );
+        assert_eq!(
+            mac_display_readiness(true, false).status,
+            CapabilityStatus::Blocked
+        );
+        assert_eq!(
+            mac_display_readiness(true, true).status,
+            CapabilityStatus::Available
+        );
     }
 }

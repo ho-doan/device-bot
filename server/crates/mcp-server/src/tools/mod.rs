@@ -41,6 +41,7 @@ impl ToolRegistry {
         let mut definitions = vec![
             device::definitions()[0].clone(),
             device::definitions()[1].clone(),
+            device::capabilities_definition(),
             navigation::definition(),
             input::definition(),
             input::press_ime_definition(),
@@ -72,6 +73,7 @@ impl ToolRegistry {
             }
             stream::STOP_NAME => stream::stop(&self.streams, &params.arguments).await,
             device::NAME => device::call(&self.robot).await,
+            device::CAPABILITIES_NAME => device::capabilities(&self.robot, &params.arguments).await,
             device::BOOT_NAME => device::boot(&self.robot, &params.arguments).await,
             recording::START_NAME => recording::start(&self.robot, &params.arguments).await,
             recording::STOP_NAME => recording::stop(&self.robot, &params.arguments).await,

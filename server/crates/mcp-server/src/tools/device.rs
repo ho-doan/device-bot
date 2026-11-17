@@ -5,6 +5,7 @@ use robot_core::Robot;
 use serde_json::{Value, json};
 
 pub(super) const NAME: &str = "mobile_list_available_devices";
+pub(super) const CAPABILITIES_NAME: &str = "mobile_get_capabilities";
 pub(super) const BOOT_NAME: &str = "mobile_boot_device";
 
 pub(super) fn definitions() -> [ToolDefinition; 2] {
@@ -51,5 +52,60 @@ pub(super) async fn boot(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResul
     match outcome {
         Ok(()) => ToolResult::text(format!("Booted {device_id}")),
         Err(error) => ToolResult::execution_error(error.to_string()),
+    }
+}
+
+pub(super) fn capabilities_definition() -> ToolDefinition {
+    ToolDefinition {
+        name: CAPABILITIES_NAME.into(),
+        title: Some("Inspect device capability readiness".into()),
+        description: "Read-only readiness for a selected device on this server host. Available means implemented and read-only prerequisites currently pass; later actions may still fail. Unknown is not available. Does not request permissions or perform UI actions.".into(),
+        input_schema: json!({"type":"object","properties":{"deviceId":{"type":"string","minLength":1}},"required":["deviceId"],"additionalProperties":false}),
+    }
+}
+
+pub(super) async fn capabilities(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResult {
+    let Some(id) = capability_device_id(arguments) else {
+        return ToolResult::execution_error("Expected only a nonempty deviceId");
+    };
+    match robot.capabilities(id).await {
+        Ok(mut report) => {
+            // The MCP process, not a custom driver, identifies this host.
+            report.host_os = std::env::consts::OS.into();
+            report.device_id = id.into();
+            ToolResult::structured(json!(report))
+        }
+        Err(_) => ToolResult::execution_error(
+            "Unable to inspect the selected device; check its identity and connection",
+        ),
+    }
+}
+
+fn capability_device_id(arguments: &Value) -> Option<&str> {
+    let object = arguments.as_object()?;
+    if object.len() != 1 {
+        return None;
+    }
+    object
+        .get("deviceId")?
+        .as_str()
+        .filter(|id| !id.trim().is_empty())
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+    #[test]
+    fn capability_arguments_are_strict() {
+        for invalid in [
+            json!(null),
+            json!({}),
+            json!({"deviceId":" "}),
+            json!({"deviceId":1}),
+            json!({"deviceId":"a","extra":true}),
+        ] {
+            assert!(capability_device_id(&invalid).is_none());
+        }
+        assert_eq!(capability_device_id(&json!({"deviceId":"a"})), Some("a"));
     }
 }

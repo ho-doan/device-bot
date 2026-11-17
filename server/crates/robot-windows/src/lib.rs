@@ -604,6 +604,105 @@ fn parse_uia_elements(output: &[u8]) -> Result<Vec<UiElement>, RobotError> {
 
 #[async_trait]
 impl Robot for WindowsRobot {
+    async fn capabilities(&self, id: &str) -> Result<robot_core::CapabilityReport, RobotError> {
+        self.require_device(id)?;
+        let mut report = robot_core::CapabilityReport::new(id);
+        report.capabilities.discovery =
+            robot_core::Capability::available("Windows host driver is present");
+        report.capabilities.observation = robot_core::Capability::unsupported(
+            "Native application log and network observation is not implemented",
+        );
+        #[cfg(target_os = "windows")]
+        {
+            #[link(name = "user32")]
+            unsafe extern "system" {
+                fn OpenInputDesktop(flags: u32, inherit: i32, access: u32)
+                -> *mut std::ffi::c_void;
+                fn CloseDesktop(desktop: *mut std::ffi::c_void) -> i32;
+            }
+            let interactive = {
+                let desktop = unsafe { OpenInputDesktop(0, 0, 0x0001) };
+                if desktop.is_null() {
+                    false
+                } else {
+                    unsafe {
+                        CloseDesktop(desktop);
+                    }
+                    true
+                }
+            };
+            if !interactive {
+                let blocked = robot_core::Capability::blocked(
+                    "Start the server in an accessible interactive Windows desktop session",
+                );
+                report.capabilities.input = blocked.clone();
+                report.capabilities.elements = blocked.clone();
+                report.capabilities.screenshot = blocked.clone();
+                report.capabilities.screen_recording = blocked;
+            } else {
+                let uia = if id == DEVICE_ID {
+                    self.uia_elements(None, Some(1)).await.is_ok()
+                } else {
+                    self.live_elements(id, None, Some(1)).await.is_ok()
+                };
+                let ui_status = if uia {
+                    robot_core::Capability::available(
+                        "Interactive desktop and UI Automation query are responsive; later input can fail",
+                    )
+                } else {
+                    robot_core::Capability::blocked(
+                        "Select an accessible foreground window and check UI Automation",
+                    )
+                };
+                report.capabilities.input = ui_status.clone();
+                report.capabilities.elements = ui_status;
+                let displays = self.desktop_displays().await.is_ok();
+                if displays {
+                    report.capabilities.screenshot = robot_core::Capability::available(
+                        "Interactive desktop and display enumeration are responsive; capture can fail",
+                    );
+                } else {
+                    report.capabilities.screenshot = robot_core::Capability::blocked(
+                        "Connect an active display to the Windows desktop session",
+                    );
+                }
+                let ffmpeg = live::resolve_ffmpeg(
+                    std::env::var("DEVICE_BOT_FFMPEG_PATH").ok(),
+                    std::env::current_exe().ok().as_deref(),
+                );
+                let probe = |argument: &'static str| async {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        tokio::process::Command::new(&ffmpeg)
+                            .args(["-hide_banner", argument])
+                            .creation_flags(0x08000000)
+                            .kill_on_drop(true)
+                            .output(),
+                    )
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .filter(|output| output.status.success())
+                    .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+                };
+                let (devices, encoders) = tokio::join!(probe("-devices"), probe("-encoders"));
+                report.capabilities.screen_recording = if displays
+                    && devices.as_deref().is_some_and(|s| s.contains("gdigrab"))
+                    && encoders.as_deref().is_some_and(|s| s.contains("libx264"))
+                {
+                    robot_core::Capability::available(
+                        "Interactive desktop, display and ffmpeg gdigrab/libx264 support are present; recording can fail",
+                    )
+                } else {
+                    robot_core::Capability::blocked(
+                        "Connect a display and install ffmpeg with gdigrab and libx264 support",
+                    )
+                };
+            }
+        }
+        Ok(report)
+    }
+
     async fn scroll(&self, id: &str, at: Point, dx: f64, dy: f64) -> Result<(), RobotError> {
         self.require_device(id)?;
         let _input = self.capture_lock.lock().await;

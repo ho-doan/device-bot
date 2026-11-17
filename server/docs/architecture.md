@@ -179,3 +179,17 @@ user info, query and fragment. No response body or native HTTPS interception is
 provided. Poll exposes records for future wait/assert logic; it does not assert.
 On disconnect, `closed` and `terminalReason` report that collection ended;
 they do not quantify events lost after disconnect.
+
+### Device capability preflight
+
+`mobile_get_capabilities` accepts a selected `deviceId` and reports the server's
+`hostOs` and per-operation `status` and `reason`. `available` means the driver
+implements the operation and its current read-only prerequisite checks passed;
+it does not guarantee a later action, target application, or recorded evidence
+will succeed. `blocked` identifies a missing prerequisite, `unsupported` an
+unimplemented operation, and `unknown` a capability whose readiness was not
+established. Required preflight must reject all three. Checks do not grant or
+prompt for permissions, launch applications, inject input, or start recordings.
+Native application network observation is not implemented, and Chrome observation
+is limited to the DevTools target described above. `hostOs` identifies the server
+host, not necessarily the host of a remotely configured Chrome endpoint.

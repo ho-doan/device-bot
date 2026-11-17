@@ -4,6 +4,7 @@
 //! on the internal module layout. Query policy lives beside accessibility models;
 //! session ownership and device selection live in the registry.
 
+mod capabilities;
 mod device;
 mod elements;
 mod error;
@@ -16,6 +17,7 @@ mod web;
 pub mod health;
 pub mod video;
 
+pub use capabilities::{Capabilities, Capability, CapabilityReport, CapabilityStatus};
 pub use device::{
     AppWindow, Bounds, DesktopDisplay, DeviceState, Platform, Point, RobotDevice, RunningApp,
     ScreenshotOptions, UiTarget,

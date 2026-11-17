@@ -48,6 +48,10 @@ impl RobotRegistry {
 
 #[async_trait]
 impl Robot for RobotRegistry {
+    async fn capabilities(&self, id: &str) -> Result<crate::CapabilityReport, RobotError> {
+        self.driver_for(id).await?.capabilities(id).await
+    }
+
     async fn start_observation(
         &self,
         id: &str,

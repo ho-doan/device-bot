@@ -1,5 +1,6 @@
 //! Declarative scenarios executed exclusively through the device-bot MCP server.
 pub mod mcp;
+pub mod report;
 pub mod runner;
 pub mod schema;
 mod trace;

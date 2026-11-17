@@ -70,7 +70,7 @@ impl FlowRunner {
 
     /// Render step/action/test-input captions into the finalized CLI video.
     /// Caption input stays in memory and is not serialized into the flow report.
-    pub async fn annotate_video(&self, report: &FlowReport) -> Result<()> {
+    pub async fn annotate_video(&mut self, report: &FlowReport) -> Result<()> {
         if let Some(overlay) = &self.video_overlay {
             overlay
                 .render(&self.directory, &report.steps, &report.status)

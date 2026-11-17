@@ -2,6 +2,7 @@
 pub mod plan;
 mod report;
 mod run;
+pub mod session;
 pub mod windows_fixture;
 
 pub use report::ensure_report;
@@ -108,6 +109,17 @@ impl Project {
         std::env::var(key)
             .ok()
             .or_else(|| self.environment.get(key).cloned())
+    }
+
+    /// Snapshot the effective environment for child sessions and compilation.
+    pub fn environment(&self) -> BTreeMap<String, String> {
+        let mut values = self.environment.clone();
+        values.extend(
+            std::env::vars_os().filter_map(|(key, value)| {
+                Some((key.into_string().ok()?, value.into_string().ok()?))
+            }),
+        );
+        values
     }
 
     pub fn resolve(&self, value: &str) -> io::Result<String> {

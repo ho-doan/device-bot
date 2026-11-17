@@ -166,3 +166,50 @@ fn windows_fixture_rejects_non_windows_host_and_missing_state_stop_is_safe() {
         assert_eq!(output.status.success(), success, "{output:?}");
     }
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn named_project_uses_real_cli_and_persistent_mcp_connections() {
+    let project = ProjectDir::new();
+    fs::write(
+        project.0.join(".env"),
+        "DEVICE_BOT_IOS_AGENT_BIND=127.0.0.1:0\nDEVICE_BOT_IOS_SIM_AGENT_BIND=127.0.0.1:0\n",
+    )
+    .unwrap();
+    fs::write(project.0.join("project.yaml"), r#"version: 1
+kind: project
+name: named-smoke
+env_file: .env
+hosts:
+  - {name: desktop, platform: macos, binding: {kind: local}}
+resources:
+  - {name: first, kind: macos, host: desktop, display: {host: desktop}, prepare: {kind: attach}, timeout_ms: 30000}
+  - {name: second, kind: macos, host: desktop, display: {host: desktop}, prepare: {kind: attach}, timeout_ms: 30000}
+flows:
+  - path: flows/smoke.yaml
+    bindings: [{target: first}, {target: second}]
+"#).unwrap();
+    fs::write(
+        project.0.join("flows/smoke.yaml"),
+        "version: 2\nname: named-smoke\nsteps:\n  - wait: {ms: 0}\n",
+    )
+    .unwrap();
+    let output = project.run(&[], None);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let paths = reports(&project.0.join("artifacts"));
+    assert_eq!(paths.len(), 2);
+    let store = robot_report::Store::open(project.0.join("reports")).unwrap();
+    assert!(
+        !store.projects().unwrap().is_empty(),
+        "named cases must enter report history"
+    );
+    for path in paths {
+        let report: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(report["status"], "PASS");
+        assert_eq!(report["dry_run"], false);
+    }
+}

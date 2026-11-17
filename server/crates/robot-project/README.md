@@ -53,9 +53,9 @@ it rejects an existing fixture, waits for its window/widget bridge and restores
 foreground; cleanup checks PID, creation time and executable before closing it.
 Only the process represented by its state file can be stopped.
 
-This first version does not own a persistent multi-target session or project-wide
-recording. Those resources need project lifetime so QC can open all targets
-first, run shared flows and record the desktop once across the complete run.
+Named projects use project-lifetime MCP sessions; project-wide desktop recording
+is not yet implemented. The runtime is also exposed as `robot_project::session`
+with an injectable session factory for embedding and testing.
 
 Tests:
 
@@ -69,13 +69,21 @@ cargo check --manifest-path server/Cargo.toml -p robot-project --target x86_64-p
 Cross-compilation verifies Windows API/types only; live window/bridge behavior
 requires an interactive Windows host with the Flutter fixture installed.
 
-## Named project plans (schema only)
+## Named project sessions
 
-Version 1 also accepts named hosts and resources and a shared flow with named
-bindings. Loading validates this plan but does **not** execute it. The current
-runner rejects named plans before creating artifacts; ordinary path-only flows
-continue to run as before. Runtime capability checks, preparation, ownership,
-remote connections and recording remain future work.
+Version 1 accepts named hosts and resources and runs a shared flow once per
+binding. Each resource owns an MCP connection for the entire project. The
+runtime validates every case and available tool schema before preparing targets,
+then routes stable project aliases to the selected device in each connection.
+A Chrome `launch` creates an owned browser context and opens its URL; cleanup
+closes the project's MCP sessions. Ordinary path-only projects keep their prior
+runner path.
+
+For named projects the supported CLI options are `--dry-run`, `--artifacts`,
+`--confirm`, `--rpc-timeout` and `--case-timeout`. Profile selection is declared
+in each flow binding. The bound resource overrides `profile.device.id` and
+`profile.device.platform` so existing `select_device: ${device}` flows select the alias.
+Each completed case is saved and imported into report history before cleanup.
 
 ```yaml
 version: 1
@@ -88,7 +96,7 @@ hosts:
     binding: {kind: local}
   - name: win
     platform: windows
-    binding: {kind: mcp, endpoint: '${env:WINDOWS_MCP}'}
+    binding: {kind: mcp, endpoint: '${env:WINDOWS_MCP}', allow_remote: true, token_env: WINDOWS_TOKEN}
 resources:
   - name: browser
     kind: chrome
@@ -96,11 +104,11 @@ resources:
     display: {host: mac}
     prepare: {kind: launch, url: 'https://example.com'}
     timeout_ms: 30000
-    requires: [discovery, input]
+    requires: [discovery]
   - name: desktop-app
     kind: windows
     host: win
-    display: {host: mac, via: remote_desktop}
+    display: {host: win}
     selector: stable-app-identifier
     prepare: {kind: attach}
     timeout_ms: 30000
@@ -112,6 +120,10 @@ flows:
       - {target: desktop-app, profile: windows}
 ```
 
+Host and resource names are portable identifiers: 1–64 ASCII letters, digits,
+underscores, or hyphens, beginning with a letter or digit. Windows reserved
+device names and names differing only by case are rejected.
+
 Host platforms are `macos`, `windows`, and `linux`; binding is explicitly
 `local` or `mcp` with an endpoint. Resource kinds are `android`,
 `ios_simulator`, `ios_real`, `chrome`, `windows`, and `macos`. iOS and macOS
@@ -122,12 +134,32 @@ Declaring a display does not start a mirror or recorder. MCP endpoints may
 reference `${env:NAME}`; scoped resolution is available through `Project::resolve`
 without changing the process environment. Do not put secrets directly in YAML.
 
-`prepare: {kind: attach}` declares use of an existing resource. `launch` declares
-project-created work and needs `url` for Chrome or `app_id` for native targets;
-`boot: true` is permitted only for Android and iOS Simulator. The optional
+`prepare: {kind: attach}` selects an already available resource. Chrome
+`launch` creates a project-owned context and navigates it to `url`. Native
+launch/boot is rejected before setup: the current adapter cannot prove process
+ownership and safely stop only the app it created. A future native adapter must
+return a verifiable process identity and a corresponding owned cleanup handle. The optional
 `selector` is a stable device ID or uniquely identifying name for driver discovery, not a raw query, command, script, or transient Chrome target ID.
-`timeout_ms` must be positive. Supported capability names are `discovery`,
-`launch`, `input`, `screenshot`, and `elements`; listing them does not prove
-availability. A binding `profile` names a target in the flow runner profiles file, supplied by the bound flow’s project-root-relative `profiles` path (equivalent to `--profiles` and `--target`). The file must exist; target existence and profile contents remain runtime checks. Bindings select resources and optional flow profiles. Unknown
+`timeout_ms` must be positive. The runtime verifies the discovered device's
+host OS and evaluates each `requires` entry using the read-only
+`mobile_get_capabilities` report. Only `available` satisfies a requirement;
+`blocked`, `unsupported`, and `unknown` stop setup. Discovery alone does not
+prove UI control, and drivers may conservatively report readiness as unknown. A binding `profile` names a target in the flow runner profiles file, supplied by the bound flow’s project-root-relative `profiles` path (equivalent to `--profiles` and `--target`). The profile target and contents are checked before resource preparation. Bindings select resources and optional flow profiles. Unknown
 fields, duplicate names or bindings, invalid references and incompatible hosts
 are rejected. Future actor, recorder and observer fields are not yet accepted.
+
+MCP hosts can opt into plaintext LAN transport explicitly, for example
+`binding: {kind: mcp, endpoint: '${env:REMOTE_URL}', allow_remote: true, token_env: REMOTE_TOKEN}`.
+The token is read only from the named environment variable; ambient local
+credentials are never forwarded to the endpoint. HTTP has no transport encryption;
+use it only on a trusted network. Local owned stdio servers default their iOS
+bridge binds to ephemeral loopback ports so independent sessions do not conflict;
+explicit user-provided bind values are preserved and must not collide.
+
+Remote display/mirroring is declared but rejected at runtime until an adapter
+can verify and own it. The capability report verifies reported host OS and available readiness probes;
+unknown capability or permission states are not treated as available. Input is serialized
+within one project run; cross-process and cross-machine input leasing is not yet
+implemented. Do not run concurrent projects against the same native desktop.
+Cancellation and setup failure close owned sessions; dropping the embedding
+future schedules best-effort asynchronous cleanup while its Tokio runtime lives.

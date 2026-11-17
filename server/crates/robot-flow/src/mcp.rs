@@ -35,8 +35,19 @@ pub struct StdioMcp {
 
 impl StdioMcp {
     pub fn spawn(program: &str, args: &[String], timeout: Duration) -> Result<Self> {
+        Self::spawn_with_environment(program, args, timeout, &BTreeMap::new())
+    }
+
+    /// Start an owned server with per-child environment overrides.
+    pub fn spawn_with_environment(
+        program: &str,
+        args: &[String],
+        timeout: Duration,
+        environment: &BTreeMap<String, String>,
+    ) -> Result<Self> {
         let mut child = Command::new(program)
             .args(args)
+            .envs(environment)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Tool failures arrive through JSON-RPC. Do not persist unredacted

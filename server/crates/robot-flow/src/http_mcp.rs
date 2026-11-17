@@ -65,6 +65,40 @@ impl HttpMcp {
         })
     }
 
+    /// Connect to an explicitly bound endpoint without ambient credential lookup.
+    /// Remote plaintext HTTP requires explicit opt-in; callers must manage trust
+    /// and must supply only the credential intended for this endpoint.
+    pub fn new_explicit(
+        url: &str,
+        timeout: Duration,
+        token: Option<String>,
+        allow_remote: bool,
+    ) -> Result<Self> {
+        let uri: Uri = url.parse().map_err(|_| "invalid MCP HTTP URL")?;
+        let authority = uri.authority().ok_or("MCP URL has no host")?;
+        if uri.scheme_str() != Some("http")
+            || authority.as_str().contains('@')
+            || uri.host().is_none()
+        {
+            return Err("explicit MCP endpoint requires an http:// URL without userinfo".into());
+        }
+        if !allow_remote
+            && !matches!(
+                uri.host(),
+                Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
+            )
+        {
+            return Err("remote MCP endpoint requires explicit opt-in".into());
+        }
+        Ok(Self {
+            uri,
+            session: None,
+            token: token.filter(|s| !s.trim().is_empty()),
+            next_id: 1,
+            timeout,
+        })
+    }
+
     async fn exchange(&mut self, method: Method, body: Option<Value>) -> Result<Value> {
         tokio::time::timeout(self.timeout, async {
             let authority = self.uri.authority().ok_or("MCP URL has no host")?.as_str();
@@ -264,5 +298,31 @@ mod tests {
                 .to_string()
                 .contains("ID mismatch")
         );
+    }
+}
+
+#[cfg(test)]
+mod explicit_endpoint_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_endpoint_requires_remote_opt_in_and_never_loads_ambient_token() {
+        let timeout = Duration::from_secs(1);
+        assert!(HttpMcp::new_explicit("http://192.0.2.1:3000/mcp", timeout, None, false).is_err());
+        let remote =
+            HttpMcp::new_explicit("http://192.0.2.1:3000/mcp", timeout, None, true).unwrap();
+        assert!(remote.token.is_none());
+        let local = HttpMcp::new_explicit(
+            "http://127.0.0.1:3000/mcp",
+            timeout,
+            Some("only-this-token".into()),
+            false,
+        )
+        .unwrap();
+        assert_eq!(local.token.as_deref(), Some("only-this-token"));
+        assert!(
+            HttpMcp::new_explicit("http://user:secret@localhost/mcp", timeout, None, true).is_err()
+        );
+        assert!(HttpMcp::new_explicit("https://localhost/mcp", timeout, None, true).is_err());
     }
 }

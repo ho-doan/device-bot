@@ -43,9 +43,7 @@ pub async fn run(
     reports: &Path,
 ) -> io::Result<i32> {
     if !project.plan.is_legacy() {
-        return Err(crate::invalid(
-            "named project resource execution is not supported yet",
-        ));
+        return run_named(project, arguments, server, reports).await;
     }
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -152,4 +150,100 @@ async fn run_flows(
         }
     }
     Ok(0)
+}
+
+async fn run_named(
+    project: &Project,
+    arguments: &[String],
+    server: &Path,
+    reports: &Path,
+) -> io::Result<i32> {
+    let mut artifacts = PathBuf::from("artifacts/project");
+    let mut confirmed = Vec::new();
+    let mut case_timeout = 600u64;
+    let mut rpc_timeout = 180u64;
+    let mut dry = false;
+    let mut args = arguments.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--dry-run" => dry = true,
+            "--artifacts" => {
+                artifacts = args
+                    .next()
+                    .ok_or_else(|| crate::invalid("--artifacts requires a path"))?
+                    .into()
+            }
+            "--confirm" => confirmed.push(
+                args.next()
+                    .ok_or_else(|| crate::invalid("--confirm requires a value"))?
+                    .clone(),
+            ),
+            "--case-timeout" => {
+                case_timeout = args
+                    .next()
+                    .ok_or_else(|| crate::invalid("--case-timeout requires seconds"))?
+                    .parse()
+                    .map_err(|_| crate::invalid("invalid case timeout"))?
+            }
+            "--rpc-timeout" => {
+                rpc_timeout = args
+                    .next()
+                    .ok_or_else(|| crate::invalid("--rpc-timeout requires seconds"))?
+                    .parse()
+                    .map_err(|_| crate::invalid("invalid RPC timeout"))?
+            }
+            _ => {
+                return Err(crate::invalid(format!(
+                    "option {arg} is not supported for named projects"
+                )));
+            }
+        }
+    }
+    if case_timeout == 0 || case_timeout > 3600 || rpc_timeout == 0 || rpc_timeout > 600 {
+        return Err(crate::invalid("invalid project timeout"));
+    }
+    if dry {
+        let count = crate::session::validate(project, &confirmed)
+            .map_err(|e| crate::invalid(e.to_string()))?;
+        eprintln!("Validated {count} project cases (dry run; no device coverage)");
+        return Ok(0);
+    }
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let output = project
+        .root
+        .join(artifacts)
+        .join(format!("run-{}-{stamp}", std::process::id()));
+    fs::create_dir_all(&output)?;
+    eprintln!("Project: {}\nEvidence: {}", project.name, output.display());
+    let factory = crate::session::DeviceBotFactory {
+        server: server.to_owned(),
+        rpc_timeout: Duration::from_secs(rpc_timeout),
+        artifacts_root: output.join("resources"),
+    };
+    let history_root = project
+        .environment_value("DEVICE_BOT_REPORT_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| reports.to_owned());
+    let result = crate::session::run_with_history(
+        project,
+        &factory,
+        &output,
+        &confirmed,
+        Duration::from_secs(case_timeout),
+        Some(&history_root),
+    )
+    .await;
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
+            ensure_report(&output.join("project-error"))?;
+            return Err(io::Error::other(error.to_string()));
+        }
+    };
+    Ok(i32::from(
+        result.reports.iter().any(|report| report.error.is_some()),
+    ))
 }

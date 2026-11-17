@@ -20,7 +20,13 @@ pub enum HostPlatform {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HostBinding {
     Local {},
-    Mcp { endpoint: String },
+    Mcp {
+        endpoint: String,
+        #[serde(default)]
+        allow_remote: bool,
+        #[serde(default)]
+        token_env: Option<String>,
+    },
 }
 impl std::fmt::Debug for HostBinding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -172,19 +178,22 @@ impl ProjectPlan {
         let mut host_names = HashSet::new();
         for host in &hosts {
             name(&host.name, "host")?;
-            if !host_names.insert(host.name.as_str()) {
+            if !host_names.insert(host.name.to_ascii_lowercase()) {
                 return Err(invalid("duplicate host name"));
             }
-            if let HostBinding::Mcp { endpoint } = &host.binding {
+            if let HostBinding::Mcp { endpoint, .. } = &host.binding {
                 if endpoint.trim().is_empty() {
                     return Err(invalid("MCP endpoint cannot be empty"));
                 }
             }
         }
         let mut resource_names = HashSet::new();
+        let mut resource_path_names = HashSet::new();
         for resource in &resources {
             name(&resource.name, "resource")?;
-            if !resource_names.insert(resource.name.as_str()) {
+            if !resource_names.insert(resource.name.as_str())
+                || !resource_path_names.insert(resource.name.to_ascii_lowercase())
+            {
                 return Err(invalid("duplicate resource name"));
             }
             let host = hosts
@@ -328,9 +337,43 @@ impl ProjectPlan {
     }
 }
 fn name(value: &str, kind: &str) -> io::Result<()> {
-    if value.trim().is_empty() || value.trim() != value {
+    // Resource names become directory components, so enforce the same portable
+    // identifier grammar on every platform, including Windows reserved names.
+    let reserved = matches!(
+        value.to_ascii_uppercase().as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    );
+    if value.is_empty()
+        || value.len() > 64
+        || reserved
+        || !value.as_bytes()[0].is_ascii_alphanumeric()
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
         return Err(invalid(format!(
-            "{kind} name must be nonempty and have no surrounding whitespace"
+            "{kind} name must be 1..64 ASCII letters, digits, underscores or hyphens, start with a letter or digit, and not be a reserved device name"
         )));
     }
     Ok(())

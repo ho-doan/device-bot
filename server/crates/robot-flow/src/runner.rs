@@ -59,6 +59,7 @@ pub struct FlowRunner {
     device: Option<Value>,
     step_device: Option<Value>,
     named_resources: BTreeMap<String, Value>,
+    environment: Option<BTreeMap<String, String>>,
     recording_device: Option<String>,
     directory: PathBuf,
     values: BTreeMap<String, String>,
@@ -84,6 +85,7 @@ impl FlowRunner {
             device: None,
             step_device: None,
             named_resources: BTreeMap::new(),
+            environment: None,
             recording_device: None,
             directory,
             values: BTreeMap::new(),
@@ -106,6 +108,42 @@ impl FlowRunner {
         self.named_resources = resources;
     }
 
+    /// Use a scoped environment for all flow compilation.
+    pub fn set_environment(&mut self, environment: BTreeMap<String, String>) {
+        self.environment = Some(environment);
+    }
+
+    /// Validate a case against advertised tools and named devices without making
+    /// any MCP calls. Run still performs its own validation before execution.
+    pub fn preflight_case(
+        &mut self,
+        flow: &FlowDocument,
+        profile: &Profile,
+        tools: BTreeMap<String, Value>,
+    ) -> Result<()> {
+        let (steps, resolved_profile) =
+            schema::compile_with_environment(flow, profile, self.environment.as_ref())?;
+        self.profile = resolved_profile;
+        self.version = flow.version;
+        self.tools = tools;
+        // An empty advertised list still means tools must be validated.
+        if self.tools.is_empty()
+            && steps.iter().any(|step| {
+                !step.action.contains_key("wait")
+                    && !step.action.contains_key("note_limitation")
+                    && !step.action.contains_key("reset_fields")
+            })
+        {
+            return Err("required MCP tools unavailable".into());
+        }
+        self.preflight(&steps)
+    }
+
+    /// Set the default project target without issuing an MCP discovery call.
+    pub fn set_default_device(&mut self, device: Value) {
+        self.device = Some(device);
+    }
+
     pub async fn run(
         &mut self,
         flow: &FlowDocument,
@@ -116,6 +154,18 @@ impl FlowRunner {
         self.profile = profile.clone();
         self.version = flow.version;
         let dry_run = self.client.is_none();
+        if let Some(environment) = &self.environment {
+            collect_environment_secrets(
+                &serde_json::to_value(flow).unwrap_or_default(),
+                environment,
+                &mut self.secrets,
+            );
+            collect_environment_secrets(
+                &serde_json::to_value(profile).unwrap_or_default(),
+                environment,
+                &mut self.secrets,
+            );
+        }
         let preconditions = profile
             .preconditions
             .iter()
@@ -123,7 +173,8 @@ impl FlowRunner {
             .cloned()
             .collect::<Vec<_>>();
         let result = async {
-            let (steps, resolved_profile) = schema::compile_with_profile(flow, profile)?;
+            let (steps, resolved_profile) =
+                schema::compile_with_environment(flow, profile, self.environment.as_ref())?;
             self.profile = resolved_profile;
             collect_secrets(&serde_json::to_value(&steps).unwrap(), &mut self.secrets);
             self.execution_snapshot = Some(json!({
@@ -348,6 +399,73 @@ impl FlowRunner {
             .and_then(|d| d["id"].as_str())
             .ok_or("select a device before UI actions".into())
     }
+}
+
+// Only referenced values are redacted; unrelated inherited values such as "1"
+// must not corrupt step IDs, device names or diagnostics.
+fn collect_environment_secrets(
+    value: &Value,
+    environment: &BTreeMap<String, String>,
+    secrets: &mut Vec<String>,
+) {
+    fn add(name: &str, environment: &BTreeMap<String, String>, secrets: &mut Vec<String>) {
+        if let Some(value) = environment.get(name).filter(|value| !value.is_empty()) {
+            secrets.push(value.clone());
+        }
+    }
+    match value {
+        Value::String(text) => {
+            let mut rest = text.as_str();
+            while let Some(index) = rest.find("${env:") {
+                if !rest[..index].ends_with('$') {
+                    if let Some(end) = rest[index + 6..].find('}') {
+                        add(&rest[index + 6..index + 6 + end], environment, secrets);
+                    }
+                }
+                rest = &rest[index + 6..];
+            }
+        }
+        Value::Object(map) => {
+            if let Some(name) = map.get("text_from_env").and_then(Value::as_str) {
+                add(name, environment, secrets);
+            }
+            for child in map.values() {
+                collect_environment_secrets(child, environment, secrets);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                collect_environment_secrets(child, environment, secrets);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Scrub referenced scoped environment values from setup diagnostics.
+pub fn redact_environment_error(
+    message: &str,
+    flow: &FlowDocument,
+    profile: &Profile,
+    environment: &BTreeMap<String, String>,
+) -> String {
+    let mut secrets = Vec::new();
+    collect_environment_secrets(
+        &serde_json::to_value(flow).unwrap_or_default(),
+        environment,
+        &mut secrets,
+    );
+    collect_environment_secrets(
+        &serde_json::to_value(profile).unwrap_or_default(),
+        environment,
+        &mut secrets,
+    );
+    secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    let mut result = message.to_owned();
+    for secret in secrets {
+        result = result.replace(&secret, "<REDACTED>");
+    }
+    result
 }
 
 fn append_error(error: &mut Option<FlowError>, next: FlowError) {

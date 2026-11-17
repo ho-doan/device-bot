@@ -70,6 +70,12 @@ Không coi cross-compilation hoặc process mock là bằng chứng live Windows
 - [ ] CLI và QC dùng cùng project runtime, cùng MCP contract.
 - [ ] Test Rust ở đúng seam và commit mốc.
 
+Bằng chứng từng phần: runtime dùng `FlowRunner` với MCP session riêng theo
+resource; seam tests kiểm alias, thứ tự prepare, cleanup và scoped env. Smoke
+CLI/MCP thật trên macOS dùng hai binding attach và bước `wait`, không xác minh
+UI control hay platform parity. Chrome launch, remote host, input lease và
+capability thực tế vẫn cần kiểm chứng live; không đánh dấu hoàn tất từ mock.
+
 Target khác host phải có cách hiển thị remote/mirror trên desktop được record.
 Không giả định iOS Simulator chạy native trên Windows hoặc Windows app chạy
 native trên macOS. Linux desktop/recording chỉ nhận khi driver thực sự có.

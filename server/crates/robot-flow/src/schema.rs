@@ -225,11 +225,19 @@ impl FlowDocument {
 }
 
 pub fn resolve(value: &Value, variables: &BTreeMap<String, Value>) -> Result<Value> {
+    resolve_scoped(value, variables, None)
+}
+
+fn resolve_scoped(
+    value: &Value,
+    variables: &BTreeMap<String, Value>,
+    environment: Option<&BTreeMap<String, String>>,
+) -> Result<Value> {
     Ok(match value {
         Value::String(text) => {
             if text.starts_with("${") && text.ends_with('}') && text.matches("${").count() == 1 {
                 let key = &text[2..text.len() - 1];
-                variable(key, variables)?
+                variable(key, variables, environment)?
             } else {
                 let mut rest = text.as_str();
                 let mut result = String::new();
@@ -246,7 +254,7 @@ pub fn resolve(value: &Value, variables: &BTreeMap<String, Value>) -> Result<Val
                     result.push_str(&rest[..start]);
                     let end =
                         rest[start + 2..].find('}').ok_or("unterminated variable")? + start + 2;
-                    let v = variable(&rest[start + 2..end], variables)?;
+                    let v = variable(&rest[start + 2..end], variables, environment)?;
                     result.push_str(v.as_str().ok_or("embedded variable must be a string")?);
                     rest = &rest[end + 1..];
                 }
@@ -257,29 +265,39 @@ pub fn resolve(value: &Value, variables: &BTreeMap<String, Value>) -> Result<Val
         Value::Array(items) => Value::Array(
             items
                 .iter()
-                .map(|v| resolve(v, variables))
+                .map(|v| resolve_scoped(v, variables, environment))
                 .collect::<Result<_>>()?,
         ),
         Value::Object(items) => Value::Object(
             items
                 .iter()
-                .map(|(k, v)| Ok((k.clone(), resolve(v, variables)?)))
+                .map(|(k, v)| Ok((k.clone(), resolve_scoped(v, variables, environment)?)))
                 .collect::<Result<_>>()?,
         ),
         value => value.clone(),
     })
 }
 
-fn variable(key: &str, variables: &BTreeMap<String, Value>) -> Result<Value> {
+fn variable(
+    key: &str,
+    variables: &BTreeMap<String, Value>,
+    environment: Option<&BTreeMap<String, String>>,
+) -> Result<Value> {
     if let Some(name) = key.strip_prefix("env:") {
-        return std::env::var(name)
-            .map(Value::String)
-            .map_err(|_| crate::FlowError::from(format!("missing environment variable {name}")));
+        return environment_value(name, environment).map(Value::String);
     }
     variables
         .get(key)
         .cloned()
         .ok_or_else(|| crate::FlowError::from(format!("unresolved variable {key}")))
+}
+
+fn environment_value(name: &str, environment: Option<&BTreeMap<String, String>>) -> Result<String> {
+    match environment {
+        Some(values) => values.get(name).cloned(),
+        None => std::env::var(name).ok(),
+    }
+    .ok_or_else(|| format!("missing environment variable {name}").into())
 }
 
 /// Expand declarative recipes before connecting to MCP. Recursive/unknown
@@ -291,6 +309,15 @@ pub fn compile(flow: &FlowDocument, profile: &Profile) -> Result<Vec<Step>> {
 pub(crate) fn compile_with_profile(
     flow: &FlowDocument,
     profile: &Profile,
+) -> Result<(Vec<Step>, Profile)> {
+    compile_with_environment(flow, profile, None)
+}
+
+/// Compile against an explicit environment, without modifying process globals.
+pub fn compile_with_environment(
+    flow: &FlowDocument,
+    profile: &Profile,
+    environment: Option<&BTreeMap<String, String>>,
 ) -> Result<(Vec<Step>, Profile)> {
     if profile
         .stable_samples
@@ -308,7 +335,7 @@ pub(crate) fn compile_with_profile(
     for name in definitions.keys() {
         vars.insert(
             name.clone(),
-            resolve_definition(name, &definitions, &mut Vec::new())?,
+            resolve_definition(name, &definitions, &mut Vec::new(), environment)?,
         );
     }
     // Resolve selector templates once with the same opaque variable values as
@@ -319,8 +346,9 @@ pub(crate) fn compile_with_profile(
     resolved_profile.variables = vars.clone();
     resolved_profile.device = vars["device"].clone();
     resolved_profile.app_id = vars["app_id"].as_str().unwrap_or_default().to_owned();
-    resolved_profile.selectors = serde_json::from_value(resolve(&selector_source, &vars)?)
-        .map_err(|e| format!("invalid resolved selectors: {e}"))?;
+    resolved_profile.selectors =
+        serde_json::from_value(resolve_scoped(&selector_source, &vars, environment)?)
+            .map_err(|e| format!("invalid resolved selectors: {e}"))?;
     let profile = &resolved_profile;
     for (name, selector) in &profile.selectors {
         validate_selector(name, selector, profile, &mut Vec::new())?;
@@ -328,7 +356,14 @@ pub(crate) fn compile_with_profile(
     for name in profile.recipes.keys() {
         check_recipe_cycles(name, profile, &mut Vec::new())?;
     }
-    let steps = expand(&flow.steps, profile, &vars, &mut Vec::new(), "")?;
+    let steps = expand(
+        &flow.steps,
+        profile,
+        &vars,
+        &mut Vec::new(),
+        "",
+        environment,
+    )?;
     Ok((steps, resolved_profile))
 }
 
@@ -336,6 +371,7 @@ fn resolve_definition(
     name: &str,
     definitions: &BTreeMap<String, Value>,
     stack: &mut Vec<String>,
+    environment: Option<&BTreeMap<String, String>>,
 ) -> Result<Value> {
     if stack.iter().any(|n| n == name) || stack.len() >= 16 {
         return Err(format!("cyclic or excessive variable nesting: {name}").into());
@@ -380,10 +416,13 @@ fn resolve_definition(
     stack.push(name.into());
     let mut resolved = BTreeMap::new();
     for key in refs {
-        resolved.insert(key.clone(), resolve_definition(&key, definitions, stack)?);
+        resolved.insert(
+            key.clone(),
+            resolve_definition(&key, definitions, stack, environment)?,
+        );
     }
     stack.pop();
-    resolve(value, &resolved)
+    resolve_scoped(value, &resolved, environment)
 }
 
 fn check_recipe_cycles(name: &str, profile: &Profile, stack: &mut Vec<String>) -> Result<()> {
@@ -541,6 +580,7 @@ fn expand(
     vars: &BTreeMap<String, Value>,
     stack: &mut Vec<String>,
     prefix: &str,
+    environment: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<Step>> {
     if stack.len() > 16 {
         return Err("recipe nesting exceeds 16".into());
@@ -564,7 +604,7 @@ fn expand(
             .platform
             .as_ref()
             .map(|value| {
-                let resolved = resolve(&json!(value), vars)?;
+                let resolved = resolve_scoped(&json!(value), vars, environment)?;
                 let platform = resolved.as_str().ok_or("step platform must be a string")?;
                 if !["android", "ios", "macos", "windows", "chrome"].contains(&platform) {
                     return Err(crate::FlowError::from(format!(
@@ -578,7 +618,7 @@ fn expand(
             .resource
             .as_ref()
             .map(|value| {
-                let resolved = resolve(&json!(value), vars)?;
+                let resolved = resolve_scoped(&json!(value), vars, environment)?;
                 let name = resolved.as_str().ok_or("step resource must be a string")?;
                 if name.trim().is_empty() || name.trim() != name {
                     return Err(crate::FlowError::from(format!(
@@ -607,7 +647,7 @@ fn expand(
                 object.remove("else");
             }
         }
-        let mut args = resolve(&template, vars)?;
+        let mut args = resolve_scoped(&template, vars, environment)?;
         validate_action_keys(action, &args)?;
         if let Some(value) = args.get("web_context") {
             let context: FlowWebContext = serde_json::from_value(value.clone())
@@ -631,7 +671,7 @@ fn expand(
                 local.extend(parameters.iter().map(|(k, v)| (k.clone(), v.clone())));
             }
             stack.push(name);
-            let mut expanded = expand(recipe, p, &local, stack, &format!("{id}."))?;
+            let mut expanded = expand(recipe, p, &local, stack, &format!("{id}."), environment)?;
             for child in &mut expanded {
                 if child.note.is_none() {
                     child.note = step.note.clone();
@@ -657,6 +697,7 @@ fn expand(
                     vars,
                     stack,
                     &format!("{id}.{branch}."),
+                    environment,
                 )?)
                 .unwrap();
             }
@@ -680,10 +721,7 @@ fn expand(
             validate_selector(&id, &s, p, &mut Vec::new())?;
             if action == "fill_field" {
                 if let Some(env) = args.get("text_from_env").and_then(Value::as_str) {
-                    args["text"] = json!(
-                        std::env::var(env)
-                            .map_err(|_| format!("missing environment variable {env}"))?
-                    );
+                    args["text"] = json!(environment_value(env, environment)?);
                 }
                 if args["text"].as_str().is_none_or(str::is_empty) {
                     return Err(format!("{id}: fill_field.text must not be empty").into());
@@ -711,6 +749,7 @@ fn expand(
                             &local,
                             stack,
                             &format!("{id}.{field}."),
+                            environment,
                         )?)
                         .unwrap();
                         stack.pop();
@@ -834,6 +873,38 @@ mod input_metadata_tests {
                 .iter()
                 .all(|step| step.action.len() == 1 && !step.action.contains_key("note"))
         );
+    }
+
+    #[test]
+    fn scoped_environment_resolves_nested_templates_and_text_without_process_fallback() {
+        let flow = FlowDocument::from_yaml(
+            r#"
+version: 2
+name: scoped
+steps:
+  - run: {recipe: input}
+"#,
+        )
+        .unwrap();
+        let mut profile = Profile::default();
+        profile
+            .variables
+            .insert("secret".into(), json!("${env:SCOPED_SECRET}"));
+        profile.recipes.insert(
+            "input".into(),
+            serde_yaml::from_str(
+                r#"
+- type_text: {text: "${secret}"}
+- fill_field: {filter: field, text_from_env: SCOPED_SECRET}
+"#,
+            )
+            .unwrap(),
+        );
+        let env = BTreeMap::from([("SCOPED_SECRET".into(), "opaque-${literal}".into())]);
+        let (steps, _) = compile_with_environment(&flow, &profile, Some(&env)).unwrap();
+        assert_eq!(steps[0].action["type_text"]["text"], "opaque-${literal}");
+        assert_eq!(steps[1].action["fill_field"]["text"], "opaque-${literal}");
+        assert!(compile_with_environment(&flow, &profile, Some(&BTreeMap::new())).is_err());
     }
 
     #[test]

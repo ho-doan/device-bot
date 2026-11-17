@@ -109,12 +109,87 @@ fn rejects_invalid_names_references_platforms_and_future_fields() {
 }
 
 #[tokio::test]
-async fn named_plan_is_rejected_before_running_or_creating_artifacts() {
+async fn unprepared_remote_display_is_rejected_before_connecting() {
     let temp = Temp::new();
+    fs::write(
+        temp.0.join("profiles.yaml"),
+        "version: 1\ntargets: {web: {}, desktop: {}}\n",
+    )
+    .unwrap();
     let project = temp.load(MANIFEST).unwrap();
     let error = robot_project::run(&project, &[], &temp.0, &temp.0, &temp.0)
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("not supported"));
+    assert!(error.to_string().contains("remote display"), "{error}");
+}
+
+#[test]
+fn rejects_identifiers_that_can_escape_or_collide_on_supported_platforms() {
+    let temp = Temp::new();
+    let sentinel = temp.0.join("outside-marker");
+    fs::write(&sentinel, "untouched").unwrap();
+    for value in [
+        "../outside-marker",
+        "..\\outside-marker",
+        "/absolute",
+        "C:\\escape",
+        ".",
+        "..",
+        "folder/name",
+        "folder\\name",
+        "CON",
+        "aux",
+        "Com1",
+        "LPT9",
+        "name.",
+        "name ",
+        "-leading",
+        "é",
+        &"a".repeat(65),
+    ] {
+        let quoted = serde_json::to_string(value).unwrap();
+        for (from, kind) in [
+            ("name: browser", "resource"),
+            ("name: desktop", "host"),
+            ("target: browser", "flow target"),
+        ] {
+            let field = from.split(':').next().unwrap();
+            let manifest = MANIFEST.replacen(from, &format!("{field}: {quoted}"), 1);
+            let error = temp
+                .load(&manifest)
+                .err()
+                .expect("unsafe identifier accepted");
+            assert!(
+                error.to_string().contains(&format!("{kind} name")),
+                "{value:?}: {error}"
+            );
+        }
+    }
+    let host_collision = MANIFEST.replace("name: win", "name: DESKTOP");
+    assert!(
+        temp.load(&host_collision)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate host name")
+    );
+    let case_collision = MANIFEST.replace("name: app", "name: BROWSER");
+    assert!(
+        temp.load(&case_collision)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate resource name")
+    );
+    assert_eq!(fs::read_to_string(&sentinel).unwrap(), "untouched");
     assert!(!temp.0.join("artifacts").exists());
+}
+
+#[test]
+fn accepts_portable_identifier_boundaries() {
+    let temp = Temp::new();
+    for value in ["a", "desktop_1", "browser-2", &"a".repeat(64)] {
+        let manifest = MANIFEST
+            .replace("name: browser", &format!("name: {value}"))
+            .replace("target: browser", &format!("target: {value}"));
+        temp.load(&manifest).unwrap();
+    }
 }

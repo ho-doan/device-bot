@@ -57,6 +57,8 @@ pub(crate) struct Selection {
     pub(crate) platform: Option<String>,
     pub(crate) artifact: Option<String>,
     pub(crate) environment: BTreeMap<String, String>,
+    pub(crate) file_preparation: Option<crate::artifact::FilePreparation>,
+    pub(crate) file_argument_indexes: Vec<usize>,
 }
 
 pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<Selection> {
@@ -125,6 +127,8 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
                 platform: None,
                 artifact,
                 environment: BTreeMap::new(),
+                file_preparation: None,
+                file_argument_indexes: Vec::new(),
             });
         }
         return Err(invalid("project requires --platform"));
@@ -142,6 +146,10 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
         Some(preparation) => preparation.prepare(project, artifact.as_deref())?,
         None => BTreeMap::new(),
     };
+    let file_preparation = config
+        .prepare
+        .as_ref()
+        .and_then(crate::preparation::Preparation::file_preparation);
     if flags.contains(&"--profiles") || flags.contains(&"--target") {
         return Err(invalid(
             "--profiles and --target cannot override a project platform",
@@ -162,12 +170,19 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
         "--target".into(),
         config.target.as_deref().unwrap_or(selected).into(),
     ]);
+    let mut file_argument_indexes = Vec::new();
     for (flag, default) in [("--device", &config.device), ("--app-id", &config.app_id)] {
         if !flags.contains(&flag) {
             if let Some(value) = default {
+                let uses_file = file_preparation.as_ref().is_some_and(|preparation| {
+                    value.contains(&format!("${{env:{}}}", preparation.path_env))
+                });
                 let value = project.resolve_with(value, &environment)?;
                 if value.trim().is_empty() {
                     return Err(invalid(format!("project platform {flag} cannot be empty")));
+                }
+                if uses_file {
+                    file_argument_indexes.push(forwarded.len() + 1);
                 }
                 forwarded.extend([flag.into(), value]);
             }
@@ -178,6 +193,8 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
         platform: Some(selected.to_owned()),
         artifact,
         environment,
+        file_preparation,
+        file_argument_indexes,
     })
 }
 
@@ -382,5 +399,35 @@ platforms:
             assert!(!error.contains("password") && !error.contains("token=secret"));
         }
         assert!(arguments(&project, &args(&["--platform", "web"])).is_err());
+    }
+
+    #[test]
+    fn artifact_file_supports_gitlab_auth_from_project_environment() {
+        let f = Fixture::new();
+        let manifest = f.0.join("project.yaml");
+        let source = fs::read_to_string(&manifest).unwrap().replace(
+            "    target: chrome\n",
+            "    target: chrome\n    prepare:\n      kind: artifact_file\n      path_env: APP_FILE\n      file_name: build.zip\n      auth: {kind: gitlab_job_token, token_env: TEST_JOB_TOKEN, origin_env: TEST_GITLAB_ORIGIN}\n",
+        );
+        fs::write(manifest, source).unwrap();
+        fs::write(
+            f.0.join(".env"),
+            "PROJECT_PLATFORM_APP=app\nPROJECT_PLATFORM_DEVICE=device\nTEST_JOB_TOKEN=secret\nTEST_GITLAB_ORIGIN=https://gitlab.example.test\n",
+        )
+        .unwrap();
+        let project = f.project();
+        let selection = arguments(
+            &project,
+            &args(&[
+                "--platform",
+                "web",
+                "--artifact",
+                "https://gitlab.example.test/api/artifact",
+            ]),
+        )
+        .unwrap();
+        assert!(selection.file_preparation.is_some());
+        assert!(!format!("{project:?}").contains("secret"));
+        assert!(!selection.arguments.iter().any(|arg| arg.contains("secret")));
     }
 }

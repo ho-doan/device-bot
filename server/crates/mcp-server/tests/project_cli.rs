@@ -283,6 +283,36 @@ fn web_url_artifact_is_available_to_profiles_through_the_project_cli() {
 }
 
 #[test]
+fn project_cli_stages_local_artifact_for_a_live_mcp_smoke() {
+    let project = ProjectDir::new();
+    fs::write(project.0.join("app.apk"), b"apk fixture bytes").unwrap();
+    fs::write(
+        project.0.join("profiles.yaml"),
+        "version: 1\ntargets:\n  android:\n    app_id: '${env:PROJECT_STAGED_FILE}'\n",
+    )
+    .unwrap();
+    fs::write(project.0.join("project.yaml"), "version: 1\nkind: project\nname: staged\nenv_file: .env\nflows: [flows]\nplatforms:\n  android:\n    profiles: profiles.yaml\n    prepare: {kind: artifact_file, path_env: PROJECT_STAGED_FILE, file_name: app.apk}\n").unwrap();
+    let output = project.run(&["--platform", "android", "--artifact", "app.apk"], None);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let paths = reports(&project.0.join("artifacts"));
+    assert_eq!(paths.len(), 1);
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(&paths[0]).unwrap()).unwrap();
+    assert_eq!(report["status"], "PASS");
+    assert_eq!(report["dry_run"], false);
+    let run_dir = paths[0]
+        .ancestors()
+        .find(|path| path.join("artifact.json").is_file())
+        .unwrap();
+    let artifact: serde_json::Value =
+        serde_json::from_slice(&fs::read(run_dir.join("artifact.json")).unwrap()).unwrap();
+    assert_eq!(artifact["bytes"], 17);
+}
+
+#[test]
 fn native_report_helper_runs_without_services_and_preserves_existing_report() {
     let project = ProjectDir::new();
     let output_dir = project.0.join("ci-error");

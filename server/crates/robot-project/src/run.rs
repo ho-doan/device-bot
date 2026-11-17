@@ -42,32 +42,116 @@ pub async fn run(
     server: &Path,
     reports: &Path,
 ) -> io::Result<i32> {
-    let selection = crate::platform::arguments(project, arguments)?;
+    let mut selection = match crate::platform::arguments(project, arguments) {
+        Ok(selection) => selection,
+        Err(error) => {
+            let output = create_output(project, arguments)?;
+            ensure_report(&output.join("project-error"))?;
+            return Err(error);
+        }
+    };
     let arguments = &selection.arguments;
     if !project.plan.is_legacy() {
         return run_named(project, arguments, server, reports).await;
+    }
+    let output = create_output(project, arguments)?;
+    let dry = selection
+        .arguments
+        .iter()
+        .any(|argument| argument == "--dry-run");
+    let _artifact = if !dry {
+        if let Some(config) = &selection.file_preparation {
+            let source = selection
+                .artifact
+                .as_deref()
+                .expect("artifact validated during selection");
+            let result = tokio::select! {
+                result = config.acquire(project, source, &output) => result,
+                _ = interrupted() => Err(io::Error::new(io::ErrorKind::Interrupted, "artifact preparation interrupted")),
+            };
+            let acquired = match result {
+                Ok(acquired) => acquired,
+                Err(error) => {
+                    ensure_report(&output.join("project-error"))?;
+                    return Err(error);
+                }
+            };
+            let path = acquired
+                .path
+                .to_str()
+                .ok_or_else(|| invalid_artifact_path(&output))?
+                .to_owned();
+            selection
+                .environment
+                .insert(config.path_env.clone(), path.clone());
+            for index in &selection.file_argument_indexes {
+                let argument = &mut selection.arguments[*index];
+                *argument = argument.replace(crate::artifact::DRY_RUN_PLACEHOLDER, &path);
+            }
+            Some(acquired)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let result = run_flows(project, &selection, runner, server, reports, &output).await;
+    if result.is_err() {
+        ensure_report(&output.join("project-error"))?;
+    }
+    result
+}
+
+fn create_output(project: &Project, arguments: &[String]) -> io::Result<PathBuf> {
+    let mut base = PathBuf::from("artifacts/project");
+    let mut i = 0;
+    while i < arguments.len() {
+        let takes_value = matches!(
+            arguments[i].as_str(),
+            "--artifacts"
+                | "--platform"
+                | "--artifact"
+                | "--profiles"
+                | "--target"
+                | "--device"
+                | "--app-id"
+                | "--server"
+                | "--server-arg"
+                | "--mcp-url"
+                | "--confirm"
+                | "--rpc-timeout"
+                | "--case-timeout"
+        );
+        if takes_value {
+            if let Some(value) = arguments.get(i + 1) {
+                if arguments[i] == "--artifacts" && !value.is_empty() && !value.starts_with('-') {
+                    base = value.into();
+                }
+            }
+            i += 2;
+        } else {
+            i += 1;
+        }
     }
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let base = arguments
-        .windows(2)
-        .filter(|pair| pair[0] == "--artifacts")
-        .map(|pair| PathBuf::from(&pair[1]))
-        .next_back()
-        .unwrap_or_else(|| PathBuf::from("artifacts/project"));
     let output = project
         .root
         .join(base)
         .join(format!("run-{}-{stamp}", std::process::id()));
     fs::create_dir_all(&output)?;
     eprintln!("Project: {}\nEvidence: {}", project.name, output.display());
-    let result = run_flows(project, &selection, runner, server, reports, &output).await;
-    if result.is_err() {
-        ensure_report(&output.join("project-error"))?;
-    }
-    result
+    Ok(output)
+}
+
+fn invalid_artifact_path(output: &Path) -> io::Error {
+    let _ = ensure_report(&output.join("project-error"));
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "artifact temporary path is not UTF-8",
+    )
 }
 
 async fn run_flows(

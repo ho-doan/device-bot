@@ -15,6 +15,11 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 dotenvy = "0.15.7"
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7.1"
+sha2 = "0.10.9"
+tempfile = "3.27.0"
 tokio = { workspace = true, features = ["signal"] }
 url = "2.5.8"
 

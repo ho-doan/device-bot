@@ -1,4 +1,5 @@
 //! Project manifests and orchestration; flows still execute through robot-flow/MCP.
+mod artifact;
 mod hook;
 pub mod plan;
 mod platform;

@@ -82,6 +82,39 @@ fixture environments without modifying the parent. It does not accept URL
 credentials, query strings or route fragments. A Web ZIP is not yet supported.
 These settings do not install an application or reset its state.
 
+`artifact_file` stages a local file or a direct HTTP(S) download once per live
+project run, makes the staged path available to flows through a named environment
+variable, and removes the staged copy after the run. An optional environment
+variable supplies an expected SHA-256; a mismatch fails setup. A checksum and
+size are recorded in `artifact.json`, without the source URL or path.
+
+```yaml
+platforms:
+  android:
+    profiles: profiles/native.yaml
+    prepare:
+      kind: artifact_file
+      path_env: APP_APK
+      file_name: app.apk
+      sha256_env: APP_APK_SHA256 # optional
+      max_bytes: 2147483648      # optional, maximum 10 GiB
+```
+
+Run `device-bot run . --platform android --artifact build/app.apk`. A relative
+file path is resolved from the project directory. The filename is configured in
+YAML, so even download URLs without an extension can produce an `.apk` path.
+The staged path can be referenced as `${env:APP_APK}` in the profile or flow;
+it points to a file on the project runner host, so a remote MCP host cannot use
+that path unless it has access to the same filesystem. This adapter does not yet
+install the APK or unpack an archive. A dry-run checks
+configuration and local file metadata but neither downloads remote input nor
+stages a copy. Successful validation does not prove the artifact can be installed.
+For a protected GitLab artifact URL, add
+`auth: {kind: gitlab_job_token, token_env: CI_JOB_TOKEN}` inside `prepare`.
+The initial URL must match `CI_SERVER_URL`'s origin; a different environment
+variable can be named with `origin_env`. The `JOB-TOKEN` header is not sent to
+a different origin reached by a redirect.
+
 Projects may declare a per-case fixture preparation command. This is useful when
 the application must be reset between cases, as launching it does not itself
 prove a reset. The command runs once before each live case; it is skipped during

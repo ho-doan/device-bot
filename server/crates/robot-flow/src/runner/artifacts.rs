@@ -56,13 +56,18 @@ impl FlowRunner {
             })
             .ok_or("recorded video path missing")?;
         let path = Path::new(path.trim());
-        if fs::metadata(path)
-            .map_err(|e| crate::FlowError::from(e.to_string()))?
-            .len()
-            == 0
-        {
-            return Err("recorded video is empty".into());
-        }
+        let ffmpeg = self.environment.as_ref().map(|env| {
+            crate::video_validation::resolve_ffmpeg_path(
+                env.get("DEVICE_BOT_FFMPEG_PATH").map(Path::new),
+                false,
+            )
+        });
+        crate::video_validation::validate_video(
+            path,
+            ffmpeg.as_deref(),
+            std::time::Duration::from_secs(120),
+        )
+        .await?;
         fs::copy(path, self.directory.join("video.mp4"))
             .map_err(|e| crate::FlowError::from(e.to_string()))?;
         Ok(())

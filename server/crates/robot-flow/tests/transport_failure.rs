@@ -27,7 +27,7 @@ async fn lost_action_reply_stops_at_step_five_without_retry_and_preserves_cleanu
         )));
     std::fs::create_dir_all(&temp.0).unwrap();
     let recording = temp.0.join("capture.mp4");
-    std::fs::write(&recording, b"video fixture").unwrap();
+    std::fs::write(&recording, include_bytes!("fixtures/tiny.mp4")).unwrap();
     let actions = Arc::new(Mutex::new(Vec::<Value>::new()));
     let observed = actions.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -165,7 +165,7 @@ async fn lost_action_reply_stops_at_step_five_without_retry_and_preserves_cleanu
     assert!(evidence.join("before-failure.png").is_file());
     assert_eq!(
         std::fs::read(evidence.join("video.mp4")).unwrap(),
-        b"video fixture"
+        include_bytes!("fixtures/tiny.mp4")
     );
     for name in ["mcp-calls.jsonl", "expanded-flow.yaml"] {
         let text = std::fs::read_to_string(evidence.join(name)).unwrap();

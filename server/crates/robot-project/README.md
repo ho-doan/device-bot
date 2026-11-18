@@ -130,6 +130,23 @@ The initial URL must match `CI_SERVER_URL`'s origin; a different environment
 variable can be named with `origin_env`. The `JOB-TOKEN` header is not sent to
 a different origin reached by a redirect.
 
+For a ZIP artifact, `extract: {kind: zip}` extracts into temporary project-owned
+storage and makes `path_env` point to the resulting directory. For example:
+
+```yaml
+prepare:
+  kind: artifact_file
+  path_env: APP_DIR
+  file_name: build.zip
+  extract: {kind: zip, max_expanded_bytes: 4294967296, max_entries: 20000}
+```
+
+Extraction rejects unsafe paths, links, special files and conflicting entries,
+and enforces entry and expanded-size limits. The staged archive and extracted
+directory are removed after the run. Dry-run checks the input configuration but
+does not download or unpack it. Extraction alone does not serve or install an app;
+the project must declare the appropriate preparation flow or resource.
+
 Projects may run YAML preparation flows once per suite and before each case:
 
 ```yaml

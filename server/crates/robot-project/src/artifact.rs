@@ -6,6 +6,10 @@ use sha2::{Digest, Sha256};
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -23,6 +27,42 @@ pub(crate) enum DownloadAuth {
     },
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum Extraction {
+    Zip {
+        #[serde(default = "default_expanded_bytes")]
+        max_expanded_bytes: u64,
+        #[serde(default = "default_archive_entries")]
+        max_entries: usize,
+    },
+}
+
+fn default_expanded_bytes() -> u64 {
+    4 * 1024 * 1024 * 1024
+}
+fn default_archive_entries() -> usize {
+    20_000
+}
+
+impl Extraction {
+    pub(crate) fn validate(&self) -> io::Result<()> {
+        match self {
+            Self::Zip {
+                max_expanded_bytes,
+                max_entries,
+            } if *max_expanded_bytes > 0
+                && *max_expanded_bytes <= 10 * 1024 * 1024 * 1024
+                && *max_entries > 0
+                && *max_entries <= 100_000 =>
+            {
+                Ok(())
+            }
+            _ => Err(invalid("ZIP extraction limits are invalid")),
+        }
+    }
+}
+
 fn default_gitlab_origin_env() -> String {
     "CI_SERVER_URL".into()
 }
@@ -34,12 +74,20 @@ pub(crate) struct FilePreparation {
     pub(crate) file_name: String,
     pub(crate) max_bytes: u64,
     pub(crate) auth: Option<DownloadAuth>,
+    pub(crate) extract: Option<Extraction>,
 }
 
 pub(crate) struct Acquired {
     pub(crate) path: PathBuf,
     // The temporary directory remains owned until the project finishes.
     _directory: tempfile::TempDir,
+}
+
+struct ExtractionCancellation(Arc<AtomicBool>);
+impl Drop for ExtractionCancellation {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 impl FilePreparation {
@@ -274,6 +322,25 @@ impl FilePreparation {
                 "artifact SHA-256 does not match the expected checksum",
             ));
         }
+        let (directory, path) = match self.extract.clone() {
+            None => (directory, path),
+            Some(extraction) => {
+                let cancellation = ExtractionCancellation(Arc::new(AtomicBool::new(false)));
+                let cancelled = Arc::clone(&cancellation.0);
+                let result = tokio::task::spawn_blocking(move || {
+                    let extracted = directory.path().join(format!(
+                        "{}.unpacked",
+                        path.file_name().unwrap().to_string_lossy()
+                    ));
+                    extract_archive(&path, &extracted, &extraction, &cancelled)?;
+                    Ok::<_, io::Error>((directory, extracted))
+                })
+                .await
+                .map_err(|_| io::Error::other("artifact extraction task failed"))??;
+                drop(cancellation);
+                result
+            }
+        };
         let metadata = serde_json::json!({"source": source_kind, "bytes": size, "sha256": actual, "checksum_verified": self.sha256_env.is_some()});
         tokio::fs::write(
             evidence.join("artifact.json"),
@@ -285,6 +352,106 @@ impl FilePreparation {
             _directory: directory,
         })
     }
+}
+
+fn extract_archive(
+    source: &Path,
+    destination: &Path,
+    extraction: &Extraction,
+    cancelled: &AtomicBool,
+) -> io::Result<()> {
+    use std::io::{Read, Write};
+    let Extraction::Zip {
+        max_expanded_bytes,
+        max_entries,
+    } = extraction;
+    let input = std::fs::File::open(source).map_err(|_| invalid("cannot open artifact ZIP"))?;
+    let mut archive = zip::ZipArchive::new(input).map_err(|_| invalid("invalid artifact ZIP"))?;
+    if archive.is_empty() || archive.len() > *max_entries {
+        return Err(invalid("artifact ZIP entry count exceeds configured limit"));
+    }
+    std::fs::create_dir(destination)?;
+    let mut remaining = *max_expanded_bytes;
+    for index in 0..archive.len() {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "artifact extraction interrupted",
+            ));
+        }
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|_| invalid("invalid artifact ZIP entry"))?;
+        let name = entry.name();
+        if name.contains('\\')
+            || name.contains(':')
+            || name.contains('\0')
+            || name.split('/').any(|part| part == "." || part == "..")
+        {
+            return Err(invalid("unsafe artifact ZIP path"));
+        }
+        let relative = entry
+            .enclosed_name()
+            .filter(|path| !path.as_os_str().is_empty())
+            .ok_or_else(|| invalid("unsafe artifact ZIP path"))?;
+        let mode = entry.unix_mode().unwrap_or(0);
+        let kind = mode & 0o170000;
+        if !matches!(kind, 0 | 0o100000 | 0o040000) {
+            return Err(invalid("artifact ZIP contains a link or special file"));
+        }
+        let output = destination.join(relative);
+        if entry.is_dir() {
+            if entry.size() != 0 {
+                return Err(invalid("invalid artifact ZIP directory"));
+            }
+            std::fs::create_dir_all(output)?;
+            continue;
+        }
+        if entry.size() > remaining {
+            return Err(invalid("artifact ZIP exceeds expanded size limit"));
+        }
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&output)
+            .map_err(|_| invalid("artifact ZIP has conflicting paths"))?;
+        let mut written = 0u64;
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "artifact extraction interrupted",
+                ));
+            }
+            let count = entry
+                .read(&mut buffer)
+                .map_err(|_| invalid("could not extract artifact ZIP entry"))?;
+            if count == 0 {
+                break;
+            }
+            written = written
+                .checked_add(count as u64)
+                .filter(|size| *size <= remaining)
+                .ok_or_else(|| invalid("artifact ZIP exceeds expanded size limit"))?;
+            file.write_all(&buffer[..count])?;
+        }
+        if written > remaining || written != entry.size() {
+            return Err(invalid(
+                "artifact ZIP exceeds expanded size limit or has invalid data",
+            ));
+        }
+        remaining -= written;
+        #[cfg(unix)]
+        if mode & 0o111 != 0 {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(output, std::fs::Permissions::from_mode(0o755))?;
+        }
+    }
+    Ok(())
 }
 
 async fn append(
@@ -326,6 +493,7 @@ mod tests {
             file_name: "app.apk".into(),
             max_bytes: 1024,
             auth: None,
+            extract: None,
         }
     }
     async fn request_headers(socket: &mut tokio::net::TcpStream) -> String {
@@ -386,6 +554,114 @@ mod tests {
         drop(acquired);
         assert!(!staged.exists());
         assert!(source.exists());
+    }
+
+    #[tokio::test]
+    async fn zip_extraction_stages_a_directory_and_cleans_it_up() {
+        use std::io::Write;
+        let f = Fixture::new();
+        let source = f.0.path().join("app.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(source).unwrap());
+        zip.start_file(
+            "assets/index.html",
+            zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated),
+        )
+        .unwrap();
+        zip.write_all(b"fixture").unwrap();
+        zip.finish().unwrap();
+        let settings = FilePreparation {
+            extract: Some(Extraction::Zip {
+                max_expanded_bytes: 100,
+                max_entries: 10,
+            }),
+            ..config()
+        };
+        let acquired = settings
+            .acquire(&f.project(), "app.zip", f.0.path())
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(acquired.path.join("assets/index.html")).unwrap(),
+            b"fixture"
+        );
+        let staged = acquired.path.clone();
+        drop(acquired);
+        assert!(!staged.exists());
+    }
+
+    #[tokio::test]
+    async fn zip_extraction_rejects_traversal_links_and_expansion_limits() {
+        use std::io::Write;
+        for case in ["traversal", "link", "expanded"] {
+            let f = Fixture::new();
+            let source = f.0.path().join("app.zip");
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(source).unwrap());
+            let options = zip::write::SimpleFileOptions::default();
+            match case {
+                "traversal" => {
+                    zip.start_file("../escaped", options).unwrap();
+                    zip.write_all(b"bad").unwrap();
+                }
+                "link" => {
+                    zip.add_symlink("link", "../escaped", options).unwrap();
+                }
+                _ => {
+                    zip.start_file("large", options).unwrap();
+                    zip.write_all(b"too much data").unwrap();
+                }
+            }
+            zip.finish().unwrap();
+            let settings = FilePreparation {
+                extract: Some(Extraction::Zip {
+                    max_expanded_bytes: if case == "expanded" { 4 } else { 100 },
+                    max_entries: 10,
+                }),
+                ..config()
+            };
+            let error = settings
+                .acquire(&f.project(), "app.zip", f.0.path())
+                .await
+                .err()
+                .unwrap()
+                .to_string();
+            let expected = match case {
+                "traversal" => "unsafe",
+                "link" => "link",
+                _ => "size limit",
+            };
+            assert!(error.contains(expected), "{case}: {error}");
+            assert!(!f.0.path().join("artifact.json").exists());
+        }
+    }
+
+    #[test]
+    fn zip_extraction_observes_cancellation() {
+        use std::io::Write;
+        let f = Fixture::new();
+        let source = f.0.path().join("app.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&source).unwrap());
+        zip.start_file("entry", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"contents").unwrap();
+        zip.finish().unwrap();
+        let cancelled = AtomicBool::new(true);
+        let options = Extraction::Zip {
+            max_expanded_bytes: 100,
+            max_entries: 10,
+        };
+        let error =
+            extract_archive(&source, &f.0.path().join("out"), &options, &cancelled).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert!(!f.0.path().join("out/entry").exists());
+    }
+
+    #[test]
+    fn extraction_cancellation_is_signaled_when_the_run_is_dropped() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let guard = ExtractionCancellation(Arc::clone(&cancelled));
+        drop(guard);
+        assert!(cancelled.load(Ordering::Relaxed));
     }
 
     #[tokio::test]

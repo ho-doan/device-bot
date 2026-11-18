@@ -20,6 +20,8 @@ pub(crate) enum Preparation {
         max_bytes: u64,
         #[serde(default)]
         auth: Option<crate::artifact::DownloadAuth>,
+        #[serde(default)]
+        extract: Option<crate::artifact::Extraction>,
     },
 }
 
@@ -78,6 +80,7 @@ impl Preparation {
                 file_name,
                 max_bytes,
                 auth,
+                extract,
             } => {
                 if !valid_variable(path_env)
                     || sha256_env
@@ -96,6 +99,9 @@ impl Preparation {
                     return Err(invalid(
                         "artifact_file requires valid environment names and a size limit up to 10 GiB",
                     ));
+                }
+                if let Some(extract) = extract {
+                    extract.validate()?;
                 }
             }
         }
@@ -140,6 +146,7 @@ impl Preparation {
                 file_name,
                 max_bytes,
                 auth,
+                extract,
             } => {
                 let source =
                     artifact.ok_or_else(|| invalid("artifact_file requires --artifact"))?;
@@ -149,6 +156,7 @@ impl Preparation {
                     file_name: file_name.clone(),
                     max_bytes: *max_bytes,
                     auth: auth.clone(),
+                    extract: extract.clone(),
                 };
                 config.validate_source(project, source)?;
                 Ok(BTreeMap::from([(
@@ -167,12 +175,14 @@ impl Preparation {
                 file_name,
                 max_bytes,
                 auth,
+                extract,
             } => Some(crate::artifact::FilePreparation {
                 path_env: path_env.clone(),
                 sha256_env: sha256_env.clone(),
                 file_name: file_name.clone(),
                 max_bytes: *max_bytes,
                 auth: auth.clone(),
+                extract: extract.clone(),
             }),
             Self::WebUrl { .. } => None,
         }

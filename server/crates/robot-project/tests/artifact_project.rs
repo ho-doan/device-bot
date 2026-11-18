@@ -78,6 +78,37 @@ printf '<testsuite tests="1"/>' > "$output/case-001/junit.xml"
 }
 
 #[tokio::test]
+async fn project_exposes_extracted_zip_to_all_cases_and_removes_it_afterward() {
+    use std::io::Write;
+    let root = tempfile::tempdir().unwrap();
+    robot_project::init(root.path()).unwrap();
+    let mut zip = zip::ZipWriter::new(fs::File::create(root.path().join("app.zip")).unwrap());
+    zip.start_file("index.html", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(b"web build").unwrap();
+    zip.finish().unwrap();
+    fs::write(
+        root.path().join("profiles.yaml"),
+        "version: 1\ntargets: {web: {}}\n",
+    )
+    .unwrap();
+    fs::write(root.path().join("project.yaml"), "version: 1\nkind: project\nname: zip\nflows: [flows]\nplatforms:\n  web:\n    profiles: profiles.yaml\n    prepare:\n      kind: artifact_file\n      path_env: APP_DIR\n      file_name: build.zip\n      extract: {kind: zip, max_expanded_bytes: 1024}\n").unwrap();
+    let runner = root.path().join("runner.sh");
+    fs::write(&runner, "#!/bin/sh\ntest \"$(cat \"$APP_DIR/index.html\")\" = 'web build' || exit 91\nprintf '%s' \"$APP_DIR\" > witness\nwhile [ $# -gt 0 ]; do if [ \"$1\" = --artifacts ]; then output=$2; shift 2; else shift; fi; done\nmkdir -p \"$output/case-1\"\nprintf '<testsuite/>' > \"$output/case-1/junit.xml\"\n").unwrap();
+    fs::set_permissions(&runner, fs::Permissions::from_mode(0o700)).unwrap();
+    let project = robot_project::Project::load(root.path()).unwrap();
+    let args = ["--platform", "web", "--artifact", "app.zip"].map(str::to_owned);
+    assert_eq!(
+        robot_project::run(&project, &args, &runner, &runner, root.path())
+            .await
+            .unwrap(),
+        0
+    );
+    let path = fs::read_to_string(root.path().join("witness")).unwrap();
+    assert!(!std::path::Path::new(&path).exists());
+}
+
+#[tokio::test]
 async fn dry_run_does_not_download_remote_artifacts() {
     let root = tempfile::tempdir().unwrap();
     robot_project::init(root.path()).unwrap();

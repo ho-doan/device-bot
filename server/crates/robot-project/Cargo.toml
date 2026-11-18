@@ -22,6 +22,9 @@ sha2 = "0.10.9"
 tempfile = "3.27.0"
 tokio = { workspace = true, features = ["signal"] }
 url = "2.5.8"
+# Select the Rust decoder without the optional Zopfli encoder (Rust 1.88+).
+zip = { version = "2.4.2", default-features = false, features = ["deflate-flate2", "flate2"] }
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

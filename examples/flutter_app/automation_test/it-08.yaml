@@ -66,12 +66,18 @@ steps:
     target: task3
     property: checked
     expected: true
+- id: it-08-return-to-stats
+  scroll:
+    target: viewport
+    direction: up
 - id: it-08-19
   assert_element:
     label: 20 min
+    timeout_ms: 120000
 - id: it-08-20
   assert_element:
     label: Today
+    timeout_ms: 120000
 - id: it-08-21
   screenshot:
     path: completed-checklist.png

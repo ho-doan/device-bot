@@ -109,6 +109,73 @@ async fn project_exposes_extracted_zip_to_all_cases_and_removes_it_afterward() {
 }
 
 #[tokio::test]
+async fn project_serves_the_zip_during_flows_and_closes_it_afterward() {
+    use std::io::Write;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let root = tempfile::tempdir().unwrap();
+    robot_project::init(root.path()).unwrap();
+    let mut zip = zip::ZipWriter::new(fs::File::create(root.path().join("web.zip")).unwrap());
+    zip.start_file("index.html", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(b"<base href='/app/'>project fixture")
+        .unwrap();
+    zip.finish().unwrap();
+    fs::write(
+        root.path().join("profiles.yaml"),
+        "version: 1\ntargets: {chrome: {}}\n",
+    )
+    .unwrap();
+    fs::write(root.path().join("project.yaml"), "version: 1\nkind: project\nname: web\nflows: [flows]\nplatforms:\n  web:\n    target: chrome\n    profiles: profiles.yaml\n    app_id: '${env:APP_URL}/route'\n    prepare:\n      kind: artifact_file\n      path_env: APP_DIR\n      file_name: web.zip\n      extract: {kind: zip}\n      serve_web: {base_url_env: APP_URL}\n").unwrap();
+    let runner = root.path().join("runner.sh");
+    fs::write(&runner, "#!/bin/sh\nwhile [ $# -gt 0 ]; do case \"$1\" in --artifacts) output=$2; shift 2;; --app-id) app=$2; shift 2;; *) shift;; esac; done\ntest \"$app\" = \"$APP_URL/route\" || exit 91\nprintf '%s' \"$APP_URL\" > witness.tmp\nmv witness.tmp witness\nwhile [ ! -f proceed ]; do sleep 0.05; done\nmkdir -p \"$output/case-1\"\nprintf '<testsuite/>' > \"$output/case-1/junit.xml\"\n").unwrap();
+    fs::set_permissions(&runner, fs::Permissions::from_mode(0o700)).unwrap();
+    let project = robot_project::Project::load(root.path()).unwrap();
+    let args = ["--platform", "web", "--artifact", "web.zip"].map(str::to_owned);
+    let reports = root.path().to_owned();
+    let mut run = tokio::spawn(async move {
+        robot_project::run(&project, &args, &runner, &runner, &reports).await
+    });
+    let witness = root.path().join("witness");
+    let ready = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while !witness.is_file() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    });
+    tokio::select! {
+        result = &mut run => panic!("project ended before serving the fixture: {result:?}"),
+        result = ready => result.expect("project did not start serving the fixture"),
+    }
+    let url = url::Url::parse(&fs::read_to_string(witness).unwrap()).unwrap();
+    assert_eq!(url.path(), "/app");
+    let port = url.port().unwrap();
+    let mut socket = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
+        .await
+        .unwrap();
+    socket
+        .write_all(b"GET /app/ HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut response = String::new();
+    socket.read_to_string(&mut response).await.unwrap();
+    assert!(response.contains("project fixture"));
+    fs::write(root.path().join("proceed"), "").unwrap();
+    assert_eq!(run.await.unwrap().unwrap(), 0);
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
+                .await
+                .is_err()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(closed.is_ok());
+}
+
+#[tokio::test]
 async fn dry_run_does_not_download_remote_artifacts() {
     let root = tempfile::tempdir().unwrap();
     robot_project::init(root.path()).unwrap();

@@ -8,6 +8,7 @@ mod recording;
 mod report;
 mod run;
 pub mod session;
+mod web_artifact;
 pub mod windows_fixture;
 
 pub use report::ensure_report;

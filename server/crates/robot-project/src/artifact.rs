@@ -75,6 +75,7 @@ pub(crate) struct FilePreparation {
     pub(crate) max_bytes: u64,
     pub(crate) auth: Option<DownloadAuth>,
     pub(crate) extract: Option<Extraction>,
+    pub(crate) serve_web: Option<crate::web_artifact::WebConfig>,
 }
 
 pub(crate) struct Acquired {
@@ -494,6 +495,7 @@ mod tests {
             max_bytes: 1024,
             auth: None,
             extract: None,
+            serve_web: None,
         }
     }
     async fn request_headers(socket: &mut tokio::net::TcpStream) -> String {

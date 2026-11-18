@@ -22,6 +22,8 @@ pub(crate) enum Preparation {
         auth: Option<crate::artifact::DownloadAuth>,
         #[serde(default)]
         extract: Option<crate::artifact::Extraction>,
+        #[serde(default)]
+        serve_web: Option<crate::web_artifact::WebConfig>,
     },
 }
 
@@ -81,6 +83,7 @@ impl Preparation {
                 max_bytes,
                 auth,
                 extract,
+                serve_web,
             } => {
                 if !valid_variable(path_env)
                     || sha256_env
@@ -102,6 +105,18 @@ impl Preparation {
                 }
                 if let Some(extract) = extract {
                     extract.validate()?;
+                }
+                if let Some(web) = serve_web {
+                    if target != "chrome"
+                        || extract.is_none()
+                        || !valid_variable(&web.base_url_env)
+                        || &web.base_url_env == path_env
+                        || sha256_env.as_ref() == Some(&web.base_url_env)
+                    {
+                        return Err(invalid(
+                            "serve_web requires a ZIP, Chrome target and a distinct URL environment name",
+                        ));
+                    }
                 }
             }
         }
@@ -147,6 +162,7 @@ impl Preparation {
                 max_bytes,
                 auth,
                 extract,
+                serve_web,
             } => {
                 let source =
                     artifact.ok_or_else(|| invalid("artifact_file requires --artifact"))?;
@@ -157,12 +173,20 @@ impl Preparation {
                     max_bytes: *max_bytes,
                     auth: auth.clone(),
                     extract: extract.clone(),
+                    serve_web: serve_web.clone(),
                 };
                 config.validate_source(project, source)?;
-                Ok(BTreeMap::from([(
+                let mut environment = BTreeMap::from([(
                     path_env.clone(),
                     crate::artifact::DRY_RUN_PLACEHOLDER.into(),
-                )]))
+                )]);
+                if let Some(web) = serve_web {
+                    environment.insert(
+                        web.base_url_env.clone(),
+                        crate::web_artifact::DRY_RUN_URL.into(),
+                    );
+                }
+                Ok(environment)
             }
         }
     }
@@ -176,6 +200,7 @@ impl Preparation {
                 max_bytes,
                 auth,
                 extract,
+                serve_web,
             } => Some(crate::artifact::FilePreparation {
                 path_env: path_env.clone(),
                 sha256_env: sha256_env.clone(),
@@ -183,6 +208,7 @@ impl Preparation {
                 max_bytes: *max_bytes,
                 auth: auth.clone(),
                 extract: extract.clone(),
+                serve_web: serve_web.clone(),
             }),
             Self::WebUrl { .. } => None,
         }
@@ -191,7 +217,7 @@ impl Preparation {
 
 #[cfg(test)]
 mod tests {
-    use super::valid_filename;
+    use super::{Preparation, valid_filename};
 
     #[test]
     fn staged_file_names_are_portable_single_components() {
@@ -213,5 +239,19 @@ mod tests {
         ] {
             assert!(!valid_filename(invalid), "{invalid}");
         }
+    }
+
+    #[test]
+    fn web_serving_requires_chrome_zip_and_a_distinct_environment_variable() {
+        for yaml in [
+            "kind: artifact_file\npath_env: APP_DIR\nserve_web: {base_url_env: APP_URL}\n",
+            "kind: artifact_file\npath_env: APP_DIR\nextract: {kind: zip}\nserve_web: {base_url_env: APP_DIR}\n",
+        ] {
+            let config: Preparation = serde_yaml::from_str(yaml).unwrap();
+            assert!(config.validate("chrome").is_err());
+        }
+        let config: Preparation = serde_yaml::from_str("kind: artifact_file\npath_env: APP_DIR\nextract: {kind: zip}\nserve_web: {base_url_env: APP_URL}\n").unwrap();
+        assert!(config.validate("android").is_err());
+        assert!(config.validate("chrome").is_ok());
     }
 }

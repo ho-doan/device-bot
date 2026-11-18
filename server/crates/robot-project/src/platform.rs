@@ -80,6 +80,7 @@ pub(crate) struct Selection {
     pub(crate) environment: BTreeMap<String, String>,
     pub(crate) file_preparation: Option<crate::artifact::FilePreparation>,
     pub(crate) file_argument_indexes: Vec<usize>,
+    pub(crate) web_argument_indexes: Vec<usize>,
     pub(crate) before_each_flow: Option<PathBuf>,
     pub(crate) before_all_flow: Option<PathBuf>,
 }
@@ -152,6 +153,7 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
                 environment: BTreeMap::new(),
                 file_preparation: None,
                 file_argument_indexes: Vec::new(),
+                web_argument_indexes: Vec::new(),
                 before_each_flow: project.before_each_flow.clone(),
                 before_all_flow: project.before_all_flow.clone(),
             });
@@ -196,18 +198,26 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
         config.target.as_deref().unwrap_or(selected).into(),
     ]);
     let mut file_argument_indexes = Vec::new();
+    let mut web_argument_indexes = Vec::new();
     for (flag, default) in [("--device", &config.device), ("--app-id", &config.app_id)] {
         if !flags.contains(&flag) {
             if let Some(value) = default {
                 let uses_file = file_preparation.as_ref().is_some_and(|preparation| {
                     value.contains(&format!("${{env:{}}}", preparation.path_env))
                 });
+                let uses_web = file_preparation
+                    .as_ref()
+                    .and_then(|preparation| preparation.serve_web.as_ref())
+                    .is_some_and(|web| value.contains(&format!("${{env:{}}}", web.base_url_env)));
                 let value = project.resolve_with(value, &environment)?;
                 if value.trim().is_empty() {
                     return Err(invalid(format!("project platform {flag} cannot be empty")));
                 }
                 if uses_file {
                     file_argument_indexes.push(forwarded.len() + 1);
+                }
+                if uses_web {
+                    web_argument_indexes.push(forwarded.len() + 1);
                 }
                 forwarded.extend([flag.into(), value]);
             }
@@ -220,6 +230,7 @@ pub(crate) fn arguments(project: &Project, arguments: &[String]) -> io::Result<S
         environment,
         file_preparation,
         file_argument_indexes,
+        web_argument_indexes,
         before_each_flow: config
             .before_each_flow
             .as_ref()

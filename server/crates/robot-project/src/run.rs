@@ -59,7 +59,7 @@ pub async fn run(
         .arguments
         .iter()
         .any(|argument| argument == "--dry-run");
-    let _artifact = if !dry {
+    let (_artifact, _web_server) = if !dry {
         if let Some(config) = &selection.file_preparation {
             let source = selection
                 .artifact
@@ -88,12 +88,31 @@ pub async fn run(
                 let argument = &mut selection.arguments[*index];
                 *argument = argument.replace(crate::artifact::DRY_RUN_PLACEHOLDER, &path);
             }
-            Some(acquired)
+            let web_server = if let Some(web) = &config.serve_web {
+                let server = match crate::web_artifact::WebServer::start(&acquired.path).await {
+                    Ok(server) => server,
+                    Err(error) => {
+                        ensure_report(&output.join("project-error"))?;
+                        return Err(error);
+                    }
+                };
+                selection
+                    .environment
+                    .insert(web.base_url_env.clone(), server.url.clone());
+                for index in &selection.web_argument_indexes {
+                    let argument = &mut selection.arguments[*index];
+                    *argument = argument.replace(crate::web_artifact::DRY_RUN_URL, &server.url);
+                }
+                Some(server)
+            } else {
+                None
+            };
+            (Some(acquired), web_server)
         } else {
-            None
+            (None, None)
         }
     } else {
-        None
+        (None, None)
     };
     let result = run_flows(project, &selection, runner, server, reports, &output).await;
     if result.is_err() {

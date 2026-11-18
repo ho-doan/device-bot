@@ -147,6 +147,15 @@ directory are removed after the run. Dry-run checks the input configuration but
 does not download or unpack it. Extraction alone does not serve or install an app;
 the project must declare the appropriate preparation flow or resource.
 
+For a static Web build with `index.html` at the ZIP root, a Chrome platform may
+also declare `serve_web: {base_url_env: APP_URL}` alongside `extract`. The project
+serves the extracted files on a randomly assigned loopback port for the duration
+of the run and exposes its URL through `APP_URL`. A quoted local `<base href>`
+ending in `/` is honored; absent a base tag, `/` is used. The server closes
+after the run. Chrome must run on the same host as the project runner; a remote
+MCP server cannot reach the runner's loopback address. Dry-run uses a placeholder
+URL and does not start a server.
+
 Projects may run YAML preparation flows once per suite and before each case:
 
 ```yaml

@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+axum.workspace = true
 base64 = "0.22.1"
 robot-flow = { path = "../robot-flow" }
 robot-report = { path = "../robot-report" }
@@ -16,11 +17,13 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 dotenvy = "0.15.7"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
+regex = "1"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7.1"
 sha2 = "0.10.9"
 tempfile = "3.27.0"
 tokio = { workspace = true, features = ["signal"] }
+tower-http = { version = "0.6", features = ["fs"] }
 url = "2.5.8"
 # Select the Rust decoder without the optional Zopfli encoder (Rust 1.88+).
 zip = { version = "2.4.2", default-features = false, features = ["deflate-flate2", "flate2"] }

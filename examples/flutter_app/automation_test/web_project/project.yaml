@@ -1,0 +1,14 @@
+version: 1
+kind: project
+name: orbit-web-artifact
+flows: [smoke.yaml]
+platforms:
+  web:
+    target: chrome
+    profiles: profiles.yaml
+    prepare:
+      kind: artifact_file
+      path_env: ORBIT_WEB_DIR
+      file_name: web.zip
+      extract: {kind: zip}
+      serve_web: {base_url_env: ORBIT_WEB_URL}

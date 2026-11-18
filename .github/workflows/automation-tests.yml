@@ -88,16 +88,26 @@ jobs:
           flutter-version: '3.41.3'
           channel: stable
           cache: true
-      - name: Test and build the example Android APK
+      - name: Test and build the example Android APK and web archive
         working-directory: examples/flutter_app
         run: |
           flutter pub get
           flutter test
           flutter build apk --debug
+          flutter build web --release --base-href /orbit/
+          mkdir -p "$GITHUB_WORKSPACE/artifacts/orbit-web"
+          cd build/web
+          zip -qr "$GITHUB_WORKSPACE/artifacts/orbit-web/orbit-web.zip" .
       - uses: actions/upload-artifact@v4
         with:
           name: automation-orbit-apk
           path: examples/flutter_app/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: automation-orbit-web
+          path: artifacts/orbit-web/orbit-web.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -119,6 +129,10 @@ jobs:
         with:
           name: automation-orbit-apk
           path: artifacts/orbit-apk
+      - uses: actions/download-artifact@v4
+        with:
+          name: automation-orbit-web
+          path: artifacts/orbit-web
       - name: Test project preparation and environment handling
         run: cargo test --manifest-path server/Cargo.toml --locked -p robot-project --test fixture_flow --test projects
       - name: Build project runner
@@ -127,6 +141,30 @@ jobs:
         run: |
           server/target/debug/device-bot run examples/flutter_app --platform android --artifact "$GITHUB_WORKSPACE/artifacts/orbit-apk/app-debug.apk" --confirm fixture_ready --dry-run --artifacts "$RUNNER_TEMP/project-android"
           server/target/debug/device-bot run examples/flutter_app --platform ios-sim --confirm fixture_ready --dry-run --artifacts "$RUNNER_TEMP/project-ios"
+      - name: Install virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+      - name: Run example web archive on Chrome
+        env:
+          DEVICE_BOT_ARTIFACT_DIR: ${{ runner.temp }}/orbit-web-driver
+          DEVICE_BOT_REPORT_DATA_DIR: ${{ runner.temp }}/orbit-web-reports
+          DEVICE_BOT_IOS_AGENT_BIND: '127.0.0.1:0'
+          DEVICE_BOT_IOS_SIM_AGENT_BIND: '127.0.0.1:0'
+          DEVICE_BOT_FLUTTER_AUTOSTART: '0'
+        run: >-
+          xvfb-run -a -s "-screen 0 1920x1080x24"
+          server/target/debug/device-bot run examples/flutter_app/automation_test/web_project
+          --platform web --artifact "$GITHUB_WORKSPACE/artifacts/orbit-web/orbit-web.zip"
+          --artifacts "$GITHUB_WORKSPACE/artifacts/orbit-web-evidence"
+      - name: Upload web project evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbit-project-web-evidence
+          path: artifacts/orbit-web-evidence
+          if-no-files-found: warn
+          retention-days: 7
   orbit-ios-live:
     name: Example project / iOS Simulator UI
     if: github.event_name == 'workflow_dispatch' && inputs.orbit_ios_live

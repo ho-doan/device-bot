@@ -1,0 +1,12 @@
+version: 2
+name: orbit_web_artifact_smoke
+steps:
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser'}
+  - select_device: {platform: chrome, state: available}
+  - launch_app: {app_id: '${env:ORBIT_WEB_URL}/#/login'}
+  - assert_element: {label: 'Welcome back.', source: flutter, timeout_ms: 120000}
+  - tap_element: {label: Try demo workspace, source: flutter, timeout_ms: 30000}
+  - assert_element: {label: 'A fresh start, Alex.', source: flutter, timeout_ms: 30000}
+  - screenshot: {path: workspace.png}

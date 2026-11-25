@@ -10,6 +10,8 @@ native support in Device Bot.
 
 - Do not change the target application or production API to enable a mode
   advertised as transparent.
+- Treat the host's loopback API and the host's LAN IPv4 client endpoint as
+  separate addresses. Client loopback is only a comparison case.
 - Preserve the application endpoint within each run and prove faults hit the
   intended route. A response from the direct control is not a proxy hit.
 - Do not change system-wide network settings or trust stores.

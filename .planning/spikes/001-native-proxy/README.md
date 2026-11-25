@@ -15,7 +15,42 @@ change the existing Chrome implementation, or authorize per-device network
 settings. The relay logs whether the traffic was origin-form, absolute-form, or
 inside a CONNECT negotiation.
 
+## Intended topology — devices call the host's IPv4 address
+
+```text
+Device client → HOST_LAN_IPV4:8080 [reverse relay] → 127.0.0.1:8080 [API on host]
+Host control → 127.0.0.1:8080 [same API, direct]
+```
+
+The device does not call its own loopback. If the API listens only on host
+loopback, the relay can listen on the host's LAN IPv4 address on the **same
+port**. No API port change and no client URL change are needed when clients
+already use that LAN endpoint. In the split-bind fixture on macOS, both
+listeners coexisted. The LAN path saw the 503, delayed response, transport
+drop, WebSocket rejection/cut, and recovery, while the direct host API
+returned 200 with the 503 rule active. Physical iPhone Safari independently
+completed the same-port LAN suite with HTTP 200 → 503 → 200, an abort at
+658 ms in the delay case, transport drop, and WebSocket rejection, cut and
+recovery.
+
+If the existing API owns the LAN address and port, or uses a wildcard bind
+that covers it, treat that as a collision. On this macOS host a normal bind
+failed with `EADDRINUSE` against an active wildcard listener. However, an
+address-specific listener using `SO_REUSEADDR` could bind and then receive
+traffic addressed to that LAN IP instead of the wildcard listener. Do not
+rely on successful bind as proof that the port was free. Split mode disables
+address reuse. Check the actual listener before launch and avoid changing
+the upstream automatically.
+A direct host control is not evidence of device-to-device isolation. Any
+device using the same LAN listener can see a listener-wide rule unless the
+deployment explicitly scopes the policy to the test client or reserves a
+separate listener or test network.
+
 ## Results
+
+Except for the physical iPhone LAN tests, the first-pass results below
+exercised literal-loopback **client** URLs as comparison cases. Their
+bypass behavior and ADB workarounds are not prerequisites for LAN clients.
 
 | Target | Observed result | Limit |
 |---|---|---|
@@ -105,6 +140,18 @@ SIMCTL_CHILD_SPIKE_STYLE=direct SIMCTL_CHILD_SPIKE_HEALTHY=127.0.0.1:18080 \
 ### iPhone on the test LAN
 
 ```sh
+python3 -u fixture.py --lan-front MAC_LAN_IP --api 8080 --proxy 8080 \
+  --token RANDOM_TEST_TOKEN --front-page phone.html
+```
+
+Open `http://MAC_LAN_IP:8080/RANDOM_TEST_TOKEN/` in Safari on the unlocked
+iPhone. This uses the split-bind topology without requiring an iOS install.
+An independent host request to `http://127.0.0.1:8080/items` uses the API
+directly, while requests to `http://MAC_LAN_IP:8080/items` go through the relay.
+
+For the original separate-port comparison:
+
+```sh
 python3 -u fixture.py --lan MAC_LAN_IP --api 18980 --proxy 18965 \
   --control 18966 --token RANDOM_TEST_TOKEN --front-page phone.html
 ```
@@ -126,13 +173,13 @@ states.
 
 ## Signal for implementation
 
-Start with an opt-in ADB port relay per owned Android target. For unattended
-runs, reserve the device and port, fail on collision, assert a hit and clean
-up only mappings the run created. Offer loopback reverse relay on Apple
-simulator/desktop and Windows only in a dedicated environment that can reserve
-the listener and locate the upstream separately. Keep physical iOS LAN mode
-explicit and do not advertise generic native iPhone interception. Do not
-change system proxy, VPN or certificate settings as a fallback.
+For devices already calling a host LAN IPv4 endpoint, start with an opt-in
+host LAN reverse relay and an explicit loopback upstream. Test bind ownership,
+access from each device, policy isolation, confirmed hits, and teardown under
+an unattended run. ADB reverse is a separate fallback only for Android apps
+that really call on-device loopback. The literal-loopback Apple and Windows
+relay variants still need a dedicated runtime with a reservable listener.
+Do not change system proxy, VPN or certificate settings as a fallback.
 
 ## Research
 

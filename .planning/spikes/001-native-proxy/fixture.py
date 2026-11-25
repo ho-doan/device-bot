@@ -2,6 +2,7 @@
 import argparse
 import base64
 import hashlib
+import ipaddress
 import itertools
 import json
 from pathlib import Path
@@ -160,9 +161,18 @@ class Server(socketserver.ThreadingTCPServer):
     daemon_threads = True
 
 
+class SplitServer(Server):
+    # An address-specific socket with SO_REUSEADDR can shadow a wildcard
+    # listener with the same port on macOS.
+    allow_reuse_address = False
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--lan")
+    lan = parser.add_mutually_exclusive_group()
+    lan.add_argument("--lan")
+    lan.add_argument("--lan-front", metavar="IPV4",
+                     help="Bind only the relay to this LAN address. Keep the API and control on host loopback.")
     parser.add_argument("--api", type=int, default=8080)
     parser.add_argument("--proxy", type=int, default=18765)
     parser.add_argument("--control", type=int, default=18766)
@@ -170,22 +180,41 @@ def main():
     parser.add_argument("--front-page", type=Path)
     args = parser.parse_args()
     state = {"mode": "pass"}
-    hosts = ["127.0.0.1"] + ([args.lan] if args.lan else [])
-    origins = {f"{host}:{args.api}" for host in hosts} | {"127.0.0.1:8080"}
-    if args.front_page:
-        origins |= {f"{host}:{args.proxy}" for host in hosts}
+    if args.lan_front:
+        server_type = SplitServer
+        try:
+            front = ipaddress.IPv4Address(args.lan_front)
+        except ipaddress.AddressValueError:
+            parser.error("--lan-front requires a specific LAN IPv4 address")
+        if front.is_loopback or front.is_unspecified or front.is_multicast:
+            parser.error("--lan-front requires a specific LAN IPv4 address")
+        listeners = [
+            ("127.0.0.1", "upstream", args.api),
+            (str(front), "proxy", args.proxy),
+            ("127.0.0.1", "control", args.control),
+        ]
+        origins = {f"{front}:{args.proxy}"}
+    else:
+        server_type = Server
+        hosts = ["127.0.0.1"] + ([args.lan] if args.lan else [])
+        origins = {f"{host}:{args.api}" for host in hosts} | {"127.0.0.1:8080"}
+        if args.front_page:
+            origins |= {f"{host}:{args.proxy}" for host in hosts}
+        listeners = [
+            (host, role, port) for host, (role, port) in itertools.product(
+                hosts, [("upstream", args.api), ("proxy", args.proxy), ("control", args.control)]
+            )
+        ]
     servers = []
     try:
-        for host, (role, port) in itertools.product(
-            hosts, [("upstream", args.api), ("proxy", args.proxy), ("control", args.control)]
-        ):
-            server = Server((host, port), Handler)
+        for host, role, port in listeners:
+            server = server_type((host, port), Handler)
             server.role, server.state, server.api = role, state, args.api
             server.token, server.origins = args.token, origins
             server.front = args.front_page.read_bytes() if args.front_page else None
             servers.append(server)
             threading.Thread(target=server.serve_forever, daemon=True).start()
-        record(event="ready", api=args.api, proxy=args.proxy, control=args.control)
+        record(event="ready", api=args.api, proxy=args.proxy, control=args.control, listeners=listeners)
         threading.Event().wait()
     except KeyboardInterrupt:
         pass

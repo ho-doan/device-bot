@@ -4,6 +4,27 @@ import 'package:mobile_mcp_companion/features/devices/presentation/dashboard.dar
 import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 void main() {
+  test(
+    'QC labels Xcode sign-in, certificate and profile failures separately',
+    () {
+      for (final entry in const {
+        'signing_account_required': 'Sign in to Xcode',
+        'signing_identity_required': 'Signing certificate needed',
+        'signing_profile_required': 'Provisioning profile needed',
+      }.entries) {
+        final readiness = DeviceReadiness.fromJson({
+          'ready': false,
+          'state': entry.key,
+          'detail': 'Retry Prepare / Install after fixing signing.',
+        });
+        expect(readiness.state, entry.key);
+        expect(readiness.label, entry.value);
+        expect(readiness.report, contains('Retry Prepare / Install'));
+        expect(readiness.ready, isFalse);
+      }
+    },
+  );
+
   testWidgets(
     'stopped virtual devices and Chrome have Start; physical phones do not',
     (tester) async {
@@ -146,6 +167,54 @@ void main() {
       'On the iPhone, open Settings > General > VPN & Device Management, '
       'select the Developer App certificate and tap Trust. '
       'Then return to QC and choose Retry after Trust.';
+
+  testWidgets('QC shows the Mac address and rechecks the iPhone bridge', (
+    tester,
+  ) async {
+    final actions = <RunnerAction>[];
+    const detail =
+        'XCTest could not reach the Mac bridge at 192.168.80.36:18797. '
+        'Connect the iPhone and Mac to the same local network, then check again.';
+    Widget screen(String state) => MaterialApp(
+      home: Scaffold(
+        body: Dashboard(
+          snapshot: DashboardSnapshot(
+            devices: [
+              AdminDevice(
+                id: 'phone',
+                name: 'iPhone',
+                platform: 'ios',
+                state: 'available',
+                readiness: DeviceReadiness.fromJson({
+                  'ready': false,
+                  'state': state,
+                  'detail': state == 'bridge_unreachable'
+                      ? detail
+                      : 'Select app',
+                }),
+              ),
+            ],
+            config: const AdminConfig(authEnabled: true, logCapacity: 200),
+            events: const [],
+          ),
+          onViewScreenshot: (_) {},
+          onBootDevice: (_) async {},
+          onLaunchApp: (_) async {},
+          onRunnerAction: (_, action) => actions.add(action),
+        ),
+      ),
+    );
+    await tester.pumpWidget(screen('bridge_unreachable'));
+    expect(find.text('Mac bridge unreachable'), findsOneWidget);
+    expect(find.text(detail, findRichText: true), findsOneWidget);
+    await tester.ensureVisible(find.text('Check connection'));
+    await tester.tap(find.text('Check connection'));
+    expect(actions, [RunnerAction.health]);
+    await tester.pumpWidget(screen('needs_target'));
+    expect(find.text('Check connection'), findsNothing);
+    expect(find.text('Mac bridge unreachable'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('QC keeps an actionable Trust warning on the device card', (
     tester,

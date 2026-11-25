@@ -271,6 +271,7 @@ private final class MobileMcpRealHostAgent {
   private let token: String?
   private var currentBundleId: String?
   private var running = true
+  private var pollWasUnreachable = false
 
   init(hosts: [String], port: Int, token: String?) {
     self.hosts = hosts.filter { !$0.isEmpty }
@@ -707,11 +708,23 @@ private final class MobileMcpRealHostAgent {
 
     var result: Data?
     var failed = false
+    var transportFailure = false
+    var receivedHTTP = false
     let semaphore = DispatchSemaphore(value: 0)
     URLSession.shared.dataTask(with: request) { data, response, error in
       defer { semaphore.signal() }
-      guard error == nil else {
-        print("Device Bot bridge request failed (\(method) \(url.absoluteString)): \(error!.localizedDescription)")
+      receivedHTTP = response is HTTPURLResponse
+      if let error {
+        let endpoint = url.absoluteString.split(separator: "?", maxSplits: 1).first ?? ""
+        print("Device Bot bridge request failed (\(method) \(endpoint)): \(error.localizedDescription)")
+        if let code = (error as? URLError)?.code {
+          switch code {
+          case .timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+               .dnsLookupFailed, .notConnectedToInternet, .dataNotAllowed:
+            transportFailure = !receivedHTTP
+          default: break
+          }
+        }
         failed = true
         return
       }
@@ -719,7 +732,18 @@ private final class MobileMcpRealHostAgent {
       if status == 204 { return }
       if (200..<300).contains(status) { result = data } else { failed = true }
     }.resume()
-    _ = semaphore.wait(timeout: .now() + 22)
+    guard semaphore.wait(timeout: .now() + 22) == .success else { return nil }
+    if method == "GET" && url.path == "/next" {
+      if transportFailure {
+        let endpoint = url.absoluteString.split(separator: "?", maxSplits: 1).first ?? ""
+        print("Device Bot bridge unreachable (\(endpoint))")
+        pollWasUnreachable = true
+      } else if receivedHTTP && pollWasUnreachable {
+        // Any HTTP response proves the network path, even if auth still fails.
+        print("Device Bot bridge reachable")
+        pollWasUnreachable = false
+      }
+    }
     return failed ? nil : result
   }
 

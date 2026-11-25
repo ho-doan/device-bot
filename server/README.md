@@ -637,8 +637,11 @@ the helper project. It requires `python3`, `security`, and `openssl`.
 Run `server/tool/configure_ios_signing.sh` to synchronize signing separately;
 add `--print-only` to inspect the team, or `--project path/to/App.xcodeproj` to
 update another project. With multiple installed teams, a matching project team
-is kept; otherwise select `DEVICE_BOT_IOS_TEAM`. Missing or ambiguous identities
-leave the project unchanged, and matching settings are not rewritten.
+is kept. Set `DEVICE_BOT_IOS_PERSONAL_TEAM` in the server environment to prefer
+your Personal Team over inherited `DEVICE_BOT_IOS_TEAM` and work identity settings.
+An explicit `--team-id` can override the preference. If the preferred team has
+no local Apple Development identity, Device Bot stops instead of switching to
+another team. Missing or ambiguous identities leave the project unchanged.
 
 The Rust entry point is `device-bot --configure-ios-signing`; it runs the same
 shell script and returns the selected Team ID as JSON without starting a
@@ -646,6 +649,9 @@ server. Prepare / Install in QC invokes this signing setup automatically before
 building. If iOS installs the helper but refuses to launch it until its developer
 certificate is trusted, QC shows a persistent Trust warning with the iPhone
 Settings path and a Retry after Trust action.
+If Xcode cannot sign the build, QC shows separately whether Xcode needs an Apple
+account for the selected team, a local signing certificate, or a provisioning
+profile. Finding a Team ID in Keychain does not prove Xcode is signed in.
 
 During helper startup, Install activates the XCTest runner itself and waits for
 it to enter the foreground before making the first local-network request. On
@@ -745,6 +751,12 @@ automation. A Codex configuration that starts another package (for example,
 `@mobilenext/mobile-mcp`) does not exercise this server or its real-iOS agent.
 Likewise, the server default of `127.0.0.1:18787` is reachable only from the
 Mac, not from the iPhone.
+
+If the on-device runner cannot reach its callback address, QC shows **Mac
+bridge unreachable** with the exact host and port. Use **Check connection**
+after joining a reachable local network, allowing Local Network access on the
+iPhone, or correcting the advertised address on the Mac. USB still carries the
+Live video, but XCTest inspection and input use this bridge.
 
 There is no environment-name mismatch. The launcher and
 `server/tool/ios_xctest_agent.sh` export `TEST_RUNNER_DEVICE_BOT_HOSTS`,

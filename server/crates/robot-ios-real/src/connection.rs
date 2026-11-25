@@ -217,13 +217,16 @@ pub async fn xcode_destination_ready(
 pub fn destination_is_eligible(output: &str, device: &str) -> bool {
     let mut eligible = false;
     for line in output.lines() {
-        let lower = line.to_ascii_lowercase();
-        if lower.contains("available destinations") {
+        let lower = line.trim_start().to_ascii_lowercase();
+        if lower.starts_with("available destinations")
+            || lower.starts_with("destinations compatible with")
+        {
             eligible = true;
         }
-        if lower.contains("ineligible destinations")
-            || lower.contains("incompatible destinations")
-            || lower.contains("unavailable destinations")
+        if lower.starts_with("ineligible destinations")
+            || lower.starts_with("incompatible destinations")
+            || lower.starts_with("unavailable destinations")
+            || lower.starts_with("destinations incompatible with")
         {
             eligible = false;
         }
@@ -324,5 +327,17 @@ mod tests {
             "Available destinations for scheme X:\n{ platform:iOS, arch:arm64, id:phone, name:iPhone }",
             "phone"
         ));
+    }
+
+    #[test]
+    fn xcode_27_compatible_destinations_allow_only_the_exact_physical_phone() {
+        let output = "Destinations compatible with the \"MobileMcpRealRunner\" scheme:\n\
+            { platform:iOS, arch:arm64, id:phone, name:iPhone }\n\
+            { platform:iOS Simulator, arch:arm64, id:sim, name:iPhone Simulator }\n\
+            Destinations incompatible with the \"MobileMcpRealRunner\" scheme:\n\
+            { platform:iOS, arch:arm64, id:offline, name:iPhone }";
+        assert!(destination_is_eligible(output, "phone"));
+        assert!(!destination_is_eligible(output, "sim"));
+        assert!(!destination_is_eligible(output, "offline"));
     }
 }

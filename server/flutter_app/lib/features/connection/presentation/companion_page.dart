@@ -126,13 +126,11 @@ class _CompanionHomeState extends State<_CompanionView> {
         content: SingleChildScrollView(
           child: SizedBox(
             width: 480,
-            child:
-                status.state == 'trust_required' ||
-                    status.state == 'device_locked'
+            child: DeviceRecoveryWarning.supports(status.state)
                 ? DeviceRecoveryWarning(
                     detail: status.detail,
                     showRetry: false,
-                    deviceLocked: status.state == 'device_locked',
+                    state: status.state,
                   )
                 : SelectableText(status.report),
           ),

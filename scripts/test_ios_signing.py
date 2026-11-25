@@ -11,6 +11,17 @@ spec.loader.exec_module(signing)
 
 
 class SigningTests(unittest.TestCase):
+    def test_personal_team_takes_precedence_over_inherited_work_settings(self):
+        env = {"DEVICE_BOT_IOS_PERSONAL_TEAM": "PERSONAL12",
+               "DEVICE_BOT_IOS_TEAM": "TEAM123456",
+               "DEVICE_BOT_IOS_SIGNING_IDENTITY": "Corporate"}
+        team, identity = signing.signing_preferences(None, None, env)
+        self.assertEqual((team, identity), ("PERSONAL12", None))
+        self.assertEqual(signing.select_team({"PERSONAL12", "TEAM123456"}, team,
+                                            "DEVELOPMENT_TEAM = TEAM123456;"), "PERSONAL12")
+        with self.assertRaisesRegex(ValueError, "No valid iOS development signing identity"):
+            signing.select_team({"TEAM123456"}, team, "DEVELOPMENT_TEAM = TEAM123456;")
+
     def test_team_comes_from_certificate_ou_matching_a_valid_identity(self):
         fingerprint = "A" * 40
         pem = "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----"

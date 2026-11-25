@@ -1,5 +1,10 @@
 use std::{
-    collections::HashMap, fs::File, net::IpAddr, path::PathBuf, process::Stdio, sync::Arc,
+    collections::HashMap,
+    fs::File,
+    net::IpAddr,
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
     time::Duration,
 };
 
@@ -22,12 +27,25 @@ use uuid::Uuid;
 use crate::{
     quicktime_recording::QuickTimeRecording,
     runner_cache::{RunnerCache, compatible, live_status},
+    signing_issue::SigningIssue,
     xctest_agent::XCTestAgentBridge,
 };
 
 const ACTION_TIMEOUT: Duration = Duration::from_secs(45);
 const AGENT_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const AGENT_START_TIMEOUT: Duration = Duration::from_secs(60);
+const BRIDGE_UNREACHABLE: &str = "bridge_unreachable";
+
+enum RunnerStartError {
+    Signing(SigningIssue),
+    Other(RobotError),
+}
+
+impl From<RobotError> for RunnerStartError {
+    fn from(error: RobotError) -> Self {
+        Self::Other(error)
+    }
+}
 
 /// Launches the signed real-device XCTest command loop from the core driver.
 /// Keeping this in the driver makes a fresh MCP process reproducible: it no
@@ -85,7 +103,7 @@ impl XCTestAgentLauncher {
         }
     }
 
-    async fn ensure_build(&self) -> Result<(), RobotError> {
+    async fn ensure_build(&self, signing_team: Option<&str>) -> Result<(), RunnerStartError> {
         let cache = self.cache();
         let version = cache.version()?;
         if cache.is_current(&version) {
@@ -116,17 +134,34 @@ impl XCTestAgentLauncher {
             RobotError::CommandFailed(format!("could not build iOS XCTest helper: {e}"))
         })?;
         if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if let Some(issue) =
+                SigningIssue::from_xcode(&format!("{stdout}\n{stderr}"), signing_team)
+            {
+                return Err(RunnerStartError::Signing(issue));
+            }
+            let errors = stdout
+                .lines()
+                .filter(|line| line.contains("error:"))
+                .take(8)
+                .collect::<Vec<_>>()
+                .join("\n");
             return Err(RobotError::CommandFailed(format!(
-                "iOS XCTest build/signing failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
+                "iOS XCTest build failed: {errors}\n{stderr}"
+            ))
+            .into());
         }
-        cache.mark_current(&version)
+        Ok(cache.mark_current(&version)?)
     }
 
-    async fn start(&self, device_id: &str) -> Result<Child, RobotError> {
+    async fn start(
+        &self,
+        device_id: &str,
+        signing_team: Option<&str>,
+    ) -> Result<Child, RunnerStartError> {
         validate_device_id(device_id)?;
-        self.ensure_build().await?;
+        self.ensure_build(signing_team).await?;
         let project = self.project.to_string_lossy().into_owned();
         let derived_data = self.derived_data.to_string_lossy().into_owned();
         let destination = format!("platform=iOS,id={device_id}");
@@ -182,11 +217,11 @@ impl XCTestAgentLauncher {
         command
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
-        command.spawn().map_err(|error| {
+        Ok(command.spawn().map_err(|error| {
             RobotError::CommandFailed(format!(
                 "could not start the real-iOS XCTest agent: {error}"
             ))
-        })
+        })?)
     }
 
     fn test_environment(&self) -> Vec<(String, String)> {
@@ -239,6 +274,7 @@ pub struct IosXCTestRobot {
     recording: Arc<Mutex<Option<QuickTimeRecording>>>,
     agent_launcher: Option<XCTestAgentLauncher>,
     persistent_agents: Arc<Mutex<HashMap<String, Child>>>,
+    signing_issues: Arc<Mutex<HashMap<String, SigningIssue>>>,
     runner_project: PathBuf,
     live_sources: Arc<Mutex<HashMap<String, PreparedLiveSource>>>,
 }
@@ -260,6 +296,7 @@ impl IosXCTestRobot {
             recording: Arc::default(),
             agent_launcher: None,
             persistent_agents: Arc::default(),
+            signing_issues: Arc::default(),
             live_sources: Arc::default(),
             runner_project: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("xctest-runner/MobileMcpRealRunner.xcodeproj"),
@@ -342,6 +379,7 @@ impl IosXCTestRobot {
             .await
         {
             if compatible(&health, device_id, &version) {
+                self.signing_issues.lock().await.remove(device_id);
                 return Ok(());
             }
             let _ = self
@@ -355,7 +393,26 @@ impl IosXCTestRobot {
         }
         // Synchronize signing before calculating the build identity: changing the
         // project team must invalidate cached products and the helper version.
-        crate::configure_xctest_signing(&launcher.project, None, None).await?;
+        let signing_team =
+            match crate::configure_xctest_signing(&launcher.project, None, None).await {
+                Ok(team) => team,
+                Err(error)
+                    if error
+                        .to_string()
+                        .contains("No valid iOS development signing identity") =>
+                {
+                    let preferred = std::env::var("DEVICE_BOT_IOS_PERSONAL_TEAM")
+                        .ok()
+                        .or_else(|| std::env::var("DEVICE_BOT_IOS_TEAM").ok());
+                    return Err(self
+                        .remember_signing_issue(
+                            device_id,
+                            SigningIssue::identity_required(preferred.as_deref()),
+                        )
+                        .await);
+                }
+                Err(error) => return Err(error),
+            };
         let version = launcher.cache().version()?;
         // Serialize preparation, but never infer readiness from a host PID alone.
         let mut agents = self.persistent_agents.lock().await;
@@ -364,7 +421,15 @@ impl IosXCTestRobot {
             .is_some_and(|child| matches!(child.try_wait(), Ok(None)));
         if !running {
             agents.remove(device_id);
-            agents.insert(device_id.into(), launcher.start(device_id).await?);
+            self.signing_issues.lock().await.remove(device_id);
+            let child = match launcher.start(device_id, signing_team.as_deref()).await {
+                Ok(child) => child,
+                Err(RunnerStartError::Signing(issue)) => {
+                    return Err(self.remember_signing_issue(device_id, issue).await);
+                }
+                Err(RunnerStartError::Other(error)) => return Err(error),
+            };
+            agents.insert(device_id.into(), child);
         }
         let deadline = tokio::time::Instant::now() + AGENT_START_TIMEOUT;
         loop {
@@ -392,12 +457,29 @@ impl IosXCTestRobot {
                 }
             }
             if tokio::time::Instant::now() >= deadline {
+                let mut status = UiRunnerStatus {
+                    state: "disconnected".into(),
+                    ..Default::default()
+                };
+                read_runner_warning(&mut status, &launcher.derived_data, device_id).await;
+                if status.state == BRIDGE_UNREACHABLE {
+                    return Err(RobotError::CommandFailed(status.detail));
+                }
                 return Err(RobotError::CommandFailed(
                     self.agent.connection_diagnostic().await,
                 ));
             }
             sleep(Duration::from_millis(250)).await;
         }
+    }
+
+    async fn remember_signing_issue(&self, device_id: &str, issue: SigningIssue) -> RobotError {
+        let error = RobotError::CommandFailed(issue.detail().to_owned());
+        self.signing_issues
+            .lock()
+            .await
+            .insert(device_id.into(), issue);
+        error
     }
 
     async fn dispatch(
@@ -568,24 +650,11 @@ impl IosXCTestRobot {
             health,
         );
         if status.state == "disconnected" {
-            use tokio::io::{AsyncReadExt, AsyncSeekExt};
-            let log_path = cache
-                .derived_data
-                .join("Logs/Agent")
-                .join(format!("{device_id}-xcodebuild.log"));
-            if let Ok(mut file) = tokio::fs::File::open(log_path).await {
-                if let Ok(metadata) = file.metadata().await {
-                    let _ = file
-                        .seek(std::io::SeekFrom::Start(
-                            metadata.len().saturating_sub(65536),
-                        ))
-                        .await;
-                    let mut log = Vec::new();
-                    if file.take(65536).read_to_end(&mut log).await.is_ok() {
-                        apply_trust_warning(&mut status, &String::from_utf8_lossy(&log));
-                    }
-                }
+            if let Some(issue) = self.signing_issues.lock().await.get(device_id).cloned() {
+                issue.apply(&mut status);
+                return Ok(status);
             }
+            read_runner_warning(&mut status, cache.derived_data, device_id).await;
         }
         if self.agent_launcher.is_none() && status.state == "disconnected" {
             status.state = "unconfigured".into();
@@ -872,6 +941,7 @@ impl Robot for IosXCTestRobot {
             recording: self.recording.clone(),
             agent_launcher: self.agent_launcher.clone(),
             persistent_agents: self.persistent_agents.clone(),
+            signing_issues: self.signing_issues.clone(),
             runner_project: self.runner_project.clone(),
             live_sources: Arc::default(),
         }))
@@ -1429,7 +1499,8 @@ impl Robot for IosXCTestRobot {
         }
         if let Err(error) = self.ensure_agent_started(device_id).await {
             let status = self.check_device_health(device_id).await?;
-            if status.state == "device_locked"
+            if matches!(status.state.as_str(), "device_locked" | BRIDGE_UNREACHABLE)
+                || SigningIssue::is_signing_state(&status.state)
                 || (status.state == "trust_required"
                     && error.to_string().contains("iOS XCTest helper exited with"))
             {
@@ -1607,22 +1678,79 @@ struct CoreConnectionProperties {
     pairing_state: Option<String>,
 }
 
-fn apply_trust_warning(status: &mut UiRunnerStatus, log: &str) {
-    // Logs are appended across launches; an old trust failure must not hide a
-    // different error from the latest attempt or override a live heartbeat.
+async fn read_runner_warning(status: &mut UiRunnerStatus, derived_data: &Path, device_id: &str) {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    const LOG_TAIL: u64 = 65_536;
+    let path = derived_data
+        .join("Logs/Agent")
+        .join(format!("{device_id}-xcodebuild.log"));
+    if let Ok(mut file) = tokio::fs::File::open(path).await
+        && let Ok(metadata) = file.metadata().await
+        && file
+            .seek(std::io::SeekFrom::Start(
+                metadata.len().saturating_sub(LOG_TAIL),
+            ))
+            .await
+            .is_ok()
+    {
+        let mut log = Vec::new();
+        if file.take(LOG_TAIL).read_to_end(&mut log).await.is_ok() {
+            apply_runner_warning(status, &String::from_utf8_lossy(&log));
+        }
+    }
+}
+
+fn apply_runner_warning(status: &mut UiRunnerStatus, log: &str) {
+    if status.state != "disconnected" {
+        return;
+    }
+    // Logs are appended across launches. A previous attempt must not hide
+    // a different error in the latest one or override a live heartbeat.
     let latest = log.rsplit("Command line invocation:").next().unwrap_or(log);
-    if status.state == "disconnected"
-        && [
-            "Verify that the Developer App certificate for your account is trusted on your device",
-            "profile has not been explicitly trusted by the user",
-        ]
-        .iter()
-        .any(|message| latest.contains(message))
+    if [
+        "Verify that the Developer App certificate for your account is trusted on your device",
+        "profile has not been explicitly trusted by the user",
+    ]
+    .iter()
+    .any(|message| latest.contains(message))
     {
         status.ready = false;
         status.state = "trust_required".into();
         status.detail = "The helper is installed, but iOS blocked its launch. On the iPhone, open Settings > General > VPN & Device Management, select the Developer App certificate and tap Trust. Then return to QC and choose Retry after Trust.".into();
+    } else if let Some(address) = unreachable_bridge(latest) {
+        status.ready = false;
+        status.state = BRIDGE_UNREACHABLE.into();
+        status.detail = format!(
+            "XCTest could not reach the Mac bridge at {address}. Connect the iPhone and Mac to the same local network. If they already are, check Device Bot’s Local Network permission on the iPhone and that the Mac’s bridge address is current."
+        );
     }
+}
+
+fn unreachable_bridge(log: &str) -> Option<String> {
+    for line in log.lines().rev() {
+        if line.contains("Device Bot bridge reachable") {
+            return None;
+        }
+        let endpoint = if let Some((_, rest)) = line.split_once("Device Bot bridge unreachable (") {
+            rest.split_once(')').map(|(url, _)| url)
+        } else if let Some((_, rest)) = line.split_once("Device Bot bridge request failed (GET ") {
+            // Compatibility with already-installed runners that only printed a
+            // localized description. Do not classify HTTP/authentication errors.
+            rest.split_once("): ")
+                .filter(|(_, error)| *error == "The request timed out.")
+                .map(|(url, _)| url)
+        } else {
+            None
+        };
+        if let Some(url) = endpoint.and_then(|url| Url::parse(url).ok())
+            && url.scheme() == "http"
+            && url.path() == "/next"
+            && let (Some(host), Some(port)) = (url.host(), url.port_or_known_default())
+        {
+            return Some(format!("{host}:{port}"));
+        }
+    }
+    None
 }
 
 fn parse_devicectl_devices(output: &str) -> Result<Vec<RobotDevice>, RobotError> {
@@ -1680,7 +1808,7 @@ mod tests {
             state: "disconnected".into(),
             ..Default::default()
         };
-        apply_trust_warning(&mut status, trust);
+        apply_runner_warning(&mut status, trust);
         assert_eq!(status.state, "trust_required");
         assert!(!status.ready);
         assert!(status.detail.contains("VPN & Device Management"));
@@ -1690,7 +1818,7 @@ mod tests {
             state: "ready".into(),
             ..Default::default()
         };
-        apply_trust_warning(&mut ready, trust);
+        apply_runner_warning(&mut ready, trust);
         assert!(ready.ready);
         assert_eq!(ready.state, "ready");
         for log in [
@@ -1701,14 +1829,59 @@ mod tests {
                 state: "disconnected".into(),
                 ..Default::default()
             };
-            apply_trust_warning(&mut status, &log);
+            apply_runner_warning(&mut status, &log);
             assert_eq!(status.state, "disconnected");
         }
     }
 
+    #[test]
+    fn bridge_warning_uses_transport_evidence_and_does_not_override_a_heartbeat() {
+        let launch = "Command line invocation:\nxcodebuild test-without-building\n";
+        let timeout = "Device Bot bridge request failed (GET http://192.168.80.36:18797/next?deviceId=private-device): The request timed out.";
+        let unreachable = "Device Bot bridge unreachable (http://[fd00::1]:18797/next)";
+        for (line, address) in [
+            (timeout, "192.168.80.36:18797"),
+            (unreachable, "[fd00::1]:18797"),
+        ] {
+            let mut status = UiRunnerStatus {
+                state: "disconnected".into(),
+                ..Default::default()
+            };
+            apply_runner_warning(&mut status, &format!("{launch}{line}"));
+            assert_eq!(status.state, "bridge_unreachable");
+            assert!(status.detail.contains(address));
+            assert!(status.detail.contains("same local network"));
+            assert!(!status.detail.contains("private-device"));
+            assert!(!status.ready);
+        }
+        for log in [
+            format!("{launch}{timeout}\n{launch}error: device offline"),
+            format!("{launch}{unreachable}\nDevice Bot bridge reachable"),
+            format!(
+                "{launch}Device Bot bridge request failed (GET http://192.168.80.36:18797/next): unauthorized"
+            ),
+            format!(
+                "{launch}Device Bot bridge request failed (POST http://192.168.80.36:18797/result): The request timed out."
+            ),
+        ] {
+            let mut status = UiRunnerStatus {
+                state: "disconnected".into(),
+                ..Default::default()
+            };
+            apply_runner_warning(&mut status, &log);
+            assert_eq!(status.state, "disconnected", "{log}");
+        }
+        let mut connected = UiRunnerStatus {
+            state: "needs_target".into(),
+            ..Default::default()
+        };
+        apply_runner_warning(&mut connected, &format!("{launch}{timeout}"));
+        assert_eq!(connected.state, "needs_target");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
-    async fn public_health_exposes_installed_but_untrusted_helper_for_qc() {
+    async fn public_health_exposes_runner_launch_warnings_for_qc() {
         use std::os::unix::fs::PermissionsExt;
         let root = std::env::temp_dir().join(format!("ios-trust-{}", Uuid::new_v4()));
         let project = root.join("Phone.xcodeproj");
@@ -1739,6 +1912,15 @@ mod tests {
         let status = robot.check_device_health(device).await.unwrap();
         assert_eq!(status.state, "trust_required");
         assert!(!status.ready);
+        assert_eq!(status.diagnostics.unwrap()["connected"], true);
+        std::fs::write(
+            logdir.join(format!("{device}-xcodebuild.log")),
+            "Command line invocation:\nxcodebuild\nDevice Bot bridge unreachable (http://192.168.80.36:18797/next)",
+        ).unwrap();
+        let status = robot.check_device_health(device).await.unwrap();
+        assert_eq!(status.state, BRIDGE_UNREACHABLE);
+        assert!(!status.ready);
+        assert!(status.detail.contains("192.168.80.36:18797"));
         assert_eq!(status.diagnostics.unwrap()["connected"], true);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -2095,6 +2277,17 @@ mod tests {
             .unwrap(),
             "DEVELOPMENT_TEAM = NEWTEAM123;"
         );
+        // Xcode writes the actionable signing error to stdout and may put only
+        // TEST BUILD FAILED on stderr. Both lines must reach the classifier.
+        std::fs::write(&xcodebuild, format!(
+            "#!/bin/sh\nif [ \"$1\" = '-showdestinations' ]; then\n  printf '%s\\n' 'Available destinations for scheme X:' '{{ platform:iOS, id:{device}, name:Phone }}'\nelse\n  printf '%s\\n' 'error: No Account for Team \"NEWTEAM123\".' 'error: No profiles for the app were found.'\n  echo 'TEST BUILD FAILED' >&2\n  exit 1\nfi\n"
+        )).unwrap();
+        let status = robot.prepare_helper(device, None).await.unwrap();
+        assert_eq!(status.state, "signing_account_required");
+        assert!(status.detail.contains("NEWTEAM123"));
+        assert!(status.detail.contains("Apple Accounts"));
+        let polled = robot.check_device_health(device).await.unwrap();
+        assert_eq!(polled.state, status.state);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

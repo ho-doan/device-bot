@@ -81,18 +81,29 @@ def update_project(project, teams, requested=None, print_only=False):
     return team
 
 
+def signing_preferences(team_id, identity, env):
+    personal_team = env.get("DEVICE_BOT_IOS_PERSONAL_TEAM")
+    # A configured Personal Team wins over inherited work settings. A caller
+    # can still explicitly request a different signing identity or team.
+    team = team_id or personal_team or env.get("DEVICE_BOT_IOS_TEAM")
+    if not personal_team or team_id:
+        identity = identity or env.get("DEVICE_BOT_IOS_SIGNING_IDENTITY")
+    return team, identity
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", type=Path, default=Path(__file__).parent / "MobileMcpRealRunner.xcodeproj")
-    parser.add_argument("--team-id", default=os.environ.get("DEVICE_BOT_IOS_TEAM"))
-    parser.add_argument("--identity", default=os.environ.get("DEVICE_BOT_IOS_SIGNING_IDENTITY"),
+    parser.add_argument("--team-id")
+    parser.add_argument("--identity",
                         help="Optional development certificate name/email filter")
     parser.add_argument("--print-only", action="store_true", help="Resolve the team without changing the project")
     args = parser.parse_args()
-    if args.team_id and not re.fullmatch(r"[A-Z0-9]{10}", args.team_id):
+    team, identity = signing_preferences(args.team_id, args.identity, os.environ)
+    if team and not re.fullmatch(r"[A-Z0-9]{10}", team):
         parser.error("Team ID must contain exactly 10 uppercase letters/digits")
     try:
-        print(update_project(args.project, installed_teams(args.identity), args.team_id, args.print_only))
+        print(update_project(args.project, installed_teams(identity), team, args.print_only))
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"iOS signing setup failed: {error}", file=sys.stderr)
         return 1

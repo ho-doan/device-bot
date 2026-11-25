@@ -202,21 +202,21 @@ class _DevicesPanel extends StatelessWidget {
                             ),
                         ],
                       ),
-                      if (device.readiness?.state == 'trust_required' ||
-                          device.readiness?.state == 'device_locked')
+                      if (DeviceRecoveryWarning.supports(
+                        device.readiness?.state,
+                      ))
                         DeviceRecoveryWarning(
                           detail: device.readiness!.detail,
-                          deviceLocked:
-                              device.readiness!.state == 'device_locked',
+                          state: device.readiness!.state,
                           onRetry:
                               busyDevices.contains(device.id) ||
                                   onRunnerAction == null
                               ? null
                               : () => onRunnerAction!(
                                   device,
-                                  device.readiness!.state == 'device_locked'
-                                      ? RunnerAction.health
-                                      : RunnerAction.prepare,
+                                  device.readiness!.state == 'trust_required'
+                                      ? RunnerAction.prepare
+                                      : RunnerAction.health,
                                 ),
                         )
                       else if (device.readiness != null)
@@ -273,13 +273,18 @@ class DeviceRecoveryWarning extends StatelessWidget {
     required this.detail,
     this.onRetry,
     this.showRetry = true,
-    this.deviceLocked = false,
+    this.state = 'trust_required',
   });
 
   final String detail;
   final VoidCallback? onRetry;
   final bool showRetry;
-  final bool deviceLocked;
+  final String state;
+
+  static bool supports(String? state) => switch (state) {
+    'device_locked' || 'bridge_unreachable' || 'trust_required' => true,
+    _ => false,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -296,10 +301,11 @@ class DeviceRecoveryWarning extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ExcludeSemantics(
-              child: Icon(
-                deviceLocked ? Icons.lock_outline : Icons.warning_amber_rounded,
-                color: colors.onTertiaryContainer,
-              ),
+              child: Icon(switch (state) {
+                'device_locked' => Icons.lock_outline,
+                'bridge_unreachable' => Icons.wifi_off_outlined,
+                _ => Icons.warning_amber_rounded,
+              }, color: colors.onTertiaryContainer),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -307,9 +313,11 @@ class DeviceRecoveryWarning extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    deviceLocked
-                        ? 'Unlock your iPhone to continue'
-                        : 'Trust the developer certificate on your iPhone',
+                    switch (state) {
+                      'device_locked' => 'Unlock your iPhone to continue',
+                      'bridge_unreachable' => 'Cannot connect iPhone to Mac',
+                      _ => 'Trust the developer certificate on your iPhone',
+                    },
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       color: colors.onTertiaryContainer,
                     ),
@@ -328,11 +336,11 @@ class DeviceRecoveryWarning extends StatelessWidget {
                         minimumSize: const Size(48, 48),
                       ),
                       icon: const Icon(Icons.refresh),
-                      label: Text(
-                        deviceLocked
-                            ? 'Check after unlocking'
-                            : 'Retry after Trust',
-                      ),
+                      label: Text(switch (state) {
+                        'device_locked' => 'Check after unlocking',
+                        'bridge_unreachable' => 'Check connection',
+                        _ => 'Retry after Trust',
+                      }),
                     ),
                   ],
                 ],

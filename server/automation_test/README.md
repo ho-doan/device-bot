@@ -6,8 +6,9 @@
 source, scripts hoặc workflow liên quan; cũng có thể chạy thủ công. Workflow
 release gọi lại bộ này và chỉ publish khi cả build lẫn automation đều PASS.
 
-CI chạy analyzer/toàn bộ Flutter tests, build web từ source, rồi chạy 10 YAML
-web bằng Chrome thật trên Ubuntu và Windows. Linux dùng Xvfb; không mock UI
+CI chạy analyzer/toàn bộ Flutter tests, build web từ source, rồi chạy các case
+web có file `.yaml` bằng Chrome thật trên Ubuntu và Windows. Case `.yaml.draft`
+chưa được đưa vào suite. Linux dùng Xvfb; không mock UI
 hay kết quả flow. Mỗi runner build backend/runner riêng, dùng token ngẫu nhiên,
 port loopback và kho report riêng. CI cũng chạy test harness và các driver
 Chrome/Windows/Android. Case FAIL làm job FAIL; case import-fail chỉ PASS khi

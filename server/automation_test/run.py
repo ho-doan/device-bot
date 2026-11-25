@@ -376,10 +376,13 @@ CASES = {
 
 def select_cases(suite, only=None):
     if only:
+        if not (SUITE / f'{only}.yaml').is_file():
+            raise ValueError(f'{only} has no ready .yaml scenario. Promote the draft before using this harness.')
         return [only]
     return [name for name, config in CASES.items()
-            if suite == 'all' or (suite == 'live' and config.get('live'))
-            or (suite == 'web' and not config.get('desktop'))]
+            if (SUITE / f'{name}.yaml').is_file()
+            and (suite == 'all' or (suite == 'live' and config.get('live'))
+                 or (suite == 'web' and not config.get('desktop')))]
 
 
 def wait_backend(server, base_url):
@@ -647,7 +650,12 @@ def main():
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     host = {"Darwin": "macos", "Windows": "windows"}.get(platform.system())
-    names = select_cases(args.suite, args.only)
+    try:
+        names = select_cases(args.suite, args.only)
+    except ValueError as error:
+        parser.error(str(error))
+    if not names:
+        parser.error(f'No ready cases in the {args.suite} suite')
     if host == 'windows' and not args.only and args.suite == 'all':
         names = [name for name in names if not CASES[name].get('live')]
         print('Skipping the six macOS-only Live cases on Windows.', flush=True)

@@ -38,7 +38,68 @@ class FakeClient extends McpClient {
   }
 }
 
+class SlowIosHealthClient extends McpClient {
+  SlowIosHealthClient()
+    : super(baseUrl: 'http://fixture.test', bearerToken: '');
+
+  final readiness = Completer<DeviceReadiness>();
+  final probes = <String>[];
+
+  @override
+  Future<List<AdminDevice>> listDevices() async => const [
+    AdminDevice(
+      id: 'ios-fixture',
+      name: 'Test iPhone',
+      platform: 'ios',
+      state: 'available',
+    ),
+  ];
+
+  @override
+  Future<DeviceReadiness> runnerStatus(
+    String deviceId, {
+    RunnerAction action = RunnerAction.health,
+    String? appId,
+  }) {
+    probes.add(deviceId);
+    return readiness.future;
+  }
+}
+
 void main() {
+  test('dashboard is visible while iOS readiness is pending', () async {
+    final control = SlowIosHealthClient();
+    final health = SlowIosHealthClient();
+    final cubit = ConnectionCubit(
+      clientFactory:
+          ({required baseUrl, required bearerToken, onDeviceReadiness}) =>
+              onDeviceReadiness == null ? health : control,
+    );
+    addTearDown(cubit.close);
+    final ready = DeviceReadiness(
+      ready: true,
+      state: 'ready',
+      detail: 'fixture ready',
+      checkedAt: DateTime.utc(2026),
+    );
+    addTearDown(() {
+      for (final client in [control, health]) {
+        if (!client.readiness.isCompleted) client.readiness.complete(ready);
+      }
+    });
+
+    final connecting = cubit.connect('http://fixture.test', '');
+    await Future<void>.delayed(Duration.zero);
+    expect(cubit.state.dashboard?.devices.single.id, 'ios-fixture');
+    expect(control.probes, isEmpty);
+    expect(health.probes, ['ios-fixture']);
+
+    health.readiness.complete(ready);
+    await connecting;
+    await Future<void>.delayed(Duration.zero);
+    expect(cubit.state.dashboard?.devices.single.readiness, same(ready));
+  });
+
   test(
     'a late response from the old connection cannot replace the new dashboard',
     () async {

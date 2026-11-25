@@ -4,10 +4,13 @@
     const placeholder = document.querySelector('flt-semantics-placeholder[aria-label="Enable accessibility"]');
     if (placeholder && !document.querySelector('flt-semantics')) {
         placeholder.click();
-        const deadline = Date.now() + 1500;
+        // A cold Flutter renderer can need more than a second to publish its
+        // first semantics frame. Leave headroom under the 5 s CDP deadline.
+        const readinessMs = 3500;
+        const deadline = Date.now() + readinessMs;
         while (!document.querySelector('flt-semantics')) {
             if (Date.now() >= deadline) {
-                throw new Error('Flutter Web accessibility did not become ready within 1500 ms');
+                throw new Error(`Flutter Web accessibility did not become ready within ${readinessMs} ms`);
             }
             await new Promise(resolve => setTimeout(resolve, 25));
         }

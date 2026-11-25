@@ -5,28 +5,37 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from run import CASES, select_cases, verify_report_download, wait_fixture_worker
+from run import CASES, SUITE, select_cases, verify_report_download, wait_fixture_worker
 
 
 class SuiteSelectionTests(unittest.TestCase):
-    def test_web_suite_covers_every_web_case_and_no_native_desktop_case(self):
+    def test_web_suite_covers_ready_cases_without_drafts_or_native_desktop(self):
         names = select_cases('web')
-        self.assertEqual(len(names), 14)
         self.assertEqual(set(names), {name for name, config in CASES.items()
-                                      if not config.get('desktop')})
-        self.assertIn('qc-import-fail', names)
-        self.assertIn('report-download', names)
-        self.assertIn('report-persistence', names)
-        self.assertIn('qc-import-syntax-error', names)
-        self.assertIn('qc-import-bad-version', names)
-        self.assertIn('qc-web-token-whitespace', names)
-        self.assertIn('qc-web-reload', names)
+                                      if not config.get('desktop') and (SUITE / f'{name}.yaml').is_file()})
+        for required in ('qc-web', 'report-web', 'qc-import-pass', 'qc-import-fail',
+                         'qc-import-invalid', 'qc-import-empty', 'qc-import-syntax-error',
+                         'qc-import-bad-version', 'qc-web-recovery', 'qc-web-token-whitespace',
+                         'report-empty-search', 'report-download', 'report-persistence'):
+            self.assertIn(required, names)
 
     def test_existing_default_and_live_selections_are_preserved(self):
-        self.assertEqual(select_cases('all'), list(CASES))
-        self.assertEqual(select_cases('live'), [name for name, config in CASES.items()
-                                               if config.get('live')])
+        ready = [name for name in CASES if (SUITE / f'{name}.yaml').is_file()]
+        self.assertEqual(select_cases('all'), ready)
+        self.assertEqual(select_cases('live'), [name for name in ready if CASES[name].get('live')])
         self.assertEqual(select_cases('all', 'qc-desktop'), ['qc-desktop'])
+
+    def test_promoting_a_draft_makes_it_eligible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            suite = Path(directory)
+            draft = suite / 'web-case.yaml.draft'
+            draft.touch()
+            with patch('run.SUITE', suite), patch('run.CASES', {'web-case': {}}):
+                self.assertEqual(select_cases('web'), [])
+                with self.assertRaisesRegex(ValueError, 'no ready .yaml scenario'):
+                    select_cases('web', 'web-case')
+                draft.rename(suite / 'web-case.yaml')
+                self.assertEqual(select_cases('web'), ['web-case'])
 
 
 class DownloadSynchronizationTests(unittest.TestCase):

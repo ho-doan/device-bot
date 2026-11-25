@@ -1,3 +1,13 @@
+## 0.1.26 — 2026-11-25
+
+* Fix the project dialog build by rendering the path and precondition inputs
+  as separate fields. Includes the USB Live fixes from the unpublished 0.1.25 tag.
+* Run ready QC automation cases in CI and keep draft YAML out of the release
+  gate. Verify that malformed and unsupported imports show the correct error.
+* Display devices as soon as discovery completes, without waiting for iOS
+  runner health checks. Allow cold Flutter Web pages more time to expose
+  accessibility controls within the existing browser command deadline.
+
 ## 0.1.25 — 2026-11-25
 
 * Fix real-iPhone Live over USB by waiting for AVFoundation to register the

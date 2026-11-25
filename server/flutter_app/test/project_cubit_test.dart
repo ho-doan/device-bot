@@ -17,10 +17,12 @@ void main() {
   test('cancellation remains active until cleanup status arrives', () async {
     final cubit = ProjectCubit(
       (name, args) async {
-        if (name == 'project_start')
+        if (name == 'project_start') {
           return {'status': 'running', 'runId': 'one'};
-        if (name == 'project_cancel')
+        }
+        if (name == 'project_cancel') {
           return {'status': 'cancelling', 'runId': 'one'};
+        }
         return {'status': 'cancelled', 'runId': 'one'};
       },
       () => true,

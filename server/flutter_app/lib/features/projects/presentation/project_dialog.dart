@@ -59,16 +59,18 @@ class _ProjectDialogState extends State<ProjectDialog> {
                     labelText: 'Backend project path',
                     hintText: '/path/to/project',
                   ),
-                  TextField(
-                    controller: confirmations,
-                    enabled: !active && !state.busy,
-                    minLines: 1,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'Confirmed preconditions (one per line)',
-                      helperText:
-                          'Optional; confirm only conditions you have verified.',
-                    ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  key: const Key('project-confirmations'),
+                  controller: confirmations,
+                  enabled: !active && !state.busy,
+                  minLines: 1,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Confirmed preconditions (one per line)',
+                    helperText:
+                        'Optional; confirm only conditions you have verified.',
                   ),
                 ),
                 if (state.busy || active) ...[

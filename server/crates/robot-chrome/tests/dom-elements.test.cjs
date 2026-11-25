@@ -71,14 +71,38 @@ test('query enables Flutter accessibility and waits for fields; a later query do
 });
 
 test('a Flutter placeholder that never exposes semantics fails with a bounded setup error', async () => {
+  let elapsed = 0;
   const document = {
     querySelector: selector => selector.startsWith('flt-semantics-placeholder') ? { click() {} } : null,
     querySelectorAll: () => [],
   };
   await assert.rejects(
-    runInNewContext(expression, { document, setTimeout, getComputedStyle }),
-    /Flutter Web accessibility did not become ready within 1500 ms/,
+    runInNewContext(expression, {
+      document, getComputedStyle,
+      Date: { now: () => elapsed },
+      setTimeout: (callback, delay) => { elapsed += delay; callback(); },
+    }),
+    /Flutter Web accessibility did not become ready within 3500 ms/,
   );
+  assert.equal(elapsed, 3500);
+});
+
+test('slow Flutter semantics setup is allowed to complete before the CDP deadline', async () => {
+  let elapsed = 0;
+  let clicks = 0;
+  const placeholder = { click() { clicks++; } };
+  const document = {
+    querySelector: selector => selector.startsWith('flt-semantics-placeholder')
+      ? placeholder : (elapsed >= 2200 ? {} : null),
+    querySelectorAll: () => [],
+  };
+  await runInNewContext(expression, {
+    document, getComputedStyle,
+    Date: { now: () => elapsed },
+    setTimeout: (callback, delay) => { elapsed += delay; callback(); },
+  });
+  assert.equal(clicks, 1);
+  assert.equal(elapsed, 2200);
 });
 
 test('closed dialog controls and CSS-hidden elements are absent from snapshots', async () => {

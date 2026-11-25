@@ -134,6 +134,9 @@ class ConnectionCubit extends Cubit<QcConnectionState> {
             clearError: true,
           ),
         );
+        // Display discovered devices before checking slow iOS runners on the
+        // separate health session.
+        unawaited(pollReadiness());
       }
     } catch (error) {
       if (_active(generation) && request == _refreshRequest) {

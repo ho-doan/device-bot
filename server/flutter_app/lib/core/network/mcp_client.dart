@@ -49,15 +49,7 @@ class McpClient {
   Stream<AdminEvent> get events => _eventsController.stream;
 
   Future<DashboardSnapshot> loadDashboard() async {
-    final discovered = await listDevices();
-    final devices = await Future.wait(
-      discovered.map((device) async {
-        if (device.platform != 'ios' || device.state != 'available') {
-          return device;
-        }
-        return device.withReadiness(await runnerStatus(device.id));
-      }),
-    );
+    final devices = await listDevices();
     return DashboardSnapshot(
       devices: devices,
       config: AdminConfig(

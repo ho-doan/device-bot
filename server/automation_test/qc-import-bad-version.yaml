@@ -7,9 +7,8 @@ steps:
   - assert_element: {filter: Run imported flow, source: flutter, timeout_ms: 15000}
   - assert_element: {filter: bad-version.yaml, source: flutter}
   - tap_element: {label: Run on device, element_type: button}
-  - wait: {ms: 2000}
-  - screenshot: {path: import-bad-version-before-assert.png}
-  - assert_element: {resource_id: import-run-result, filter: 'Run', timeout_ms: 60000}
+  - assert_element: {resource_id: import-run-result, filter: 'Run FAIL', source: flutter, timeout_ms: 60000}
+  - assert_element: {resource_id: import-run-result, filter: 'unsupported scenario version', source: flutter}
   - screenshot: {path: import-bad-version.png}
   - tap_element: {label: Close, element_type: button}
   - assert_element: {filter: 'Devices (', source: flutter, timeout_ms: 30000}

@@ -305,7 +305,11 @@ reference `${env:NAME}`; scoped resolution is available through `Project::resolv
 without changing the process environment. Do not put secrets directly in YAML.
 
 `prepare: {kind: attach}` selects an already available resource. Chrome
-`launch` creates a project-owned context and navigates it to `url`. Native
+`launch` creates a project-owned context, then waits for one matching available
+page before navigation. If discovery has not exposed the page yet, only the
+read-only discovery request is repeated within the resource's `timeout_ms`.
+Ambiguous matches and failed discovery requests stop setup without repeating
+launch or running a flow. Native
 launch/boot is rejected before setup: the current adapter cannot prove process
 ownership and safely stop only the app it created. A future native adapter must
 return a verifiable process identity and a corresponding owned cleanup handle. The optional

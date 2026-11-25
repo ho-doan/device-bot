@@ -496,16 +496,85 @@ async fn invoke(
     arguments: Value,
     limit: Duration,
 ) -> mcp::Result<Value> {
-    let result = tokio::time::timeout(
-        limit,
-        client.request("tools/call", json!({"name":name,"arguments":arguments})),
-    )
-    .await
-    .map_err(|_| format!("project tool {name} timed out"))??;
+    tokio::time::timeout(limit, call_tool(client, name, arguments))
+        .await
+        .map_err(|_| {
+            mcp::FlowError::new(
+                mcp::ErrorKind::Timeout,
+                format!("project tool {name} timed out"),
+            )
+        })?
+}
+
+async fn call_tool(client: &mut dyn Mcp, name: &str, arguments: Value) -> mcp::Result<Value> {
+    let result = client
+        .request("tools/call", json!({"name":name,"arguments":arguments}))
+        .await?;
     if result["isError"] == true {
         return Err(format!("project tool {name} failed").into());
     }
     Ok(result)
+}
+
+async fn discover_device(client: &mut dyn Mcp, resource: &Resource) -> mcp::Result<Value> {
+    const DISCOVERY_INTERVAL: Duration = Duration::from_millis(100);
+    let wait_for_owned_page = resource.kind == ResourceKind::Chrome
+        && matches!(resource.prepare, Preparation::Launch { .. });
+    let limit = Duration::from_millis(resource.timeout_ms);
+    tokio::time::timeout(limit, async {
+        loop {
+            let result = call_tool(client, "mobile_list_available_devices", json!({}))
+                .await
+                .map_err(|error| {
+                    mcp::FlowError::new(
+                        error.kind(),
+                        format!("resource {} discovery request failed", resource.name),
+                    )
+                })?;
+            let available = result
+                .pointer("/structuredContent/devices")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    mcp::FlowError::new(
+                        mcp::ErrorKind::Setup,
+                        format!("resource {} discovery returned no device list", resource.name),
+                    )
+                })?;
+            let matches = available.iter().filter(|device| {
+                device["platform"] == platform(resource.kind)
+                    && resource.selector.as_deref().is_none_or(|selector| {
+                        device["id"].as_str() == Some(selector)
+                            || device["name"].as_str() == Some(selector)
+                    })
+                    && device["state"] == "available"
+            });
+            let matched: Vec<_> = matches.collect();
+            match matched.as_slice() {
+                [device] => return Ok((*device).clone()),
+                [] if wait_for_owned_page => tokio::time::sleep(DISCOVERY_INTERVAL).await,
+                _ => {
+                    return Err(mcp::FlowError::new(
+                        mcp::ErrorKind::Setup,
+                        format!(
+                            "resource {} matched {} available devices; require exactly one",
+                            resource.name,
+                            matched.len()
+                        ),
+                    ));
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|_| {
+        mcp::FlowError::new(
+            mcp::ErrorKind::Timeout,
+            format!(
+                "resource {} discovery timed out after {} ms while waiting for exactly one available device",
+                resource.name, resource.timeout_ms
+            ),
+        )
+    })?
 }
 
 struct RunContext<'a> {
@@ -652,37 +721,7 @@ async fn run_owned(
                 )
                 .await?;
             }
-            let result = invoke(
-                connection.client.as_mut(),
-                "mobile_list_available_devices",
-                json!({}),
-                limit,
-            )
-            .await?;
-            let available = result
-                .pointer("/structuredContent/devices")
-                .and_then(Value::as_array)
-                .ok_or("project discovery returned no devices")?;
-            let selector = resource.selector.as_deref();
-            let matched: Vec<_> = available
-                .iter()
-                .filter(|d| {
-                    d["platform"] == platform(resource.kind)
-                        && selector.is_none_or(|s| {
-                            d["id"].as_str() == Some(s) || d["name"].as_str() == Some(s)
-                        })
-                        && d["state"] == "available"
-                })
-                .collect();
-            if matched.len() != 1 {
-                return Err(format!(
-                    "resource {} matched {} available devices; require exactly one",
-                    resource.name,
-                    matched.len()
-                )
-                .into());
-            }
-            let mut device = matched[0].clone();
+            let mut device = discover_device(connection.client.as_mut(), resource).await?;
             connection.real_id = device["id"]
                 .as_str()
                 .ok_or("discovered device ID missing")?
@@ -921,10 +960,22 @@ flows:
         fail_close: bool,
         capability_status: Option<String>,
         host_os: Option<String>,
+        discovery_a: Discovery,
+    }
+    #[derive(Clone, Copy, Default)]
+    enum Discovery {
+        #[default]
+        Ready,
+        Delayed,
+        Missing,
+        StalledAfterEmpty,
+        Ambiguous,
+        ToolFailure,
     }
     struct Fake {
         name: String,
         factory: Factory,
+        discoveries: usize,
     }
     #[async_trait]
     impl SessionFactory for Factory {
@@ -941,6 +992,7 @@ flows:
             Ok(Box::new(Fake {
                 name: resource.name.clone(),
                 factory: self.clone(),
+                discoveries: 0,
             }))
         }
     }
@@ -984,9 +1036,24 @@ flows:
                         );
                     }
                     if name == "mobile_list_available_devices" {
-                        return Ok(
-                            json!({"structuredContent":{"devices":[{"id":"chrome:same","name":"page","platform":"chrome","state":"available"}]}}),
-                        );
+                        self.discoveries += 1;
+                        let mut devices = vec![
+                            json!({"id":"chrome:same","name":"page","platform":"chrome","state":"available"}),
+                        ];
+                        if self.name == "a" {
+                            match self.factory.discovery_a {
+                                Discovery::Missing => devices.clear(),
+                                Discovery::Delayed if self.discoveries <= 2 => devices.clear(),
+                                Discovery::StalledAfterEmpty if self.discoveries == 1 => devices.clear(),
+                                Discovery::StalledAfterEmpty => return std::future::pending().await,
+                                Discovery::Ambiguous => devices.push(
+                                    json!({"id":"chrome:other","name":"other page","platform":"chrome","state":"available"}),
+                                ),
+                                Discovery::ToolFailure => return Ok(json!({"isError":true,"content":[{"text":"private-discovery-detail"}]})),
+                                _ => {}
+                            }
+                        }
+                        return Ok(json!({"structuredContent":{"devices":devices}}));
                     }
                     Ok(json!({"content":[]}))
                 }
@@ -1116,6 +1183,146 @@ flows:
     }
 
     const PROFILES: &str = "version: 1\ntargets:\n  first: {}\n  second: {}\n";
+
+    #[tokio::test]
+    async fn launched_chrome_waits_for_discovery_without_replaying_the_launch() {
+        let fixture = Fixture::new(
+            "version: 2\nname: test\nsteps:\n  - tap: {x: 1, y: 2}\n",
+            PROFILES,
+        );
+        let factory = Factory {
+            discovery_a: Discovery::Delayed,
+            ..Default::default()
+        };
+        let output = fixture.root.join("out");
+        let result = run(
+            &fixture.load(),
+            &factory,
+            &output,
+            &[],
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("the project should wait until the launched page is discoverable");
+        assert_eq!(result.reports.len(), 2);
+        assert!(result.reports.iter().all(|report| report.status == "PASS"));
+        let events = factory.events.lock().unwrap();
+        let browser_a: Vec<_> = events
+            .iter()
+            .filter(|event| event.split(':').nth(1) == Some("a"))
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            browser_a,
+            [
+                "connect:a",
+                "mobile_boot_device:a:chrome:browser",
+                "mobile_list_available_devices:a:",
+                "mobile_list_available_devices:a:",
+                "mobile_list_available_devices:a:",
+                "mobile_get_capabilities:a:chrome:same",
+                "mobile_open_url:a:chrome:same",
+                "mobile_click_on_screen_at_coordinates:a:chrome:same",
+                "close:a",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn unready_or_ambiguous_chrome_never_navigates_and_always_closes_sessions() {
+        for (discovery, attach, expected_kind, expected_message, expected_attempts) in [
+            (
+                Discovery::Missing,
+                false,
+                mcp::ErrorKind::Timeout,
+                "resource a discovery timed out",
+                None,
+            ),
+            (
+                Discovery::StalledAfterEmpty,
+                false,
+                mcp::ErrorKind::Timeout,
+                "resource a discovery timed out",
+                Some(2),
+            ),
+            (
+                Discovery::Missing,
+                true,
+                mcp::ErrorKind::Setup,
+                "resource a matched 0 available devices",
+                Some(1),
+            ),
+            (
+                Discovery::Ambiguous,
+                false,
+                mcp::ErrorKind::Setup,
+                "resource a matched 2 available devices",
+                Some(1),
+            ),
+            (
+                Discovery::ToolFailure,
+                false,
+                mcp::ErrorKind::Execution,
+                "resource a discovery request failed",
+                Some(1),
+            ),
+        ] {
+            let fixture = Fixture::new(
+                "version: 2\nname: test\nsteps:\n  - tap: {x: 1, y: 2}\n",
+                PROFILES,
+            );
+            let mut project = fixture.load();
+            project.plan.resources[0].timeout_ms =
+                if matches!(discovery, Discovery::StalledAfterEmpty) {
+                    1000
+                } else {
+                    250
+                };
+            if attach {
+                project.plan.resources[0].prepare = Preparation::Attach {};
+            }
+            let factory = Factory {
+                discovery_a: discovery,
+                ..Default::default()
+            };
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                run(
+                    &project,
+                    &factory,
+                    &fixture.root.join("out"),
+                    &[],
+                    Duration::from_secs(5),
+                ),
+            )
+            .await
+            .expect("resource discovery must be bounded");
+            let Err(error) = result else {
+                panic!("discovery must fail")
+            };
+            assert_eq!(error.kind(), expected_kind, "{error}");
+            assert!(error.to_string().contains(expected_message), "{error}");
+            assert!(!error.to_string().contains("private-discovery-detail"));
+            let events = factory.events.lock().unwrap();
+            let count = |event: &str| events.iter().filter(|value| *value == event).count();
+            if let Some(expected_attempts) = expected_attempts {
+                assert_eq!(count("mobile_list_available_devices:a:"), expected_attempts);
+            }
+            assert_eq!(
+                count("mobile_boot_device:a:chrome:browser"),
+                usize::from(!attach)
+            );
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| event.starts_with("mobile_open_url")
+                        || event.starts_with("mobile_click"))
+            );
+            assert_eq!(count("close:a"), 1);
+            assert_eq!(count("close:b"), 1);
+        }
+    }
+
     #[tokio::test]
     async fn prepares_all_owned_sessions_then_routes_each_case_to_its_own_native_id() {
         let fixture = Fixture::new(

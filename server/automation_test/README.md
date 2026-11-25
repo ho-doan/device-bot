@@ -198,6 +198,12 @@ export/compiler/transport; không thay thế kiểm thử bàn phím hoặc file
 native. Xem [audit edge cases](../../docs/automation-edge-case-audit.md) để biết
 coverage đã có và những giới hạn còn lại.
 
+CI Linux và Windows cũng chạy toàn bộ test `robot-project` và bài tích hợp
+`project_cli` của crate `device-bot` qua CLI/MCP thật. Hai lớp kiểm tra bao gồm
+các nhánh lỗi như fixture thất bại, dừng suite, dọn session và sinh báo cáo
+JUnit. Nếu build thành công, CI chạy các test project ngay cả khi bộ QC Web
+fail để vẫn thu được kết quả của cả hai. Test dành riêng cho Unix chạy ở job Linux.
+
 Đây là smoke/regression suite cho các luồng trên; chưa bao phủ mọi backend Live,
 toàn bộ thao tác thiết bị, import file thành công trên desktop/lưu export thành công,
 hay truy cập từ máy LAN

@@ -133,8 +133,6 @@ jobs:
         with:
           name: automation-orbit-web
           path: artifacts/orbit-web
-      - name: Test project preparation and environment handling
-        run: cargo test --manifest-path server/Cargo.toml --locked -p robot-project --test fixture_flow --test projects
       - name: Build project runner
         run: cargo build --manifest-path server/Cargo.toml --locked -p device-bot -p robot-flow
       - name: Validate preparation and all example flows for Android and iOS Simulator
@@ -256,6 +254,7 @@ jobs:
       - name: Test capture and input drivers
         run: cargo test --manifest-path server/Cargo.toml --locked -p robot-chrome -p robot-windows -p robot-android -- --test-threads=1
       - name: Build the backend and flow runner under test
+        id: build_tools
         run: cargo build --manifest-path server/Cargo.toml --locked -p device-bot -p robot-flow -p robot-report
       - name: Replay Flutter exports through the Rust compiler and MCP transport
         run: python server/automation_test/verify_recording_contracts.py --fixtures artifacts/recording-contracts
@@ -270,6 +269,12 @@ jobs:
       - name: Run all web YAML cases on Windows
         if: runner.os == 'Windows'
         run: python server/automation_test/run.py --suite web --output artifacts/ci-qc-web
+      - name: Test unattended project runtime
+        if: ${{ !cancelled() && steps.build_tools.outcome == 'success' }}
+        run: cargo test --manifest-path server/Cargo.toml --locked -p robot-project --no-fail-fast
+      - name: Test installed project CLI and failure reports
+        if: ${{ !cancelled() && steps.build_tools.outcome == 'success' }}
+        run: cargo test --manifest-path server/Cargo.toml --locked -p device-bot --test project_cli
       - name: Write test summary
         if: always()
         shell: python

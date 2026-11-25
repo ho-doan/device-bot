@@ -15,6 +15,8 @@ use tokio::{
 
 pub use crate::outcome::{ErrorKind, FlowError};
 pub type Result<T> = std::result::Result<T, FlowError>;
+/// Device Bot's session-scoped test proxy control tool.
+pub const WEB_TEST_PROXY: &str = "mobile_web_test_proxy";
 
 #[async_trait]
 pub trait Mcp: Send {

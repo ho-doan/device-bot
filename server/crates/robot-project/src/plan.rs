@@ -107,6 +107,14 @@ pub struct DisplayBinding {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct WebProxySpec {
+    pub upstream: String,
+    #[serde(default)]
+    pub passthrough: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Resource {
     pub name: String,
     pub kind: ResourceKind,
@@ -121,6 +129,8 @@ pub struct Resource {
     pub timeout_ms: u64,
     #[serde(default)]
     pub requires: Vec<Capability>,
+    #[serde(default)]
+    pub web_proxy: Option<WebProxySpec>,
 }
 
 /// A named browser actor owns one dedicated Chrome resource/session.
@@ -253,6 +263,14 @@ impl ProjectPlan {
             }
             if resource.timeout_ms == 0 {
                 return Err(invalid("resource timeout_ms must be positive"));
+            }
+            if resource.web_proxy.is_some()
+                && (resource.kind != ResourceKind::Chrome
+                    || !matches!(resource.prepare, Preparation::Launch { .. }))
+            {
+                return Err(invalid(
+                    "web_proxy requires a project-owned launched Chrome resource",
+                ));
             }
             let mut requirements = HashSet::new();
             if resource

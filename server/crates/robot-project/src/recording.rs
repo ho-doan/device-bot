@@ -149,6 +149,7 @@ pub(crate) async fn prepare(
         prepare: Preparation::Attach {},
         timeout_ms: 30_000,
         requires: Vec::new(),
+        web_proxy: None,
     };
     let client = tokio::time::timeout(
         Duration::from_secs(30),

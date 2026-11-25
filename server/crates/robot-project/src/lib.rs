@@ -227,7 +227,7 @@ impl Project {
             .transpose()?;
         recording::validate_config(model.recording.as_ref(), &plan)?;
         let flows = plan.flows.iter().map(|flow| flow.path.clone()).collect();
-        Ok(Self {
+        let project = Self {
             name: model.name,
             root,
             flows,
@@ -239,7 +239,42 @@ impl Project {
             before_each: model.before_each,
             before_each_flow,
             before_all_flow,
-        })
+        };
+        for resource in &project.plan.resources {
+            project.resolve_web_proxy(resource)?;
+        }
+        Ok(project)
+    }
+
+    pub(crate) fn resolve_web_proxy(
+        &self,
+        resource: &plan::Resource,
+    ) -> io::Result<Option<robot_core::WebProxyConfig>> {
+        let Some(spec) = &resource.web_proxy else {
+            return Ok(None);
+        };
+        let address = |value: &str| {
+            self.resolve(value)?
+                .parse::<std::net::SocketAddr>()
+                .map_err(|_| {
+                    invalid(format!(
+                        "resource {} web_proxy requires an explicit IP address and port",
+                        resource.name
+                    ))
+                })
+        };
+        let config = robot_core::WebProxyConfig {
+            upstream: address(&spec.upstream)?,
+            passthrough: spec
+                .passthrough
+                .iter()
+                .map(|value| address(value))
+                .collect::<io::Result<_>>()?,
+        };
+        config
+            .validate()
+            .map_err(|error| invalid(format!("resource {} {error}", resource.name)))?;
+        Ok(Some(config))
     }
 
     pub(crate) fn environment_value(&self, key: &str) -> Option<String> {

@@ -16,6 +16,7 @@ mod runner_status;
 mod screen;
 mod stream;
 mod ui;
+mod web_proxy;
 
 use std::sync::Arc;
 
@@ -64,6 +65,7 @@ impl ToolRegistry {
         definitions.extend(screen::definitions());
         definitions.extend(observation::definitions());
         definitions.extend(project::definitions());
+        definitions.push(web_proxy::definition());
         definitions.push(flow::definition());
         definitions
     }
@@ -82,6 +84,7 @@ impl ToolRegistry {
                 observation::call(&self.robot, &params.name, &params.arguments).await
             }
             flow::NAME => Box::pin(flow::run(&self.robot, &params.arguments)).await,
+            web_proxy::NAME => web_proxy::call(&self.robot, &params.arguments).await,
             stream::START_NAME => {
                 stream::start(&self.robot, &self.streams, &params.arguments).await
             }

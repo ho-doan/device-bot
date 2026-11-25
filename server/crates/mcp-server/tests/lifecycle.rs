@@ -136,7 +136,7 @@ async fn initialization_and_tools_list_follow_the_lifecycle() {
         .await
         .unwrap();
     let advertised = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(advertised.len(), 36);
+    assert_eq!(advertised.len(), 37);
     for name in [
         "mobile_start_stream",
         "mobile_stop_stream",
@@ -152,6 +152,7 @@ async fn initialization_and_tools_list_follow_the_lifecycle() {
         "project_start",
         "project_status",
         "project_cancel",
+        "mobile_web_test_proxy",
     ] {
         assert!(advertised.iter().any(|tool| tool["name"] == name), "{name}");
     }

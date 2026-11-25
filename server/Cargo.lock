@@ -2027,6 +2027,7 @@ dependencies = [
  "libc",
  "regex",
  "reqwest",
+ "robot-core",
  "robot-flow",
  "robot-report",
  "rustls",

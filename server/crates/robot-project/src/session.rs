@@ -506,6 +506,10 @@ async fn invoke(
         })?
 }
 
+fn proxy_configuration(config: &robot_core::WebProxyConfig) -> Value {
+    json!({"deviceId":"chrome:browser","action":"configure","config": config})
+}
+
 async fn call_tool(client: &mut dyn Mcp, name: &str, arguments: Value) -> mcp::Result<Value> {
     let result = client
         .request("tools/call", json!({"name":name,"arguments":arguments}))
@@ -603,6 +607,17 @@ async fn run_owned(
     } = context;
     let mut devices = BTreeMap::new();
     let mut common_tools: Option<BTreeMap<String, Value>> = None;
+    let configs = project
+        .plan
+        .resources
+        .iter()
+        .map(|resource| {
+            project
+                .resolve_web_proxy(resource)
+                .map(|config| (resource.name.clone(), config))
+        })
+        .collect::<std::io::Result<BTreeMap<_, _>>>()
+        .map_err(|error| mcp::FlowError::new(mcp::ErrorKind::Setup, error.to_string()))?;
     // Connect and validate every tool/flow before any resource is launched.
     for resource in &project.plan.resources {
         let host = project
@@ -674,6 +689,16 @@ async fn run_owned(
                 }
             }
         }
+        if let Some(config) = &configs[&resource.name] {
+            let name = mcp::WEB_TEST_PROXY;
+            let schema = tools.get(name).ok_or_else(|| {
+                format!(
+                    "resource {} requires unavailable tool {name}",
+                    resource.name
+                )
+            })?;
+            mcp::validate_arguments(schema, &proxy_configuration(config))?;
+        }
         if !tools.contains_key("mobile_list_available_devices") {
             return Err("project resource discovery tool unavailable".into());
         }
@@ -713,6 +738,26 @@ async fn run_owned(
             let mut guard = sessions.lock().await;
             let connection = guard.get_mut(&alias).unwrap();
             if is_launch {
+                if let Some(config) = &configs[&resource.name] {
+                    let configured = invoke(
+                        connection.client.as_mut(),
+                        mcp::WEB_TEST_PROXY,
+                        proxy_configuration(config),
+                        limit,
+                    )
+                    .await?;
+                    if configured
+                        .pointer("/structuredContent/configured")
+                        .and_then(Value::as_bool)
+                        != Some(true)
+                    {
+                        return Err(format!(
+                            "resource {} driver did not confirm its test proxy",
+                            resource.name
+                        )
+                        .into());
+                    }
+                }
                 invoke(
                     connection.client.as_mut(),
                     "mobile_boot_device",
@@ -955,6 +1000,7 @@ flows:
     struct Factory {
         events: Arc<StdMutex<Vec<String>>>,
         missing_tool: bool,
+        missing_web_proxy: bool,
         fail_boot: bool,
         hang_tap: bool,
         fail_close: bool,
@@ -1012,6 +1058,9 @@ flows:
                         names.push("mobile_click_on_screen_at_coordinates");
                         names.push("mobile_type_keys");
                     }
+                    if !self.factory.missing_web_proxy {
+                        names.push(mcp::WEB_TEST_PROXY);
+                    }
                     Ok(
                         json!({"tools": names.iter().map(|name| json!({"name":name,"inputSchema":{"type":"object"}})).collect::<Vec<_>>() }),
                     )
@@ -1029,6 +1078,11 @@ flows:
                     }
                     if name == "mobile_boot_device" && self.factory.fail_boot {
                         return Err("boot failed".into());
+                    }
+                    if name == mcp::WEB_TEST_PROXY {
+                        assert_eq!(params["arguments"]["action"], "configure");
+                        assert_eq!(params["arguments"]["config"]["upstream"], "127.0.0.1:8080");
+                        return Ok(json!({"structuredContent":{"configured":true}}));
                     }
                     if name == "mobile_get_capabilities" {
                         return Ok(
@@ -1183,6 +1237,83 @@ flows:
     }
 
     const PROFILES: &str = "version: 1\ntargets:\n  first: {}\n  second: {}\n";
+
+    #[tokio::test]
+    async fn proxy_configures_only_its_owned_resource_before_boot() {
+        let fixture = Fixture::new(
+            "version: 2\nname: wait\nsteps:\n  - wait: {ms: 0}\n",
+            PROFILES,
+        );
+        let path = fixture.root.join("project.yaml");
+        let manifest = fs::read_to_string(&path).unwrap();
+        let configured = manifest.replace(
+            "    prepare: {kind: launch, url: 'http://example.test/a'}",
+            "    web_proxy: {upstream: '${env:PROXY_SPIKE_ADDR}'}\n    prepare: {kind: launch, url: 'http://example.test/a'}",
+        );
+        let configured = configured.replace("kind: project\n", "kind: project\nenv_file: .env\n");
+        fs::write(&path, &configured).unwrap();
+        fs::write(
+            fixture.root.join(".env"),
+            "PROXY_SPIKE_ADDR=127.0.0.1:8080\n",
+        )
+        .unwrap();
+        let project = fixture.load();
+
+        for missing_web_proxy in [false, true] {
+            let factory = Factory {
+                missing_web_proxy,
+                ..Factory::default()
+            };
+            let outcome = run(
+                &project,
+                &factory,
+                &fixture.root.join(format!("run-{missing_web_proxy}")),
+                &[],
+                Duration::from_secs(3),
+            )
+            .await;
+            let events = factory.events.lock().unwrap();
+            let configure = events
+                .iter()
+                .position(|e| e == "mobile_web_test_proxy:a:chrome:browser");
+            let boot = events
+                .iter()
+                .position(|e| e == "mobile_boot_device:a:chrome:browser");
+            if missing_web_proxy {
+                assert!(
+                    outcome
+                        .err()
+                        .expect("missing proxy tool must fail")
+                        .to_string()
+                        .contains("requires unavailable tool mobile_web_test_proxy")
+                );
+                assert!(configure.is_none() && boot.is_none());
+            } else {
+                assert!(outcome.is_ok(), "{:?}", outcome.err());
+                assert!(configure.unwrap() < boot.unwrap(), "{events:?}");
+                assert!(
+                    !events
+                        .iter()
+                        .any(|e| e.starts_with("mobile_web_test_proxy:b:"))
+                );
+            }
+        }
+
+        fs::write(
+            &path,
+            configured.replace(
+                "prepare: {kind: launch, url: 'http://example.test/a'}",
+                "prepare: {kind: attach}",
+            ),
+        )
+        .unwrap();
+        assert!(
+            Project::load(&fixture.root)
+                .unwrap_err()
+                .to_string()
+                .contains("project-owned launched Chrome")
+        );
+    }
 
     #[tokio::test]
     async fn launched_chrome_waits_for_discovery_without_replaying_the_launch() {

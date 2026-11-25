@@ -5,7 +5,7 @@ use super::arguments::{
     swipe_arguments,
 };
 use super::artifacts::write;
-use super::{FlowRunner, SWIPE, TAP, TYPE};
+use super::{ElementProbeReport, FlowRunner, SWIPE, TAP, TYPE};
 use crate::{
     mcp::Result,
     schema::{self, Step},
@@ -16,9 +16,13 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 impl FlowRunner {
-    pub(super) async fn execute(&mut self, action: &str, args: &Value) -> Result<()> {
+    pub(super) async fn execute(
+        &mut self,
+        action: &str,
+        args: &Value,
+    ) -> Result<Option<ElementProbeReport>> {
         if self.client.is_none() {
-            return Ok(());
+            return Ok(None);
         }
         match action {
             "select_device" => {
@@ -203,7 +207,8 @@ impl FlowRunner {
                 self.values
                     .insert(key.into(), required(args, "text")?.into());
             }
-            "assert_absent" | "assert_count" | "list_elements" => {
+            "list_elements" => return self.probe_elements(args).await.map(Some),
+            "assert_absent" | "assert_count" => {
                 let s = schema::selector(args, &self.profile)?;
                 let found = self.query(&s).await?;
                 if action == "assert_absent" && !found.is_empty() {
@@ -237,6 +242,6 @@ impl FlowRunner {
             "assert_value" => self.assert_value(args, string(args, "expected")?).await?,
             _ => return Err(format!("unknown action {action}").into()),
         }
-        Ok(())
+        Ok(None)
     }
 }

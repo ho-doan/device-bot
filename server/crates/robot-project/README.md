@@ -241,6 +241,10 @@ requires an interactive Windows host with the Flutter fixture installed.
 
 ## Named project sessions
 
+For quick diagnosis, insert `list_elements` after the step that changes the
+app or page. The case report includes sample counts and query timing without
+tapping or scrolling. See the [quick element probe example](../../docs/yaml-mcp-client.md#quick-element-probe).
+
 Version 1 accepts named hosts and resources and runs a shared flow once per
 binding. Each resource owns an MCP connection for the entire project. The
 runtime validates every case and available tool schema before preparing targets,

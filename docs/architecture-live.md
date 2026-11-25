@@ -94,6 +94,11 @@ encoder. Sau khi điều hướng hoặc đổi kích thước viewport, mở l�
   vào `~/.device-bot-dev/recordings/` (debug) hoặc `~/.device-bot/recordings/`
   (release). Đóng/mở Live trong cùng phiên QC tiếp tục recording của device đó.
   Trang Chrome cần URL HTTP(S) trước khi xuất.
+- **Element probe** trong Live cho sao chép hai bước `list_elements` đo button
+  và ô nhập. Dán sau thao tác cần đo, chạy YAML rồi xem số lượng, thời gian
+  truy vấn và lần đầu thấy kết quả trong report. Đo mục tiêu cụ thể bằng
+  `resource_id` và ưu tiên `assert_element` có timeout thay cho delay cố định.
+  Xem [mẫu probe](../server/docs/yaml-mcp-client.md#quick-element-probe).
 
 Chạy file đã xuất bằng `device-bot run /path/to/recording.yaml`. Thiết bị/app,
 trạng thái đăng nhập và dữ liệu cần cho kịch bản phải sẵn sàng trên platform đó.

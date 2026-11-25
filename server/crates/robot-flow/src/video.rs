@@ -601,6 +601,7 @@ mod tests {
                 status: if i == 34 { "failed" } else { "passed" }.into(),
                 note: Some("Bấm nút để mở màn hình cần kiểm tra".into()),
                 error: None,
+                element_probe: None,
             })
             .collect();
         let summary = Summary::new(&steps, "FAIL", 720, 600, 20, 10.);
@@ -730,6 +731,7 @@ mod tests {
                 status: "passed".into(),
                 note: Some("Nhập mật khẩu kiểm thử".into()),
                 error: None,
+                element_probe: None,
             },
             StepReport {
                 id: "test.scroll".into(),
@@ -737,6 +739,7 @@ mod tests {
                 status: "failed".into(),
                 note: Some("Cuộn để tìm nội dung cần kiểm tra".into()),
                 error: Some("element missing".into()),
+                element_probe: None,
             },
         ];
         overlay.render(&path, &steps, "FAIL").await.unwrap();

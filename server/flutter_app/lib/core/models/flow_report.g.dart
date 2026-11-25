@@ -49,10 +49,20 @@ FlowStepResult _$FlowStepResultFromJson(Map<String, dynamic> json) =>
             unknownValue: FlowStepStatus.unknown,
           ) ??
           FlowStepStatus.unknown,
+      id: json['id'] as String?,
+      elementProbe: json['element_probe'] == null
+          ? null
+          : FlowElementProbe.fromJson(
+              json['element_probe'] as Map<String, dynamic>,
+            ),
     );
 
 Map<String, dynamic> _$FlowStepResultToJson(FlowStepResult instance) =>
-    <String, dynamic>{'status': _$FlowStepStatusEnumMap[instance.status]!};
+    <String, dynamic>{
+      'status': _$FlowStepStatusEnumMap[instance.status]!,
+      'id': ?instance.id,
+      'element_probe': ?instance.elementProbe?.toJson(),
+    };
 
 const _$FlowStepStatusEnumMap = {
   FlowStepStatus.passed: 'passed',
@@ -60,3 +70,35 @@ const _$FlowStepStatusEnumMap = {
   FlowStepStatus.skipped: 'skipped',
   FlowStepStatus.unknown: 'unknown',
 };
+
+FlowElementProbe _$FlowElementProbeFromJson(Map<String, dynamic> json) =>
+    FlowElementProbe(
+      firstMatchMs: (json['first_match_ms'] as num?)?.toInt(),
+      samples:
+          (json['samples'] as List<dynamic>?)
+              ?.map(
+                (e) => FlowElementSample.fromJson(e as Map<String, dynamic>),
+              )
+              .toList() ??
+          const [],
+    );
+
+Map<String, dynamic> _$FlowElementProbeToJson(FlowElementProbe instance) =>
+    <String, dynamic>{
+      'first_match_ms': instance.firstMatchMs,
+      'samples': instance.samples.map((e) => e.toJson()).toList(),
+    };
+
+FlowElementSample _$FlowElementSampleFromJson(Map<String, dynamic> json) =>
+    FlowElementSample(
+      count: (json['count'] as num).toInt(),
+      queryMs: (json['query_ms'] as num).toInt(),
+      elapsedMs: (json['elapsed_ms'] as num).toInt(),
+    );
+
+Map<String, dynamic> _$FlowElementSampleToJson(FlowElementSample instance) =>
+    <String, dynamic>{
+      'count': instance.count,
+      'query_ms': instance.queryMs,
+      'elapsed_ms': instance.elapsedMs,
+    };

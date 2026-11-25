@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../cubit/live_cubit.dart';
 import '../domain/live_geometry.dart';
+import 'element_probe_help.dart';
 import 'dart:convert';
 import 'package:file_selector/file_selector.dart';
 import 'package:mobile_mcp_companion/features/flows/presentation/flow_run_dialog.dart';
@@ -204,6 +205,26 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
     listener: (context, state) => _revealSelected(),
     builder: (context, state) => _buildDialog(context),
   );
+
+  Future<void> _showElementProbe() async {
+    final copy = await showDialog<bool>(
+      context: context,
+      builder: (_) => const ElementProbeHelp(),
+    );
+    if (copy != true || !mounted) return;
+    var message = 'Probe YAML copied';
+    try {
+      await Clipboard.setData(const ClipboardData(text: elementProbeYaml));
+    } on PlatformException {
+      message = 'Could not copy YAML. Select it in Element probe to copy.';
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
   Widget _buildDialog(BuildContext context) {
     final video = _video;
     final selected =
@@ -238,16 +259,28 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: Semantics(
-                liveRegion: true,
-                container: true,
-                child: Text(
-                  _stopped
-                      ? 'Live mirror stopped.'
-                      : 'Select an element to inspect. Use Tap selected to control the device. Drag the video to scroll.'
-                            '${source == null ? '' : ' ${_elements.length} elements from the $source.'}',
-                  key: const Key('android-live-status'),
-                ),
+              child: Wrap(
+                spacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Semantics(
+                    liveRegion: true,
+                    container: true,
+                    child: Text(
+                      _stopped
+                          ? 'Live mirror stopped.'
+                          : 'Select an element to inspect. Use Tap selected to control the device. Drag the video to scroll.'
+                                '${source == null ? '' : ' ${_elements.length} elements from the $source.'}',
+                      key: const Key('android-live-status'),
+                    ),
+                  ),
+                  TextButton.icon(
+                    key: const Key('live-element-probe'),
+                    onPressed: _showElementProbe,
+                    icon: const Icon(Icons.query_stats_outlined),
+                    label: const Text('Element probe'),
+                  ),
+                ],
               ),
             ),
             if (widget.platform == 'android' && widget.onTerminateApps != null)

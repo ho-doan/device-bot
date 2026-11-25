@@ -39,6 +39,21 @@ pub struct StepReport {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub element_probe: Option<ElementProbeReport>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ElementProbeReport {
+    pub first_match_ms: Option<u64>,
+    pub samples: Vec<ElementProbeSample>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ElementProbeSample {
+    pub count: usize,
+    pub query_ms: u64,
+    pub elapsed_ms: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -272,6 +287,7 @@ impl FlowRunner {
                     action: action.clone(),
                     status: StepStatus::Failed.as_str().into(),
                     error: Some(self.redact(&error.to_string())),
+                    element_probe: None,
                 });
             }
         }
@@ -361,6 +377,7 @@ impl FlowRunner {
                     .as_str()
                     .into(),
                     error: result.as_ref().err().map(|e| self.redact(&e.to_string())),
+                    element_probe: result.as_ref().ok().and_then(|probe| probe.clone()),
                 });
                 self.emit_step_event(
                     step,

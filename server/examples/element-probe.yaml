@@ -1,0 +1,18 @@
+version: 2
+name: element-probe
+steps:
+  - select_device:
+      id: '${env:DEVICE_PROBE_ID}'
+      state: available
+  - id: probe-buttons
+    list_elements:
+      element_type: button
+      samples: 3
+      interval_ms: 150
+      timeout_ms: 3000
+  - id: probe-inputs
+    list_elements:
+      element_type: textField
+      samples: 3
+      interval_ms: 150
+      timeout_ms: 3000

@@ -129,6 +129,48 @@ fn bindings() -> BTreeMap<String, Value> {
 }
 
 #[tokio::test]
+async fn list_elements_probes_counts_timing_and_first_match_without_actions() {
+    let state = Arc::new(Mutex::new(State {
+        queries: VecDeque::from([json!([]), json!([node("First"), node("Second")]), json!([])]),
+        ..State::default()
+    }));
+    let report = run(
+        &flow("  - list_elements: {element_type: button, samples: 2, interval_ms: 50}\n  - list_elements: {element_type: textField}\n"),
+        &Profile::default(),
+        state.clone(),
+    ).await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    let report = serde_json::to_value(report).unwrap();
+    let buttons = &report["steps"][1]["element_probe"];
+    let samples = buttons["samples"].as_array().unwrap();
+    assert_eq!(samples.len(), 2);
+    assert_eq!(samples[0]["count"], 0);
+    assert_eq!(samples[1]["count"], 2);
+    assert!(samples[0]["query_ms"].is_u64());
+    assert!(samples[1]["elapsed_ms"].as_u64().unwrap() >= 50);
+    assert_eq!(buttons["first_match_ms"], samples[1]["elapsed_ms"]);
+    let inputs = &report["steps"][2]["element_probe"];
+    assert_eq!(inputs["samples"][0]["count"], 0);
+    assert!(inputs["first_match_ms"].is_null());
+    assert!(report["steps"][0].get("element_probe").is_none());
+    let state = state.lock().unwrap();
+    let names: Vec<_> = state
+        .calls
+        .iter()
+        .filter_map(|call| call["params"]["name"].as_str())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "mobile_list_available_devices",
+            "mobile_list_elements_on_screen",
+            "mobile_list_elements_on_screen",
+            "mobile_list_elements_on_screen",
+        ]
+    );
+}
+
+#[tokio::test]
 async fn named_resources_route_nested_scopes_and_restore_default() {
     let state = Arc::new(Mutex::new(State {
         queries: VecDeque::from([json!([node("ready")])]),

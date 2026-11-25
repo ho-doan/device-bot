@@ -5,7 +5,7 @@ use super::arguments::{
     gesture_arguments, query_arguments, rectangle, tap_arguments, type_arguments,
 };
 use super::artifacts::write;
-use super::{BATCH, FlowRunner, QUERY, SWIPE, TAP};
+use super::{BATCH, ElementProbeReport, ElementProbeSample, FlowRunner, QUERY, SWIPE, TAP};
 use crate::{
     mcp::Result,
     schema::{self, Selector},
@@ -15,6 +15,38 @@ use std::{future::Future, pin::Pin, time::Duration};
 use tokio::time::{Instant, sleep};
 
 impl FlowRunner {
+    /// Measure accessibility observation across bounded samples, without scrolling
+    /// or changing the selected app. The enclosing step owns the hard deadline.
+    pub(super) async fn probe_elements(&mut self, args: &Value) -> Result<ElementProbeReport> {
+        let selector = schema::selector(args, &self.profile)?;
+        let count = args["samples"].as_u64().unwrap_or(1);
+        let interval = Duration::from_millis(args["interval_ms"].as_u64().unwrap_or(100));
+        let mut samples = Vec::with_capacity(count as usize);
+        let mut first_match_ms = None;
+        let started = Instant::now();
+        for index in 0..count {
+            if index != 0 {
+                sleep(interval).await;
+            }
+            let query_started = Instant::now();
+            let count = self.query(&selector).await?.len();
+            let observed = Instant::now();
+            let elapsed_ms = (observed - started).as_millis() as u64;
+            if count > 0 {
+                first_match_ms.get_or_insert(elapsed_ms);
+            }
+            samples.push(ElementProbeSample {
+                count,
+                query_ms: (observed - query_started).as_millis() as u64,
+                elapsed_ms,
+            });
+        }
+        Ok(ElementProbeReport {
+            first_match_ms,
+            samples,
+        })
+    }
+
     pub(super) async fn assert_value(&mut self, args: &Value, expected: &str) -> Result<()> {
         let e = self.find(args, false).await?;
         // A native value is authoritative, even when its label matches the

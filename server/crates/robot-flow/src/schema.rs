@@ -555,6 +555,8 @@ pub fn selector(args: &Value, profile: &Profile) -> Result<Selector> {
             "count",
             "property",
             "timeout_ms",
+            "samples",
+            "interval_ms",
             "text",
             "text_from_env",
             "replacement",
@@ -789,6 +791,21 @@ fn expand(
         if action == "wait" && args["ms"].as_u64().is_none_or(|n| n > 600_000) {
             return Err("wait.ms must be 0..600000".into());
         }
+        if action == "list_elements" {
+            if let Some(samples) = args.get("samples")
+                && samples.as_u64().is_none_or(|n| !(1..=20).contains(&n))
+            {
+                return Err("list_elements.samples must be 1..20".into());
+            }
+            if let Some(interval) = args.get("interval_ms")
+                && (args["samples"].as_u64().unwrap_or(1) < 2
+                    || interval.as_u64().is_none_or(|n| !(50..=2_000).contains(&n)))
+            {
+                return Err(
+                    "list_elements.interval_ms must be 50..2000 with at least two samples".into(),
+                );
+            }
+        }
         if let Some(n) = args.get("timeout_ms") {
             if n.as_u64().is_none_or(|n| n == 0 || n > 120_000) {
                 return Err("timeout_ms must be 1..120000".into());
@@ -823,9 +840,8 @@ fn validate_action_keys(action: &str, args: &Value) -> Result<()> {
         "call_tool" => "name arguments sensitive",
         "note_limitation" => "message",
         "start_screen_recording" | "stop_screen_recording" | "reset_fields" => "",
-        "tap_element" | "assert_element" | "assert_absent" | "list_elements" | "focus_field" => {
-            selector
-        }
+        "tap_element" | "assert_element" | "assert_absent" | "focus_field" => selector,
+        "list_elements" => return check_keys(args, &format!("{selector} samples interval_ms")),
         "assert_state" => return check_keys(args, &format!("{selector} property expected")),
         "assert_value" => return check_keys(args, &format!("{selector} expected")),
         "assert_count" => return check_keys(args, &format!("{selector} count")),

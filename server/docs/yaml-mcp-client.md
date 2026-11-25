@@ -226,7 +226,7 @@ not establish native device parity; see the recorded verification results.
 | `assert_count` | Exact `count` after filtering; a capped query is an error |
 | `assert_state` | `property: checked/focused/selected/enabled`, boolean `expected` |
 | `assert_value` | Exact native field `expected`, including an empty string; explicit `value` takes priority over text/label |
-| `list_elements` | Query evidence with the same selector rules |
+| `list_elements` | Read-only element probe with counts, query timing and optional repeated samples |
 | `if_element` | Exact single enabled match chooses `then`; zero chooses `else` |
 | `run` | Expand a named recipe with `with` parameters |
 | `reset_fields` | Clear only the runner's editing bookkeeping after navigation |
@@ -258,6 +258,35 @@ report its step ID, error and missing capability. Do not substitute an external
 CDP script, manual UI action or app-code change to make a failing run pass.
 Required driver initialization, such as automatic Flutter Web accessibility,
 belongs inside MCP and must report initialization errors explicitly.
+
+### Quick element probe
+
+Run [element-probe.yaml](../examples/element-probe.yaml) against an already
+available device with the target app open:
+
+```sh
+DEVICE_PROBE_ID='<device-id>' device-bot run server/examples/element-probe.yaml
+```
+
+In a project or a Chrome flow, use the two `list_elements` steps after the
+device or page has been selected and after the transition you want to measure.
+In QC Live, open **Element probe** to copy those steps. Give each step a
+distinct ID if you paste it more than once. Use a specific
+`resource_id` or `label` if the next action depends on one element.
+
+`list_elements` defaults to one sample. Set `samples` from 1 to 20,
+`interval_ms` from 50 to 2000 for repeated sampling (default 100), and a
+step `timeout_ms` to bound the whole probe. The run's `report.json` records
+`steps[].element_probe.samples` with the matching `count`, end-to-end
+`query_ms`, and `elapsed_ms` relative to that probe's own start.
+`first_match_ms` is the time of the first nonempty sample, or `null` when
+none matched. Each probe starts its own clock.
+
+Zero matches are valid measurement data, not proof that a control will stay
+absent. Counts refer to the current accessibility snapshot and include no
+automatic scroll. A capped query is still an error, not an exact count.
+Use the observed timings to choose an `assert_element` deadline when
+possible, rather than using them as a fixed delay.
 
 Each live case creates a fresh directory with `report.json`, `junit.xml`,
 method/tool-only `mcp-calls.jsonl`, redacted `query-N.json`, requested screenshots

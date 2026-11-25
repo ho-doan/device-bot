@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from run import CASES, SUITE, select_cases, verify_report_download, wait_fixture_worker
+from run import CASES, SUITE, prepare_web_browser, select_cases, verify_report_download, wait_fixture_worker
 
 
 class SuiteSelectionTests(unittest.TestCase):
@@ -36,6 +36,31 @@ class SuiteSelectionTests(unittest.TestCase):
                     select_cases('web', 'web-case')
                 draft.rename(suite / 'web-case.yaml')
                 self.assertEqual(select_cases('web'), ['web-case'])
+
+
+class ChromeStartupTests(unittest.TestCase):
+    def test_cold_chrome_reaches_a_working_case_context_before_replay(self):
+        with patch('run.fixture_tool', side_effect=[
+            RuntimeError('Fixture tool mobile_boot_device failed: debugging did not become ready within 15 seconds'),
+            RuntimeError('Fixture tool mobile_boot_device failed: Chrome command Target.createTarget timed out after 5 seconds'),
+            {},
+        ]) as boot, patch('run.time.sleep'):
+            prepare_web_browser('http://127.0.0.1:3338', 'fixture-token')
+        self.assertEqual(boot.call_count, 3)
+        boot.assert_called_with('http://127.0.0.1:3338', 'fixture-token',
+                                'mobile_boot_device', {'deviceId': 'chrome:browser'})
+
+    def test_permanent_errors_fail_immediately_and_cold_retries_are_bounded(self):
+        with patch('run.fixture_tool', side_effect=RuntimeError('Chrome is not installed')) as boot:
+            with self.assertRaisesRegex(RuntimeError, 'Chrome is not installed'):
+                prepare_web_browser('http://127.0.0.1:3338', 'fixture-token')
+        boot.assert_called_once()
+        with patch('run.fixture_tool', side_effect=RuntimeError(
+            'Fixture tool mobile_boot_device failed: Chrome command Target.createTarget timed out after 5 seconds'
+        )) as boot, patch('run.time.sleep'):
+            with self.assertRaisesRegex(RuntimeError, 'Target.createTarget timed out'):
+                prepare_web_browser('http://127.0.0.1:3338', 'fixture-token')
+        self.assertEqual(boot.call_count, 4)
 
 
 class DownloadSynchronizationTests(unittest.TestCase):

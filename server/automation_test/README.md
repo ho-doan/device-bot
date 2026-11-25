@@ -167,7 +167,11 @@ và [DOM.setFileInputFiles](https://chromedevtools.github.io/devtools-protocol/t
 không giả lập callback Run hay thay kết quả backend. Trạng thái PASS/FAIL của
 flow con, số lượt history và PNG đều được kiểm tra từ report API thật.
 
-Harness khởi động Chrome trong một MCP session setup riêng rồi đóng session đó.
+Harness dùng một MCP session setup riêng để xác nhận Chrome đã mở được browser
+context trước khi chạy bộ web. Trên runner khởi động chậm, chỉ bước setup này
+thử lại các lỗi timeout của DevTools hoặc tạo trang, tối đa bốn lần. Các YAML
+test không được chạy lại để che lỗi.
+
 Trước khi chạy YAML import/download, nó đợi helper xác nhận `browser-ready`.
 Helper dùng CDP auto-attach để tạm dừng từng page mới, cấu hình download đúng
 browser context và file chooser, rồi mới cho page chạy. Không dùng polling

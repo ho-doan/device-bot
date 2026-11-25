@@ -440,6 +440,23 @@ def arm_embedded_flow_shutdown_probe(base_url, token):
         raise RuntimeError("Embedded shutdown probe did not run")
 
 
+def prepare_web_browser(base_url, token):
+    """Verify a real case context before running any measured web scenarios."""
+    startup_timeouts = (
+        "debugging did not become ready within",
+        "Chrome command Target.createTarget timed out",
+    )
+    for attempt in range(1, 5):
+        try:
+            fixture_tool(base_url, token, "mobile_boot_device", {"deviceId": "chrome:browser"})
+            return
+        except RuntimeError as error:
+            if attempt == 4 or not any(reason in str(error) for reason in startup_timeouts):
+                raise
+            print(f"Chrome fixture is still starting (attempt {attempt}/4).", flush=True)
+            time.sleep(.25)
+
+
 def wait_fixture_worker(worker, log_path, timeout=30):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -711,6 +728,8 @@ def main():
                                   cwd=ROOT, env=env, stdout=log, stderr=log)
         try:
             wait_backend(server, env["QC_TEST_URL"])
+            if not has_desktop:
+                prepare_web_browser(env["QC_TEST_URL"], env["DEVICE_BOT_AUTH"])
             for name in names:
                 config = CASES[name]
                 before_recordings = recording_files() if config.get('live') else set()
@@ -726,6 +745,8 @@ def main():
                     server = subprocess.Popen([str(bot), "mcp", "--listen", f"127.0.0.1:{args.port}"],
                                               cwd=ROOT, env=env, stdout=log, stderr=log)
                     wait_backend(server, env["QC_TEST_URL"])
+                    if not has_desktop:
+                        prepare_web_browser(env["QC_TEST_URL"], env["DEVICE_BOT_AUTH"])
                 if config.get('fresh_desktop') and desktop is not None:
                     stop_process(desktop)
                     desktop = None

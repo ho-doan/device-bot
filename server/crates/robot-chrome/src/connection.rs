@@ -222,15 +222,21 @@ pub(super) struct BrowserSession {
 }
 
 impl BrowserSession {
-    pub async fn create(connection: Arc<Mutex<BrowserConnection>>) -> Result<Self, RobotError> {
+    pub async fn create(
+        connection: Arc<Mutex<BrowserConnection>>,
+        proxy: Option<std::net::SocketAddr>,
+    ) -> Result<Self, RobotError> {
+        let mut options = json!({"disposeOnDetach":true});
+        if let Some(proxy) = proxy {
+            options["proxyServer"] = json!(format!("http://{proxy}"));
+            // Keep non-loopback web/CDN traffic direct. The later subtractive
+            // rule opts loopback into this context's explicit, allowlisted proxy.
+            options["proxyBypassList"] = json!("*;<-loopback>");
+        }
         let created = connection
             .lock()
             .await
-            .request(
-                "Target.createBrowserContext",
-                json!({"disposeOnDetach":true}),
-                None,
-            )
+            .request("Target.createBrowserContext", options, None)
             .await?;
         let context = created["browserContextId"]
             .as_str()

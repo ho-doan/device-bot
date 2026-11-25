@@ -13,6 +13,7 @@ mod observation;
 mod registry;
 mod robot;
 mod web;
+mod web_fault;
 
 pub mod health;
 pub mod video;
@@ -33,6 +34,7 @@ pub use registry::RobotRegistry;
 pub use robot::{Robot, UiRunnerStatus};
 pub use video::{NativeVideoStream, VideoFrame, VideoStream};
 pub use web::{WebContext, WebFrameSelector, WebPageSelector, web_context_matches};
+pub use web_fault::{WebFault, WebFaultState, WebFaultTransition, WebProxyConfig};
 
 #[cfg(test)]
 mod tests;

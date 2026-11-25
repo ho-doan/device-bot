@@ -76,7 +76,7 @@ async fn discover(
     let connection = connection::BrowserConnection::connect(&endpoint)
         .await
         .unwrap();
-    let mut session = connection::BrowserSession::create(Arc::new(Mutex::new(connection)))
+    let mut session = connection::BrowserSession::create(Arc::new(Mutex::new(connection)), None)
         .await
         .unwrap();
     let target = serde_json::from_value(json!({"id":"page","type":"page"})).unwrap();

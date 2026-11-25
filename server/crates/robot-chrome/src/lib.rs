@@ -46,6 +46,7 @@ mod observation;
 mod qc_smoke_tests;
 mod screencast;
 mod startup;
+mod test_proxy;
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -66,6 +67,7 @@ pub struct ChromeRobot {
     boot_lock: Arc<Mutex<()>>,
     browser_session: Arc<Mutex<Option<connection::BrowserSession>>>,
     browser_connection: Arc<Mutex<Option<Arc<Mutex<connection::BrowserConnection>>>>>,
+    test_proxy: Arc<Mutex<Option<test_proxy::TestProxy>>>,
     discovery_file: Option<PathBuf>,
     managed_browser: Option<Arc<Mutex<managed::ManagedChrome>>>,
 }
@@ -95,6 +97,7 @@ impl ChromeRobot {
             boot_lock: Arc::default(),
             browser_session: Arc::default(),
             browser_connection: Arc::default(),
+            test_proxy: Arc::default(),
             discovery_file: None,
             managed_browser: None,
         }
@@ -956,6 +959,11 @@ impl Robot for ChromeRobot {
         .map(|_| ())
     }
     async fn restart_device(&self, id: &str) -> Result<(), RobotError> {
+        if self.test_proxy.lock().await.is_some() {
+            return Err(RobotError::InvalidInput(
+                "start a new MCP session to restart Chrome with a test proxy".into(),
+            ));
+        }
         if id != "chrome:browser" {
             self.page(id).await?;
         }
@@ -982,6 +990,61 @@ impl Robot for ChromeRobot {
         robot.ffmpeg_path = self.ffmpeg_path.clone();
         Some(Arc::new(robot))
     }
+
+    async fn configure_web_proxy(
+        &self,
+        id: &str,
+        config: robot_core::WebProxyConfig,
+    ) -> Result<(), RobotError> {
+        let _boot = self.boot_lock.lock().await;
+        if id != "chrome:browser" || self.browser_session.lock().await.is_some() {
+            return Err(RobotError::InvalidInput(
+                "configure the test proxy on chrome:browser before starting the owned context"
+                    .into(),
+            ));
+        }
+        let mut proxy = self.test_proxy.lock().await;
+        if proxy.is_some() {
+            return Err(RobotError::InvalidInput(
+                "test proxy already configured for this session".into(),
+            ));
+        }
+        *proxy = Some(test_proxy::TestProxy::start(config).await?);
+        Ok(())
+    }
+
+    async fn set_web_fault(
+        &self,
+        id: &str,
+        fault: Option<robot_core::WebFault>,
+    ) -> Result<robot_core::WebFaultTransition, RobotError> {
+        if id != "chrome:browser" {
+            self.page(id).await?;
+        }
+        self.test_proxy
+            .lock()
+            .await
+            .as_ref()
+            .ok_or_else(|| {
+                RobotError::InvalidInput("no test proxy configured on this Chrome session".into())
+            })?
+            .set(fault)
+    }
+
+    async fn web_fault_state(&self, id: &str) -> Result<robot_core::WebFaultState, RobotError> {
+        if id != "chrome:browser" {
+            self.page(id).await?;
+        }
+        self.test_proxy
+            .lock()
+            .await
+            .as_ref()
+            .map(test_proxy::TestProxy::state)
+            .ok_or_else(|| {
+                RobotError::InvalidInput("no test proxy configured on this Chrome session".into())
+            })
+    }
+
     async fn close_session(&self) -> Result<(), RobotError> {
         self.end_all_observers().await;
         let recordings: Vec<_> = self
@@ -1008,6 +1071,7 @@ impl Robot for ChromeRobot {
                 }
             }
         }
+        let _boot = self.boot_lock.lock().await;
         if let Some(mut session) = self.browser_session.lock().await.take() {
             if let Err(e) = session.close().await {
                 if first.is_none() {
@@ -1015,6 +1079,7 @@ impl Robot for ChromeRobot {
                 }
             }
         }
+        self.test_proxy.lock().await.take();
         first.map_or(Ok(()), Err)
     }
 

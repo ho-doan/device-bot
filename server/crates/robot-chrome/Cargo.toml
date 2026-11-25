@@ -9,6 +9,9 @@ rust-version.workspace = true
 async-trait.workspace = true
 base64 = "0.22.1"
 futures-util = "0.3.31"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 robot-core = { path = "../robot-core" }
 robot-flutter-bridge = { path = "../robot-flutter-bridge" }
 serde.workspace = true

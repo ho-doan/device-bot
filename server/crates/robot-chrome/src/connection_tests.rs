@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 struct BrowserState {
     contexts: BTreeMap<String, (u64, String)>,
+    context_options: Vec<Value>,
     next_context: u64,
     connections: u64,
     methods: Vec<String>,
@@ -90,6 +91,7 @@ async fn fixture() -> Fixture {
                         match method {
                             "Target.createBrowserContext" => {
                                 assert_eq!(request["params"]["disposeOnDetach"], true);
+                                s.context_options.push(request["params"].clone());
                                 s.next_context += 1;
                                 let context = format!("context-{}", s.next_context);
                                 s.contexts
@@ -411,6 +413,37 @@ async fn concurrent_clients_boot_distinct_contexts_on_one_shared_browser_connect
     assert_eq!(second.take_screenshot(&other).await.unwrap(), b"png");
     second.close_session().await.unwrap();
     assert!(f.state.lock().unwrap().contexts.is_empty());
+}
+
+#[tokio::test]
+async fn only_the_configured_context_receives_proxy_options() {
+    let f = fixture().await;
+    let other = f.robot.fork_session().unwrap();
+    f.robot
+        .configure_web_proxy(
+            "chrome:browser",
+            robot_core::WebProxyConfig {
+                upstream: "127.0.0.1:8080".parse().unwrap(),
+                passthrough: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    f.robot.boot_device("chrome:browser").await.unwrap();
+    other.boot_device("chrome:browser").await.unwrap();
+    let observed = f.state.lock().unwrap().context_options.clone();
+    assert_eq!(observed.len(), 2);
+    assert!(
+        observed[0]["proxyServer"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://127.0.0.1:")
+    );
+    assert_eq!(observed[0]["proxyBypassList"], "*;<-loopback>");
+    assert!(observed[1].get("proxyServer").is_none());
+    assert!(observed[1].get("proxyBypassList").is_none());
+    f.robot.close_session().await.unwrap();
+    other.close_session().await.unwrap();
 }
 
 #[tokio::test]

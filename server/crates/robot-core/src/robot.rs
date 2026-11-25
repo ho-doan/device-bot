@@ -167,6 +167,29 @@ pub trait Robot: Send + Sync {
             "boot is not supported for device {device_id}"
         )))
     }
+    async fn configure_web_proxy(
+        &self,
+        device_id: &str,
+        _config: crate::WebProxyConfig,
+    ) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "web proxy for {device_id}"
+        )))
+    }
+    async fn set_web_fault(
+        &self,
+        device_id: &str,
+        _fault: Option<crate::WebFault>,
+    ) -> Result<crate::WebFaultTransition, RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "web fault for {device_id}"
+        )))
+    }
+    async fn web_fault_state(&self, device_id: &str) -> Result<crate::WebFaultState, RobotError> {
+        Err(RobotError::Unsupported(format!(
+            "web fault state for {device_id}"
+        )))
+    }
     async fn start_screen_recording(&self, device_id: &str) -> Result<String, RobotError> {
         Err(RobotError::Unsupported(format!(
             "screen recording is not supported for device {device_id}"

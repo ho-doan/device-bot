@@ -159,7 +159,13 @@ impl ChromeRobot {
             }
             Arc::clone(shared.as_ref().unwrap())
         };
-        let mut connected = connection::BrowserSession::create(connection).await?;
+        let proxy = self
+            .test_proxy
+            .lock()
+            .await
+            .as_ref()
+            .map(test_proxy::TestProxy::address);
+        let mut connected = connection::BrowserSession::create(connection, proxy).await?;
         let metadata = async {
             tokio::fs::create_dir_all(&self.artifact_dir)
                 .await

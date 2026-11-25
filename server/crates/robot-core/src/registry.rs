@@ -214,6 +214,26 @@ impl Robot for RobotRegistry {
     async fn boot_device(&self, id: &str) -> Result<(), RobotError> {
         self.driver_for(id).await?.boot_device(id).await
     }
+    async fn configure_web_proxy(
+        &self,
+        id: &str,
+        config: crate::WebProxyConfig,
+    ) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .configure_web_proxy(id, config)
+            .await
+    }
+    async fn set_web_fault(
+        &self,
+        id: &str,
+        fault: Option<crate::WebFault>,
+    ) -> Result<crate::WebFaultTransition, RobotError> {
+        self.driver_for(id).await?.set_web_fault(id, fault).await
+    }
+    async fn web_fault_state(&self, id: &str) -> Result<crate::WebFaultState, RobotError> {
+        self.driver_for(id).await?.web_fault_state(id).await
+    }
     async fn start_screen_recording(&self, id: &str) -> Result<String, RobotError> {
         self.driver_for(id).await?.start_screen_recording(id).await
     }

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Device Bot proxy spike</title>
+<h1>Device Bot proxy spike</h1>
+<p>All requests use the same LAN fixture origin. No device proxy settings are changed.</p>
+<pre id="status">Running…</pre>
+<script>
+const control = '/SPIKE_TOKEN/';
+const status = document.querySelector('#status');
+async function mode(value) {
+  const response = await fetch(control + value, {cache: 'no-store'});
+  if (!response.ok) throw new Error('control ' + response.status);
+}
+async function http(timeoutMs = 2200) {
+  const controller = new AbortController();
+  const start = performance.now();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch('/items', {cache: 'no-store', signal: controller.signal});
+    return {status: response.status, ms: Math.round(performance.now() - start)};
+  } catch (err) {
+    return {error: err.name, ms: Math.round(performance.now() - start)};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function ws(expectCut = false) {
+  return new Promise(resolve => {
+    const socket = new WebSocket('ws://' + location.host + '/socket');
+    let healthy = false;
+    const timer = setTimeout(() => finish('watchdog'), 2500);
+    function finish(result) { clearTimeout(timer); socket.close(); resolve(result); }
+    socket.onmessage = event => {
+      healthy = event.data === 'healthy';
+      if (!healthy || !expectCut) finish(healthy ? 'healthy' : 'unexpected');
+    };
+    socket.onclose = () => finish(healthy ? 'cut-after-frame' : 'handshake-failed');
+  });
+}
+(async () => {
+  const rows = {url: location.origin + '/items', platform: navigator.userAgent.includes('iPhone') ? 'iPhone' : 'other'};
+  try {
+    for (const [label, policy] of Object.entries({
+      pass: 'pass', http503: '503', delay: 'delay', drop: 'drop',
+    })) {
+      await mode(policy);
+      rows[label] = await http(policy === 'delay' ? 650 : undefined);
+    }
+    for (const [label, policy] of Object.entries({
+      wsPass: 'pass', wsReject: 'ws-reject', wsDrop: 'ws-drop', wsRecovery: 'pass',
+    })) {
+      await mode(policy);
+      rows[label] = await ws(policy === 'ws-drop');
+    }
+    rows.recovery = await http();
+  } catch (e) {
+    rows.error = e.name;
+  }
+  status.textContent = JSON.stringify(rows, null, 2);
+  await fetch(control + 'result?result=' + encodeURIComponent(JSON.stringify(rows)));
+})();
+</script>

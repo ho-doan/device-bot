@@ -1,0 +1,62 @@
+version: 2
+name: web-proxy-evidence
+steps:
+  - assert_element: {resource_id: trigger-current, timeout_ms: 10000}
+  - start_screen_recording: {}
+  - tap_element: {resource_id: trigger-current}
+  - assert_element: {resource_id: fault-result, label: HTTP 200}
+  - screenshot: {path: 01-normal.png}
+
+  - id: inject-http-503
+    network_fault: {action: set, fault: {kind: http_status, path: /api/current, status: 503}}
+  - tap_element: {resource_id: trigger-current}
+  - assert_element: {resource_id: fault-result, label: HTTP 503}
+  - id: matched-http-503
+    network_fault: {action: status, min_hits: 1}
+  - screenshot: {path: 02-http-503.png}
+  - resource: control
+    tap_element: {resource_id: trigger-current}
+  - id: control-still-healthy
+    resource: control
+    assert_element: {resource_id: fault-result, label: HTTP 200}
+  - network_fault: {action: clear}
+
+  - id: inject-latency
+    network_fault: {action: set, fault: {kind: delay, path: /api/current, ms: 800}}
+  - tap_element: {resource_id: trigger-short}
+  - assert_element: {resource_id: fault-result, label: Request timed out}
+  - id: matched-latency
+    network_fault: {action: status, min_hits: 1}
+  - network_fault: {action: clear}
+
+  - id: inject-drop
+    network_fault: {action: set, fault: {kind: drop, path: /api/current}}
+  - tap_element: {resource_id: trigger-current}
+  - assert_element: {resource_id: fault-result, label: Network error}
+  - id: matched-drop
+    network_fault: {action: status, min_hits: 1}
+  - network_fault: {action: clear}
+
+  - id: reject-websocket
+    network_fault: {action: set, fault: {kind: web_socket_reject}}
+  - tap_element: {resource_id: trigger-ws-stable}
+  - assert_element: {resource_id: fault-result, label: WebSocket handshake failed}
+  - id: matched-websocket-reject
+    network_fault: {action: status, min_hits: 1}
+  - network_fault: {action: clear}
+
+  - tap_element: {resource_id: trigger-ws-stable}
+  - assert_element: {resource_id: fault-result, label: WebSocket open}
+  - id: cut-websocket
+    network_fault: {action: set, fault: {kind: web_socket_drop}}
+  - assert_element: {resource_id: fault-result, label: WebSocket closed 1006}
+  - id: matched-websocket-drop
+    network_fault: {action: status, min_hits: 1}
+  - id: clear-final-fault
+    network_fault: {action: clear}
+  - tap_element: {resource_id: trigger-ws-stable}
+  - assert_element: {resource_id: fault-result, label: WebSocket open}
+  - tap_element: {resource_id: trigger-current}
+  - assert_element: {resource_id: fault-result, label: HTTP 200}
+  - screenshot: {path: 03-recovered.png}
+  - stop_screen_recording: {}

@@ -1,0 +1,25 @@
+version: 1
+kind: project
+name: web-proxy-evidence
+hosts:
+  - name: workstation
+    platform: macos
+    binding: {kind: local}
+resources:
+  - name: browser
+    kind: chrome
+    host: workstation
+    display: {host: workstation}
+    timeout_ms: 30000
+    web_proxy:
+      upstream: '${env:DEVICE_BOT_PROXY_API}'
+    prepare: {kind: launch, url: '${env:DEVICE_BOT_PROXY_URL}'}
+  - name: control
+    kind: chrome
+    host: workstation
+    display: {host: workstation}
+    timeout_ms: 30000
+    prepare: {kind: launch, url: '${env:DEVICE_BOT_PROXY_URL}'}
+flows:
+  - path: faults.yaml
+    bindings: [{target: browser}]

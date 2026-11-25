@@ -1,0 +1,18 @@
+version: 2
+name: local-network-faults
+steps:
+  - call_tool:
+      name: mobile_boot_device
+      arguments: {deviceId: 'chrome:browser'}
+  - select_device: {platform: chrome, state: available}
+  - launch_app: {app_id: '${env:DEVICE_BOT_FAULT_URL}'}
+  - tap_element: {resource_id: trigger-status, timeout_ms: 10000}
+  - assert_element: {resource_id: fault-result, label: HTTP 503, timeout_ms: 5000}
+  - tap_element: {resource_id: trigger-timeout}
+  - assert_element: {resource_id: fault-result, label: Request timed out, timeout_ms: 5000}
+  - tap_element: {resource_id: trigger-drop}
+  - assert_element: {resource_id: fault-result, label: Network error, timeout_ms: 5000}
+  - tap_element: {resource_id: trigger-ws-reject}
+  - assert_element: {resource_id: fault-result, label: WebSocket handshake failed, timeout_ms: 5000}
+  - tap_element: {resource_id: trigger-ws-close}
+  - assert_element: {resource_id: fault-result, label: WebSocket closed 1011, timeout_ms: 5000}

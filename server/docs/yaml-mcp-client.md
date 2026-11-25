@@ -232,6 +232,7 @@ not establish native device parity; see the recorded verification results.
 | `reset_fields` | Clear only the runner's editing bookkeeping after navigation |
 | `screenshot` | Decode MCP PNG to relative artifact `path` in v2 |
 | `start_screen_recording`, `stop_screen_recording` | Existing MCP recording tools |
+| `network_fault` | Set, verify, or clear a fault on an owned Chrome resource with a Project `web_proxy` |
 | `note_limitation` | Explicit unsupported assertion in an otherwise executed flow |
 | `call_tool` | Named existing MCP tool with explicit `arguments`; `<selected>` substitutes the device ID; recording uses the dedicated steps |
 | `wait` | Explicit bounded `ms` delay; prefer observed assertions for readiness |
@@ -287,6 +288,67 @@ absent. Counts refer to the current accessibility snapshot and include no
 automatic scroll. A capped query is still an error, not an exact count.
 Use the observed timings to choose an `assert_element` deadline when
 possible, rather than using them as a fixed delay.
+
+### Chrome proxy evidence in a named project
+
+Use `web_proxy` before launch so Chrome sends the same loopback URL through
+the test proxy. The web app and real API URL do not change:
+
+```yaml
+web_proxy:
+  upstream: '127.0.0.1:8080'
+  passthrough: ['127.0.0.1:3000']   # only if the page is on a different loopback port
+prepare: {kind: launch, url: 'http://127.0.0.1:3000/'}
+```
+
+These settings belong to one named Chrome resource. The browser and its
+Device Bot MCP server must run on the same host. The proxy accepts only the
+declared loopback upstream and passthrough origins. Non-loopback destinations
+stay direct in Chrome. Other contexts and system network settings are unchanged.
+This works for browser-originated HTTP and WebSocket traffic. It does not
+modify backend-to-backend traffic, simulate whole-device offline, or decrypt TLS.
+
+```yaml
+- start_screen_recording: {}
+- id: inject-api-503
+  network_fault: {action: set, fault: {kind: http_status, path: /api/items, status: 503}}
+- tap_element: {resource_id: reload-items}
+- assert_element: {resource_id: error-banner}
+- network_fault: {action: status, min_hits: 1}
+- network_fault: {action: clear}
+- tap_element: {resource_id: reload-items}
+- assert_element: {resource_id: results}
+- stop_screen_recording: {}
+```
+
+`http_status`, `delay` and `drop` match the exact HTTP path without its
+query string. Unmatched requests and CORS preflight pass through as usual.
+`delay` waits before forwarding and does not set the web app's own timeout.
+`web_socket_reject` rejects new tunnels to the upstream.
+`web_socket_drop` cuts its active tunnels and drops new attempts until cleared.
+These two faults operate at the upstream port, not at frame/URL-path level.
+
+Set the fault before the user action, assert the UI response, and use
+`min_hits` so a run fails if nothing actually passed through the rule. The
+case report records elapsed times, revisions and hits at each fault step without
+request headers or bodies. Video overlays label the fault steps. A flow that
+ends without explicitly clearing an applied fault still attempts cleanup.
+Project session teardown closes the proxy even on failure.
+
+Run the [complete example](../examples/web-proxy-project/project.yaml) with
+Chrome and FFmpeg/ffprobe installed:
+
+```sh
+cargo build --manifest-path server/Cargo.toml --locked -p device-bot -p robot-flow -p robot-report
+python3 server/automation_test/run_proxy_smoke.py
+```
+
+The verifier starts its own loopback web/API fixture and runs two Chrome
+sessions. It checks five injected faults, a healthy control session, recovery,
+three screenshots and a playable H.264 MP4. Without a proxy, the
+[standalone fixture flow](../examples/network-faults.yaml) is also available
+when the fixture is started with `python3 server/automation_test/network_fault_fixture.py`
+and `DEVICE_BOT_FAULT_URL` points to its printed address.
 
 Each live case creates a fresh directory with `report.json`, `junit.xml`,
 method/tool-only `mcp-calls.jsonl`, redacted `query-N.json`, requested screenshots

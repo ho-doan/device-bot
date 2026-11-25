@@ -245,6 +245,11 @@ For quick diagnosis, insert `list_elements` after the step that changes the
 app or page. The case report includes sample counts and query timing without
 tapping or scrolling. See the [quick element probe example](../../docs/yaml-mcp-client.md#quick-element-probe).
 
+A launched Chrome resource can opt into an isolated `web_proxy`. Route its
+unchanged loopback API requests through the proxy, then apply and clear faults
+using `network_fault` steps while recording. See the
+[proxy evidence example](../../docs/yaml-mcp-client.md#chrome-proxy-evidence-in-a-named-project).
+
 Version 1 accepts named hosts and resources and runs a shared flow once per
 binding. Each resource owns an MCP connection for the entire project. The
 runtime validates every case and available tool schema before preparing targets,

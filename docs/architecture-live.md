@@ -103,6 +103,10 @@ encoder. Sau khi điều hướng hoặc đổi kích thước viewport, mở l�
 Chạy file đã xuất bằng `device-bot run /path/to/recording.yaml`. Thiết bị/app,
 trạng thái đăng nhập và dữ liệu cần cho kịch bản phải sẵn sàng trên platform đó.
 
+Để quay lỗi mạng trên web thật, dùng [Project mẫu có proxy riêng cho Chrome](../server/docs/yaml-mcp-client.md#chrome-proxy-evidence-in-a-named-project).
+Bắt đầu quay trước khi bật rule, để YAML kiểm tra lỗi trên UI và số request
+khớp rule, rồi tắt rule để kiểm tra app phục hồi.
+
 ### Chọn app và focus trên desktop
 
 - macOS AX và Windows UIA đọc elements theo process/window đã chọn, kể cả khi

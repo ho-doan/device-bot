@@ -1,3 +1,13 @@
+## 0.1.25 — 2026-11-25
+
+* Fix real-iPhone Live over USB by waiting for AVFoundation to register the
+  phone's screen and keeping one capture session for geometry and video.
+  Document how to map a capture ID that differs from the Xcode UDID.
+* Add YAML projects with named device and browser resources, fixture hooks,
+  staged artifacts, and scoped runs that can reuse sessions across cases.
+* Add read-only device readiness reports and an MCP tool to stop simulator apps.
+  Improve recording isolation, playback deadlines, and evidence validation.
+
 ## 0.1.24 — 2026-11-16
 
 * Add an Enter button to macOS QC Live. Send a real Return key event for

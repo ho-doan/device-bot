@@ -18,32 +18,60 @@ func writeJSON(_ object: Any) {
     FileHandle.standardOutput.write(data); FileHandle.standardOutput.write(Data([10]))
 }
 if enabled != noErr { fail("Could not enable USB iOS screen capture (CoreMediaIO \(enabled))") }
-let devices = AVCaptureDevice.devices(for: .muxed)
-if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--list" {
+let arguments = CommandLine.arguments
+let isListing = arguments.count == 2 && arguments[1] == "--list"
+guard isListing || (arguments.count == 3 && arguments[1] == "--stream") else {
+    fail("Usage: ios-live --list | --stream <exact-device-id>")
+}
+let selected = isListing ? nil : arguments[2]
+
+func discoverScreens(selected: String?) -> [AVCaptureDevice] {
+    let type: AVCaptureDevice.DeviceType
+    if #available(macOS 14.0, *) { type = .external } else { type = .externalUnknown }
+    let discovery = AVCaptureDevice.DiscoverySession(deviceTypes: [type], mediaType: .muxed, position: .unspecified)
+    let deadline = ProcessInfo.processInfo.systemUptime + 5
+    while true {
+        let devices = discovery.devices
+        if let selected, devices.contains(where: { $0.uniqueID == selected }) { return devices }
+        if ProcessInfo.processInfo.systemUptime >= deadline { return devices }
+        // CMIO registers the screen asynchronously after opt-in. Let the main run loop
+        // handle that registration, and don't end inventory early on another phone.
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+    }
+}
+
+let devices = discoverScreens(selected: selected)
+if isListing {
     writeJSON(devices.map { ["id": $0.uniqueID, "name": $0.localizedName, "model": $0.modelID] }); exit(0)
 }
-guard CommandLine.arguments.count >= 3 else { fail("Usage: ios-live --probe|--capture <exact-device-id> [width height]") }
-let mode = CommandLine.arguments[1], selected = CommandLine.arguments[2]
 let matches = devices.filter { $0.uniqueID == selected }
-guard matches.count == 1, let device = matches.first else { fail("The exact selected USB iOS screen source is unavailable; reconnect and trust that device") }
-guard mode == "--probe" || mode == "--capture" else { fail("Unknown capture mode") }
+if matches.isEmpty {
+    // No source is different from a camera, permission, or encoder failure.
+    // The host can retry discovery in a fresh process after the service restarts.
+    FileHandle.standardOutput.write(Data(repeating: 0, count: 8))
+    exit(0)
+}
+guard matches.count == 1, let device = matches.first else { fail("The selected USB iOS screen source is ambiguous") }
 
 final class Capture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
-    let probe: Bool
-    let expectedWidth: Int
-    let expectedHeight: Int
+    private var dimensions: (width: Int, height: Int)?
     var encoder: VTCompressionSession?
     var frame: Int64 = 0
     var lastTimestamp: Double?
-    init(probe: Bool, width: Int, height: Int) {
-        self.probe = probe; expectedWidth = width; expectedHeight = height
-    }
     func captureOutput(_ output: AVCaptureOutput, didOutput sample: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let image = CMSampleBufferGetImageBuffer(sample) else { return }
         let width = CVPixelBufferGetWidth(image), height = CVPixelBufferGetHeight(image)
-        if probe { writeJSON(["width": width, "height": height]); exit(0) }
-        guard width == expectedWidth && height == expectedHeight else {
-            fail("The iOS screen orientation or resolution changed; reopen Live before sending input")
+        if let dimensions {
+            guard width == dimensions.width && height == dimensions.height else {
+                fail("The iOS screen orientation or resolution changed; reopen Live before sending input")
+            }
+        } else {
+            guard (2...16384).contains(width), (2...16384).contains(height) else { fail("Invalid native screen dimensions") }
+            dimensions = (width, height)
+            var header = Data()
+            withUnsafeBytes(of: UInt32(width).bigEndian) { header.append(contentsOf: $0) }
+            withUnsafeBytes(of: UInt32(height).bigEndian) { header.append(contentsOf: $0) }
+            FileHandle.standardOutput.write(header)
         }
         let sampleTime = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
         let timestamp = sampleTime.isFinite ? sampleTime : ProcessInfo.processInfo.systemUptime
@@ -100,10 +128,7 @@ final class Capture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         if status != noErr { fail("VideoToolbox frame encoding failed (\(status))") }
     }
 }
-let width = CommandLine.arguments.count > 3 ? Int(CommandLine.arguments[3]) ?? 0 : 0
-let height = CommandLine.arguments.count > 4 ? Int(CommandLine.arguments[4]) ?? 0 : 0
-if mode == "--capture" && (width < 2 || height < 2) { fail("Capture requires valid probed screen dimensions") }
-let capture = Capture(probe: mode == "--probe", width: width, height: height)
+let capture = Capture()
 let session = AVCaptureSession()
 do {
     let input = try AVCaptureDeviceInput(device: device)
@@ -120,4 +145,11 @@ NotificationCenter.default.addObserver(forName: .AVCaptureSessionRuntimeError, o
     fail("iOS screen capture stopped: \(notification.userInfo?[AVCaptureSessionErrorKey] ?? "device disconnected")")
 }
 session.startRunning()
+DispatchQueue.global(qos: .utility).async {
+    _ = FileHandle.standardInput.readDataToEndOfFile()
+    DispatchQueue.main.async {
+        session.stopRunning()
+        exit(0)
+    }
+}
 RunLoop.main.run()

@@ -50,9 +50,9 @@ impl StreamManager {
         if offer.len() > 128 * 1024 {
             return Err(RobotError::InvalidInput("SDP offer is too large".into()));
         }
-        let context = robot.stream_context(device_id).await?;
         let validated_offer = RTCSessionDescription::offer(offer.clone())
             .map_err(|e| RobotError::InvalidInput(e.to_string()))?;
+        let context = robot.stream_context(device_id).await?;
         if let Some(native) = robot.negotiate_native_video(device_id, &offer).await? {
             let id = uuid::Uuid::new_v4().to_string();
             let answer = StreamAnswer {

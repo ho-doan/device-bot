@@ -659,6 +659,27 @@ controls. Set `RECORD_SCREEN=0` to disable recording, or set
 `DEVICE_BOT_IOS_AGENT_HOSTS` if the agent cannot discover a LAN address
 automatically.
 
+### Live video over USB on a real iPhone
+
+Keep the trusted iPhone unlocked and connect it with a data-capable USB cable.
+Live uses the phone's screen source from AVFoundation, separate from the LAN
+callback that XCTest still needs for control. Close QuickTime Movie Recording
+if it is using that phone.
+
+On some Macs the AVFoundation source ID is not the Xcode UDID. If Live cannot
+match the source, connect only the intended iPhone and list its capture ID
+from the repository root:
+
+```sh
+xcrun swiftc server/crates/robot-ios-real/src/ios_live.swift -o /tmp/device-bot-ios-live
+/tmp/device-bot-ios-live --list
+```
+
+Set `DEVICE_BOT_IOS_CAPTURE_MAP='{"<Xcode UDID>":"<AVFoundation id>"}'` in the
+server environment and restart the server. Set `DEVICE_BOT_IOS_LIVE_TRANSPORT=usb`
+to require USB during verification. Live never selects a different phone or
+camera by name or index.
+
 ### Live video over Wi-Fi on a real iPhone
 
 Live supports a paired iPhone over Wi-Fi through the bundled **Device Bot

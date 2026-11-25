@@ -224,13 +224,15 @@ async fn real_platform_live_decodes_controls_reopens_and_stops() {
             .unwrap()
         };
         assert!(answer.width > 0 && answer.height > 0);
-        if std::env::var("DEVICE_BOT_IOS_LIVE_TRANSPORT").as_deref() == Ok("wifi")
-            && platform == "ios-real"
-        {
-            assert_eq!(
-                answer.context["captureBackend"], "replaykit-wifi-videotoolbox",
-                "USB cannot pass a Wi-Fi test"
-            );
+        if platform == "ios-real" {
+            let expected_backend = match std::env::var("DEVICE_BOT_IOS_LIVE_TRANSPORT").as_deref() {
+                Ok("usb") => Some("avfoundation-usb-videotoolbox"),
+                Ok("wifi") => Some("replaykit-wifi-videotoolbox"),
+                _ => None,
+            };
+            if let Some(expected_backend) = expected_backend {
+                assert_eq!(answer.context["captureBackend"], expected_backend);
+            }
         }
         println!(
             "{platform} round {round}: negotiated {}x{} in {:?}; context={}",

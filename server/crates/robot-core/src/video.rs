@@ -30,7 +30,7 @@ fn failure(error: impl std::fmt::Display) -> RobotError {
 /// The command must emit Annex-B H.264 access units delimited by AUD NALs,
 /// including SPS/PPS on keyframes, at 30 fps. Dropping frames stops/reaps it.
 pub async fn start_h264_process(
-    mut command: Command,
+    command: Command,
     width: u32,
     height: u32,
 ) -> Result<VideoStream, RobotError> {
@@ -39,12 +39,36 @@ pub async fn start_h264_process(
             "Video dimensions must be positive".into(),
         ));
     }
+    start_h264_process_inner(command, Some((width, height)))
+        .await?
+        .ok_or_else(|| failure("capture source unavailable"))
+}
+
+/// Like `start_h264_process`, but the encoder reports width and height as two
+/// big-endian u32s on stdout before the first access unit from the same source.
+/// A zero pair reports an unavailable source. The encoder should exit when stdin closes.
+pub async fn start_h264_process_with_dimensions(
+    command: Command,
+) -> Result<Option<VideoStream>, RobotError> {
+    start_h264_process_inner(command, None).await
+}
+
+async fn start_h264_process_inner(
+    mut command: Command,
+    dimensions: Option<(u32, u32)>,
+) -> Result<Option<VideoStream>, RobotError> {
+    let input = if dimensions.is_none() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    };
     command
-        .stdin(Stdio::null())
+        .stdin(input)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     let mut child = command.spawn().map_err(failure)?;
+    let stdin = child.stdin.take();
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
     let diagnostics = tokio::spawn(async move {
@@ -61,6 +85,33 @@ pub async fn start_h264_process(
         }
         String::from_utf8_lossy(&bytes).into_owned()
     });
+    let (width, height) = if let Some(dimensions) = dimensions {
+        dimensions
+    } else {
+        let mut header = [0; 8];
+        let result = tokio::time::timeout(Duration::from_secs(25), stdout.read_exact(&mut header));
+        match result.await {
+            Ok(Ok(_)) => {}
+            error => {
+                let _ = child.kill().await;
+                let log = diagnostics.await.unwrap_or_default();
+                return Err(failure(format!(
+                    "could not read capture dimensions: {error:?}; {log}"
+                )));
+            }
+        }
+        let width = u32::from_be_bytes(header[..4].try_into().unwrap());
+        let height = u32::from_be_bytes(header[4..].try_into().unwrap());
+        if width == 0 && height == 0 {
+            let _ = child.kill().await;
+            return Ok(None);
+        }
+        if !(2..=16384).contains(&width) || !(2..=16384).contains(&height) {
+            let _ = child.kill().await;
+            return Err(failure("invalid capture dimensions"));
+        }
+        (width, height)
+    };
     let (tx, mut rx) = tokio::sync::mpsc::channel(2);
     tokio::spawn(async move {
         let result=async {
@@ -77,6 +128,16 @@ pub async fn start_h264_process(
                 }
             }
         }.await;
+        if stdin.is_some() {
+            // Let a cooperating encoder release its hardware session. Keep
+            // draining stdout so an in-flight encoder callback can finish.
+            drop(stdin);
+            let drain = async {
+                let _ = tokio::io::copy(&mut stdout, &mut tokio::io::sink()).await;
+                let _ = child.wait().await;
+            };
+            let _ = tokio::time::timeout(Duration::from_secs(2), drain).await;
+        }
         let _ = child.kill().await;
         let log = diagnostics.await.unwrap_or_default();
         if let Err(error) = result {
@@ -102,11 +163,11 @@ pub async fn start_h264_process(
             }
         }
     });
-    Ok(VideoStream {
+    Ok(Some(VideoStream {
         width,
         height,
         frames,
-    })
+    }))
 }
 
 fn take_access_unit(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
@@ -162,6 +223,17 @@ mod tests {
         let result = start_h264_process(cmd, 320, 240).await;
         assert!(
             matches!(result, Err(error) if error.to_string().contains("capture permission denied"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn early_encoder_failure_before_dimensions_preserves_stderr() {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", "printf 'capture source disconnected' >&2; exit 2"]);
+        let result = start_h264_process_with_dimensions(cmd).await;
+        assert!(
+            matches!(result, Err(error) if error.to_string().contains("capture source disconnected"))
         );
     }
 

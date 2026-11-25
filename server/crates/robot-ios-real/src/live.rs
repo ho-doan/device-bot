@@ -6,7 +6,7 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::Stdio,
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 use tokio::{process::Command, sync::Mutex};
@@ -18,10 +18,9 @@ fn failure(message: impl std::fmt::Display) -> RobotError {
     RobotError::CommandFailed(format!("iOS Live: {message}"))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct Source {
-    helper: PathBuf,
-    capture_id: String,
+    pending: Arc<Mutex<Option<VideoStream>>>,
     pub width: u32,
     pub height: u32,
 }
@@ -66,25 +65,18 @@ pub(crate) fn validate_geometry(
     Ok(())
 }
 
-fn select_source(
-    device_id: &str,
-    devices: &[CaptureDevice],
-    mappings: &HashMap<String, String>,
-) -> Result<String, RobotError> {
-    let requested = mappings.get(device_id);
-    let matching: Vec<_> = devices
+fn select_source(device_id: &str, devices: &[CaptureDevice]) -> Result<Option<String>, RobotError> {
+    let requested = normalized(device_id);
+    let mut matches = devices
         .iter()
-        .filter(|device| match requested {
-            Some(exact) => device.id == *exact,
-            None => normalized(&device.id) == normalized(device_id),
-        })
-        .collect();
-    match matching.as_slice() {
-        [device] => Ok(device.id.clone()),
-        _ => Err(failure(
-            "No unique USB screen source matches the selected iPhone UDID. Connect and trust the exact phone over USB. If AVFoundation uses a different ID, explicitly map its --list ID with DEVICE_BOT_IOS_CAPTURE_MAP (JSON device-UDID to capture-ID); another camera/phone is never selected automatically.",
-        )),
+        .filter(|device| normalized(&device.id) == requested);
+    let first = matches.next();
+    if matches.next().is_some() {
+        return Err(failure(
+            "Multiple USB screen sources match the selected iPhone UDID. Set DEVICE_BOT_IOS_CAPTURE_MAP to its exact AVFoundation ID.",
+        ));
     }
+    Ok(first.map(|device| device.id.clone()))
 }
 
 async fn helper_path(artifact_dir: &Path, xcrun: &str) -> Result<PathBuf, RobotError> {
@@ -141,9 +133,9 @@ async fn helper_path(artifact_dir: &Path, xcrun: &str) -> Result<PathBuf, RobotE
 }
 
 async fn query(helper: &Path, args: &[&str]) -> Result<Vec<u8>, RobotError> {
-    let output = tokio::time::timeout(Duration::from_secs(15), Command::new(helper)
+    let output = tokio::time::timeout(Duration::from_secs(20), Command::new(helper)
         .args(args).stdin(Stdio::null()).kill_on_drop(true).output()).await
-        .map_err(|_| failure("USB screen capture did not produce a frame within 15 seconds; unlock/trust the selected phone and retry"))?
+        .map_err(|_| failure("USB screen discovery did not finish within 20 seconds; unlock/trust the selected phone and retry"))?
         .map_err(failure)?;
     if !output.status.success() {
         return Err(failure(String::from_utf8_lossy(&output.stderr)));
@@ -157,7 +149,7 @@ pub(crate) async fn prepare(
     device_id: &str,
 ) -> Result<Source, RobotError> {
     try_prepare(artifact_dir, xcrun, device_id).await?.ok_or_else(|| failure(
-        "No unique USB screen source matches the selected iPhone UDID. Connect and trust the exact phone over USB, or use DEVICE_BOT_IOS_LIVE_TRANSPORT=wifi."
+        "No USB screen source matches the selected iPhone UDID. Unlock and trust the phone. If AVFoundation uses a different ID, map its --list ID with DEVICE_BOT_IOS_CAPTURE_MAP, or use DEVICE_BOT_IOS_LIVE_TRANSPORT=wifi."
     ))
 }
 
@@ -174,53 +166,79 @@ pub(crate) async fn try_prepare(
         ));
     }
     let helper = helper_path(artifact_dir, xcrun).await?;
-    let devices: Vec<CaptureDevice> =
-        serde_json::from_slice(&query(&helper, &["--list"]).await?).map_err(failure)?;
     let mappings = std::env::var("DEVICE_BOT_IOS_CAPTURE_MAP")
         .ok()
         .map(|json| serde_json::from_str::<HashMap<String, String>>(&json))
         .transpose()
         .map_err(failure)?
         .unwrap_or_default();
-    if !mappings.contains_key(device_id)
-        && !devices
-            .iter()
-            .any(|device| normalized(&device.id) == normalized(device_id))
-    {
-        return Ok(None);
-    }
-    let capture_id = select_source(device_id, &devices, &mappings)?;
-    #[derive(Deserialize)]
-    struct Dimensions {
-        width: u32,
-        height: u32,
-    }
-    let dimensions: Dimensions =
-        serde_json::from_slice(&query(&helper, &["--probe", &capture_id]).await?)
-            .map_err(failure)?;
-    if dimensions.width < 2
-        || dimensions.height < 2
-        || dimensions.width > 16384
-        || dimensions.height > 16384
-    {
-        return Err(failure("Invalid native screen dimensions"));
-    }
-    Ok(Some(Source {
+    prepare_source(
         helper,
-        capture_id,
-        width: dimensions.width,
-        height: dimensions.height,
+        device_id,
+        mappings.get(device_id).map(String::as_str),
+    )
+    .await
+}
+
+async fn prepare_source(
+    helper: PathBuf,
+    device_id: &str,
+    mapped_id: Option<&str>,
+) -> Result<Option<Source>, RobotError> {
+    let capture_id = if let Some(mapped_id) = mapped_id {
+        // --stream checks the exact ID in the same process that opens it. A
+        // separate inventory process can miss an asynchronously registered source.
+        mapped_id.to_owned()
+    } else {
+        let devices: Vec<CaptureDevice> =
+            serde_json::from_slice(&query(&helper, &["--list"]).await?).map_err(failure)?;
+        let Some(capture_id) = select_source(device_id, &devices)? else {
+            return Ok(None);
+        };
+        capture_id
+    };
+    let mut stream = None;
+    // After a short capture macOS can throttle its screen-capture daemon restart
+    // for up to ten seconds. A discovery session created too early may remain
+    // empty even after the daemon starts, so retry only absence in a fresh helper.
+    for attempt in 0..3 {
+        if attempt != 0 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        let mut command = Command::new(&helper);
+        command.args(["--stream", &capture_id]);
+        stream = robot_core::video::start_h264_process_with_dimensions(command).await?;
+        if stream.is_some() {
+            break;
+        }
+    }
+    let stream = stream.ok_or_else(|| {
+        failure("The exact USB iOS screen source is unavailable; unlock, reconnect and trust the selected iPhone")
+    })?;
+    let (width, height) = (stream.width, stream.height);
+    let pending = Arc::new(Mutex::new(Some(stream)));
+    let unused = Arc::downgrade(&pending);
+    tokio::spawn(async move {
+        // The caller may abandon negotiation after preparing this source.
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        if let Some(pending) = unused.upgrade() {
+            pending.lock().await.take();
+        }
+    });
+    Ok(Some(Source {
+        pending,
+        width,
+        height,
     }))
 }
 
 pub(crate) async fn start(source: Source) -> Result<VideoStream, RobotError> {
-    let mut command = Command::new(&source.helper);
-    command
-        .arg("--capture")
-        .arg(&source.capture_id)
-        .arg(source.width.to_string())
-        .arg(source.height.to_string());
-    robot_core::video::start_h264_process(command, source.width, source.height).await
+    source
+        .pending
+        .lock()
+        .await
+        .take()
+        .ok_or_else(|| failure("USB source was already started or expired; reopen Live"))
 }
 
 #[cfg(test)]
@@ -246,28 +264,52 @@ mod tests {
             device("FaceTime Camera"),
         ];
         assert_eq!(
-            select_source("00008130-000959E43EDA001C", &devices, &HashMap::new()).unwrap(),
-            devices[0].id
+            select_source("00008130-000959E43EDA001C", &devices)
+                .unwrap()
+                .as_deref(),
+            Some(devices[0].id.as_str())
         );
-        assert!(select_source("another-phone", &devices, &HashMap::new()).is_err());
+        assert!(select_source("another-phone", &devices).unwrap().is_none());
         assert!(
-            select_source(
-                "00008130-000959E43EDA001C",
-                &[device("same-name-phone")],
-                &HashMap::new()
-            )
-            .is_err()
+            select_source("00008130-000959E43EDA001C", &[device("same-name-phone")])
+                .unwrap()
+                .is_none()
         );
-        assert!(select_source("abc", &[device("abc"), device("a-b-c")], &HashMap::new()).is_err());
+        assert!(select_source("abc", &[device("abc"), device("a-b-c")]).is_err());
     }
-    #[test]
-    fn explicit_mapping_requires_exact_unique_capture_id() {
-        let mapping = HashMap::from([("phone-udid".into(), "external-screen-42".into())]);
-        assert_eq!(
-            select_source("phone-udid", &[device("external-screen-42")], &mapping).unwrap(),
-            "external-screen-42"
-        );
-        assert!(select_source("other-udid", &[device("external-screen-42")], &mapping).is_err());
-        assert!(select_source("phone-udid", &[device("external screen 42")], &mapping).is_err());
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn explicit_mapping_opens_exact_id_once_for_dimensions_and_frames() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        tokio::fs::create_dir(&directory).await.unwrap();
+        let helper = directory.join("helper");
+        tokio::fs::write(
+            &helper,
+            concat!(
+                "#!/bin/sh\n[ \"$1:$2\" = '--stream:external-screen-42' ] || exit 1\n",
+                "if [ ! -f \"$0.attempt\" ]; then touch \"$0.attempt\"; printf '\\000\\000\\000\\000\\000\\000\\000\\000'; exit; fi\n",
+                "printf '\\000\\000\\005\\012\\000\\000\\012\\354\\000\\000\\000\\001\\011\\360\\000\\000\\000\\001\\145\\001\\000\\000\\000\\001\\011\\360'\n",
+            ),
+        )
+        .await
+        .unwrap();
+        tokio::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700))
+            .await
+            .unwrap();
+        let valid = prepare_source(helper.clone(), "phone-udid", Some("external-screen-42")).await;
+        let missing = prepare_source(helper, "phone-udid", Some("external screen 42")).await;
+        tokio::fs::remove_dir_all(directory).await.unwrap();
+
+        let source = valid.unwrap().unwrap();
+        assert_eq!((source.width, source.height), (1290, 2796));
+        // Taking the live source needs neither the helper executable nor a second
+        // connection to the phone. The first frame survives the handoff.
+        let mut stream = start(source.clone()).await.unwrap();
+        assert!(stream.frames.recv().await.unwrap().unwrap().keyframe);
+        assert!(start(source).await.is_err());
+        assert!(missing.is_err());
     }
 }

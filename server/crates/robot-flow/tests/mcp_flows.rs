@@ -42,6 +42,7 @@ struct State {
     source_selection: bool,
     devices: Option<Value>,
     video_path: Option<PathBuf>,
+    web_fault: robot_core::WebFaultState,
 }
 struct Fake(Arc<Mutex<State>>);
 #[async_trait]
@@ -52,7 +53,7 @@ impl Mcp for Fake {
         match method {
             "initialize" => Ok(json!({"protocolVersion":"2025-11-25"})),
             "tools/list" => Ok(
-                json!({"tools":s.schemas.clone().unwrap_or_else(||["mobile_list_available_devices","mobile_launch_app","mobile_list_elements_on_screen","mobile_click_on_screen_at_coordinates","mobile_swipe_on_screen","mobile_type_keys","mobile_execute_ui_actions","mobile_press_ime_action","mobile_start_screen_recording","mobile_stop_screen_recording","mobile_take_screenshot"].iter().map(|n|json!({"name":n,"inputSchema":if s.source_selection && *n == "mobile_list_elements_on_screen" {json!({"properties":{"source":{"enum":["auto","native","flutter"]}}})} else {json!({})}})).collect())}),
+                json!({"tools":s.schemas.clone().unwrap_or_else(||["mobile_list_available_devices","mobile_launch_app","mobile_list_elements_on_screen","mobile_click_on_screen_at_coordinates","mobile_swipe_on_screen","mobile_type_keys","mobile_execute_ui_actions","mobile_press_ime_action","mobile_start_screen_recording","mobile_stop_screen_recording","mobile_take_screenshot",mcp::WEB_TEST_PROXY].iter().map(|n|json!({"name":n,"inputSchema":if s.source_selection && *n == "mobile_list_elements_on_screen" {json!({"properties":{"source":{"enum":["auto","native","flutter"]}}})} else {json!({})}})).collect())}),
             ),
             "tools/call" => {
                 let name = params["name"].as_str().unwrap();
@@ -67,8 +68,30 @@ impl Mcp for Fake {
                     );
                 }
                 if name == "mobile_list_elements_on_screen" {
+                    if s.web_fault.fault.is_some() {
+                        s.web_fault.hits += 1;
+                    }
                     return Ok(
                         json!({"structuredContent":{"elements":s.queries.pop_front().unwrap_or(json!([]))}}),
+                    );
+                }
+                if name == mcp::WEB_TEST_PROXY {
+                    let args = &params["arguments"];
+                    if args["action"] == "status" {
+                        return Ok(json!({"structuredContent": s.web_fault}));
+                    }
+                    let previous = s.web_fault.clone();
+                    s.web_fault = robot_core::WebFaultState {
+                        revision: previous.revision + 1,
+                        hits: 0,
+                        fault: if args["action"] == "set" {
+                            Some(serde_json::from_value(args["fault"].clone()).unwrap())
+                        } else {
+                            None
+                        },
+                    };
+                    return Ok(
+                        json!({"structuredContent": {"active": s.web_fault, "previous": previous}}),
                     );
                 }
                 if name == "mobile_stop_screen_recording" {
@@ -167,6 +190,63 @@ async fn list_elements_probes_counts_timing_and_first_match_without_actions() {
             "mobile_list_elements_on_screen",
             "mobile_list_elements_on_screen",
         ]
+    );
+}
+
+fn web_fault_fixture(actions: &str) -> (FlowDocument, Arc<Mutex<State>>) {
+    let flow = FlowDocument::from_yaml(&format!(
+        "version: 2\nname: web-fault\nsteps:\n  - select_device: {{platform: chrome}}\n{actions}"
+    ))
+    .unwrap();
+    let state = Arc::new(Mutex::new(State {
+        devices: Some(json!([{"id":"chrome:owned","platform":"chrome","state":"available"}])),
+        ..State::default()
+    }));
+    (flow, state)
+}
+
+#[tokio::test]
+async fn web_fault_evidence_contains_revision_and_hits_but_not_request_path() {
+    let (flow, state) = web_fault_fixture(
+        "  - network_fault: {action: set, fault: {kind: http_status, status: 503, path: /private-data}}\n  - list_elements: {element_type: button}\n  - network_fault: {action: status, min_hits: 1}\n  - network_fault: {action: clear}\n",
+    );
+    let result = run(&flow, &Profile::default(), state.clone()).await;
+    assert_eq!(result.status, "PASS", "{:?}", result.error);
+    let ser = serde_json::to_value(result).unwrap();
+    let steps = ser["steps"].as_array().unwrap();
+    assert_eq!(steps[1]["network_fault"]["operation"], "set");
+    assert_eq!(steps[1]["network_fault"]["active"]["kind"], "http_status");
+    assert_eq!(steps[3]["network_fault"]["active"]["hits"], 1);
+    assert_eq!(steps[4]["network_fault"]["previous"]["hits"], 1);
+    assert_eq!(steps[4]["network_fault"]["operation"], "clear");
+    assert!(steps[4]["network_fault"]["elapsed_ms"].is_u64());
+    assert!(!ser.to_string().contains("private-data"));
+    let s = state.lock().unwrap();
+    assert!(s.web_fault.fault.is_none());
+    let actions: Vec<&str> = s
+        .calls
+        .iter()
+        .filter(|c| c["params"]["name"] == mcp::WEB_TEST_PROXY)
+        .filter_map(|c| c["params"]["arguments"]["action"].as_str())
+        .collect();
+    assert_eq!(actions, ["set", "status", "clear"]);
+}
+
+#[tokio::test]
+async fn no_matching_requests_fails_evidence_check_and_automatically_resets_the_fault() {
+    let (flow, state) = web_fault_fixture(
+        "  - network_fault: {action: set, fault: {kind: drop, path: /data}}\n  - network_fault: {action: status, min_hits: 1}\n",
+    );
+    let result = run(&flow, &Profile::default(), state.clone()).await;
+    assert_eq!(result.status, "FAIL");
+    assert_eq!(result.error_kind.as_deref(), Some("assertion"));
+    assert!(result.error.unwrap().contains("observed 0"));
+    let state = state.lock().unwrap();
+    assert!(state.web_fault.fault.is_none());
+    assert_eq!(state.web_fault.revision, 2);
+    assert_eq!(
+        state.calls.last().unwrap()["params"]["arguments"]["action"],
+        "clear"
     );
 }
 

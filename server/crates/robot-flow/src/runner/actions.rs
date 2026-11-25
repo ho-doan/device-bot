@@ -5,7 +5,7 @@ use super::arguments::{
     swipe_arguments,
 };
 use super::artifacts::write;
-use super::{ElementProbeReport, FlowRunner, SWIPE, TAP, TYPE};
+use super::{FlowRunner, SWIPE, StepEvidence, TAP, TYPE};
 use crate::{
     mcp::Result,
     schema::{self, Step},
@@ -20,7 +20,7 @@ impl FlowRunner {
         &mut self,
         action: &str,
         args: &Value,
-    ) -> Result<Option<ElementProbeReport>> {
+    ) -> Result<Option<StepEvidence>> {
         if self.client.is_none() {
             return Ok(None);
         }
@@ -207,7 +207,18 @@ impl FlowRunner {
                 self.values
                     .insert(key.into(), required(args, "text")?.into());
             }
-            "list_elements" => return self.probe_elements(args).await.map(Some),
+            "list_elements" => {
+                return self
+                    .probe_elements(args)
+                    .await
+                    .map(|report| Some(StepEvidence::ElementProbe(report)));
+            }
+            "network_fault" => {
+                return self
+                    .run_web_fault(args)
+                    .await
+                    .map(|report| Some(StepEvidence::NetworkFault(report)));
+            }
             "assert_absent" | "assert_count" => {
                 let s = schema::selector(args, &self.profile)?;
                 let found = self.query(&s).await?;

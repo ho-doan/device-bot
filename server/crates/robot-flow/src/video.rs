@@ -53,6 +53,14 @@ impl VideoOverlay {
             if id.is_empty() { "(unnamed)" } else { id },
             action
         );
+        if action == "network_fault"
+            && let Some(operation) = args["action"].as_str()
+        {
+            label.push_str(&format!(" | {operation}"));
+            if let Some(kind) = args.pointer("/fault/kind").and_then(Value::as_str) {
+                label.push_str(&format!(" {kind}"));
+            }
+        }
         if let Some(target) = args
             .get("target")
             .or(args.get("label"))
@@ -602,6 +610,7 @@ mod tests {
                 note: Some("Bấm nút để mở màn hình cần kiểm tra".into()),
                 error: None,
                 element_probe: None,
+                network_fault: None,
             })
             .collect();
         let summary = Summary::new(&steps, "FAIL", 720, 600, 20, 10.);
@@ -732,6 +741,7 @@ mod tests {
                 note: Some("Nhập mật khẩu kiểm thử".into()),
                 error: None,
                 element_probe: None,
+                network_fault: None,
             },
             StepReport {
                 id: "test.scroll".into(),
@@ -740,6 +750,7 @@ mod tests {
                 note: Some("Cuộn để tìm nội dung cần kiểm tra".into()),
                 error: Some("element missing".into()),
                 element_probe: None,
+                network_fault: None,
             },
         ];
         overlay.render(&path, &steps, "FAIL").await.unwrap();

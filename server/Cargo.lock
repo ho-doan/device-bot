@@ -1954,6 +1954,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "robot-core",
  "robot-report",
  "serde",
  "serde_json",

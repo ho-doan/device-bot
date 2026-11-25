@@ -109,6 +109,23 @@ impl FlowRunner {
                     }
                     calls.push((name, arguments));
                 }
+                "network_fault" => {
+                    if step
+                        .platform
+                        .as_deref()
+                        .is_some_and(|platform| platform != "chrome")
+                        || step
+                            .resource
+                            .as_deref()
+                            .and_then(|name| self.named_resources.get(name))
+                            .and_then(|device| device["platform"].as_str())
+                            .is_some_and(|platform| platform != "chrome")
+                    {
+                        return Err("network_fault requires a Chrome resource".into());
+                    }
+                    let fault = schema::network_fault_step(args)?;
+                    calls.push((mcp::WEB_TEST_PROXY, fault.tool_arguments("<selected>")));
+                }
                 "tap_element" | "focus_field" | "fill_field" | "assert_element"
                 | "assert_absent" | "assert_state" | "assert_value" | "assert_count"
                 | "gesture" | "scroll" | "list_elements" => {

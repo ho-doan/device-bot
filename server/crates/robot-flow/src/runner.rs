@@ -8,6 +8,7 @@ mod actions;
 mod arguments;
 mod artifacts;
 mod elements;
+mod network_fault;
 mod preflight;
 
 use crate::outcome::{ErrorKind, FlowError, FlowStatus, StepStatus};
@@ -20,9 +21,15 @@ pub use elements::filter_elements;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap, fs, future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration,
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    future::Future,
+    path::PathBuf,
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
 };
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout};
 
 const QUERY: &str = "mobile_list_elements_on_screen";
 const TAP: &str = "mobile_click_on_screen_at_coordinates";
@@ -41,6 +48,16 @@ pub struct StepReport {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub element_probe: Option<ElementProbeReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_fault: Option<NetworkFaultReport>,
+}
+
+pub use network_fault::{NetworkFaultReport, NetworkFaultSnapshot};
+
+#[derive(Clone)]
+enum StepEvidence {
+    ElementProbe(ElementProbeReport),
+    NetworkFault(NetworkFaultReport),
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -123,6 +140,8 @@ pub struct FlowRunner {
     video_overlay: Option<crate::video::VideoOverlay>,
     execution_snapshot: Option<Value>,
     step_event_sink: Option<FlowStepEventSink>,
+    owned_faults: BTreeSet<String>,
+    run_started: Instant,
 }
 
 impl FlowRunner {
@@ -150,6 +169,8 @@ impl FlowRunner {
             video_overlay: None,
             execution_snapshot: None,
             step_event_sink: None,
+            owned_faults: BTreeSet::new(),
+            run_started: Instant::now(),
         }
     }
 
@@ -207,6 +228,7 @@ impl FlowRunner {
         case_timeout: Duration,
     ) -> FlowReport {
         self.profile = profile.clone();
+        self.run_started = Instant::now();
         self.version = flow.version;
         let dry_run = self.client.is_none();
         if let Some(environment) = &self.environment {
@@ -288,12 +310,26 @@ impl FlowRunner {
                     status: StepStatus::Failed.as_str().into(),
                     error: Some(self.redact(&error.to_string())),
                     element_probe: None,
+                    network_fault: None,
                 });
             }
         }
         if self.recording {
             if let Err(e) = self.stop_recording().await {
                 append_error(&mut error, e.context("recording cleanup"));
+            }
+        }
+        if !self.owned_faults.is_empty() {
+            let cleanup = timeout(Duration::from_secs(5), self.clear_owned_faults())
+                .await
+                .unwrap_or_else(|_| {
+                    Err(FlowError::new(
+                        ErrorKind::Timeout,
+                        "web fault cleanup timed out",
+                    ))
+                });
+            if let Err(failure) = cleanup {
+                append_error(&mut error, failure.context("web fault cleanup"));
             }
         }
         if let Some(client) = self.client.as_mut() {
@@ -377,7 +413,14 @@ impl FlowRunner {
                     .as_str()
                     .into(),
                     error: result.as_ref().err().map(|e| self.redact(&e.to_string())),
-                    element_probe: result.as_ref().ok().and_then(|probe| probe.clone()),
+                    element_probe: match &result {
+                        Ok(Some(StepEvidence::ElementProbe(report))) => Some(report.clone()),
+                        _ => None,
+                    },
+                    network_fault: match &result {
+                        Ok(Some(StepEvidence::NetworkFault(report))) => Some(report.clone()),
+                        _ => None,
+                    },
                 });
                 self.emit_step_event(
                     step,

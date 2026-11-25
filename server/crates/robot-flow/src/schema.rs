@@ -783,6 +783,7 @@ fn expand(
             "if_element",
             "reset_fields",
             "note_limitation",
+            "network_fault",
             "call_tool",
         ];
         if !allowed.contains(&action.as_str()) {
@@ -805,6 +806,9 @@ fn expand(
                     "list_elements.interval_ms must be 50..2000 with at least two samples".into(),
                 );
             }
+        }
+        if action == "network_fault" {
+            network_fault_step(&args)?;
         }
         if let Some(n) = args.get("timeout_ms") {
             if n.as_u64().is_none_or(|n| n == 0 || n > 120_000) {
@@ -839,6 +843,7 @@ fn validate_action_keys(action: &str, args: &Value) -> Result<()> {
         "swipe" => "start end duration_ms",
         "call_tool" => "name arguments sensitive",
         "note_limitation" => "message",
+        "network_fault" => "action fault min_hits timeout_ms",
         "start_screen_recording" | "stop_screen_recording" | "reset_fields" => "",
         "tap_element" | "assert_element" | "assert_absent" | "focus_field" => selector,
         "list_elements" => return check_keys(args, &format!("{selector} samples interval_ms")),
@@ -853,6 +858,37 @@ fn validate_action_keys(action: &str, args: &Value) -> Result<()> {
         _ => return Err(format!("unknown action {action}").into()),
     };
     check_keys(args, extra)
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum NetworkFaultStep {
+    Set { fault: robot_core::WebFault },
+    Status { min_hits: Option<u64> },
+    Clear {},
+}
+
+impl NetworkFaultStep {
+    pub(crate) fn tool_arguments(&self, device: &str) -> Value {
+        match self {
+            Self::Set { fault } => json!({"deviceId":device,"action":"set","fault":fault}),
+            Self::Status { .. } => json!({"deviceId":device,"action":"status"}),
+            Self::Clear {} => json!({"deviceId":device,"action":"clear"}),
+        }
+    }
+}
+
+pub(crate) fn network_fault_step(args: &Value) -> Result<NetworkFaultStep> {
+    let mut raw = args.clone();
+    raw.as_object_mut()
+        .ok_or("network_fault arguments must be an object")?
+        .remove("timeout_ms");
+    let step = serde_json::from_value::<NetworkFaultStep>(raw)
+        .map_err(|_| "invalid network_fault action or arguments")?;
+    if let NetworkFaultStep::Set { fault } = &step {
+        fault.validate().map_err(|error| error.to_string())?;
+    }
+    Ok(step)
 }
 fn check_keys(args: &Value, allowed: &str) -> Result<()> {
     let map = args

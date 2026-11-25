@@ -1,3 +1,11 @@
+## 0.1.27 — 2026-11-25
+
+* Keep the QC Web report-download test browser context open until Chrome
+  confirms the download finished. Verify the saved JSON still contains both
+  fixture cases.
+* Wait for an isolated Chrome test page to be available before starting the
+  web suite. Includes the changes from the unpublished 0.1.26 tag.
+
 ## 0.1.26 — 2026-11-25
 
 * Fix the project dialog build by rendering the path and precondition inputs

@@ -1,4 +1,4 @@
-// Fixture boundary only: select files after the YAML clicks the real Import UI.
+// Fixture boundary only: select files for Import and observe real downloads.
 // All browser connections belong to this run's disposable Chrome profile.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -44,6 +44,57 @@ async function configureBrowser(call) {
   });
 }
 
+function observeDownloads(call, log = event => console.log(JSON.stringify(event))) {
+  const sessions = new Set();
+  const downloads = new Map();
+  return async ({ method, params }) => {
+    if (method === 'Target.attachedToTarget') {
+      sessions.add(params.sessionId);
+    } else if (method === 'Target.detachedFromTarget') {
+      sessions.delete(params.sessionId);
+    } else if (method === 'Browser.downloadWillBegin') {
+      downloads.set(params.guid, params.frameId);
+    } else if (method === 'Browser.downloadProgress') {
+      log({ event: 'download', ...params });
+      if (params.state !== 'completed' && params.state !== 'canceled') return;
+      const frameId = downloads.get(params.guid);
+      downloads.delete(params.guid);
+      if (!frameId || params.state !== 'completed') return;
+
+      // The flow disposes its Chrome context when it exits. Only release the
+      // flow that initiated the download, after Chrome has committed the file.
+      const owningSession = (await Promise.all([...sessions].map(async session => {
+        try {
+          const { frameTree } = await call('Page.getFrameTree', {}, session);
+          return frameTree.frame.id === frameId ? session : null;
+        } catch (_) { return null; } // A stale page may have detached.
+      }))).find(Boolean);
+      if (!owningSession || !sessions.has(owningSession)) {
+        throw new Error('Completed download has no live initiating page');
+      }
+      const { result, exceptionDetails } = await call('Runtime.evaluate', {
+        expression: `(() => {
+          const link = document.getElementById('download-run');
+          if (!link) return false;
+          const id = 'qc-ci-report-download-complete';
+          if (!document.getElementById(id)) {
+            const marker = document.createElement('output');
+            marker.id = id;
+            marker.textContent = 'Report download completed';
+            link.after(marker);
+          }
+          return true;
+        })()`,
+        returnByValue: true,
+      }, owningSession);
+      if (exceptionDetails || result?.value !== true) {
+        throw new Error('Could not signal download completion on the report page');
+      }
+      log({ event: 'download-confirmed', guid: params.guid });
+    }
+  };
+}
+
 function attachBrowser(url) {
   return new Promise(resolve => {
     const socket = new WebSocket(url);
@@ -59,8 +110,14 @@ function attachBrowser(url) {
         socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
       });
     }
+    const observe = downloads && observeDownloads(call);
     socket.onmessage = async ({ data }) => {
       const message = JSON.parse(data);
+      if (observe && !message.id) {
+        // Run its bookkeeping synchronously before resuming a newly attached
+        // page, but let the message pump process any resulting CDP callbacks.
+        observe(message).catch(error => console.error(`Download fixture failed: ${error.message}`));
+      }
       if (message.id) {
         const item = pending.get(message.id);
         if (!item) return;
@@ -79,8 +136,6 @@ function attachBrowser(url) {
           await call('DOM.setFileInputFiles', { files: [fixture], backendNodeId: message.params.backendNodeId }, message.sessionId);
           console.log(JSON.stringify({ event: 'selected', file: path.basename(fixture) }));
         } catch (error) { console.error(`File chooser failed: ${error.message}`); }
-      } else if (message.method === 'Browser.downloadProgress') {
-        console.log(JSON.stringify({ event: 'download', ...message.params }));
       }
     };
     socket.onopen = async () => {
@@ -115,4 +170,4 @@ async function watch() {
 if (require.main === module) {
   watch().catch(error => { console.error(error.message); process.exitCode = 1; });
 }
-module.exports = { configurePage, configureAttachedTarget, configureBrowser };
+module.exports = { configurePage, configureAttachedTarget, configureBrowser, observeDownloads };

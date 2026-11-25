@@ -173,8 +173,10 @@ Helper dùng CDP auto-attach để tạm dừng từng page mới, cấu hình d
 browser context và file chooser, rồi mới cho page chạy. Không dùng polling
 `/json/list` để quyết định thời điểm cấu hình: trên runner chậm, YAML có thể đã
 bấm link tải trước khi polling tìm thấy page. Log chooser giữ các sự kiện
-download để phân biệt file thiếu, bị hủy và hoàn tất. Việc xác nhận export đợi
-JSON hoàn chỉnh và kiểm tra tên của cả hai fixture cases, không chỉ đếm file.
+download để phân biệt file thiếu, bị hủy và hoàn tất. YAML đợi tín hiệu
+`Browser.downloadProgress: completed` trên đúng trang report trước khi kết
+thúc và đóng browser context. Sau đó harness vẫn đọc JSON trên đĩa và kiểm
+tra tên của cả hai fixture cases, không chỉ đếm file.
 
 Regression checks cho đồng bộ helper và download:
 

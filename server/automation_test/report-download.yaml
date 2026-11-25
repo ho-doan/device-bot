@@ -3,4 +3,5 @@ name: report_download_json
 steps:
   - run: {recipe: open_report_fixture}
   - tap_element: {label: Tải báo cáo JSON, element_type: link}
+  - assert_element: {resource_id: qc-ci-report-download-complete, timeout_ms: 30000}
   - screenshot: {path: report-json-download.png}

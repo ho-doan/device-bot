@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { configurePage, configureAttachedTarget, configureBrowser } = require('./file_chooser.cjs');
+const { configurePage, configureAttachedTarget, configureBrowser, observeDownloads } = require('./file_chooser.cjs');
 
 test('browser setup intercepts future pages before their scripts can run', async () => {
   const calls = [];
@@ -64,4 +64,37 @@ test('import fixtures still enable the real file chooser interception', async ()
   assert.ok(calls.some(call => call.method === 'Page.enable'));
   assert.ok(calls.some(call => call.method === 'Page.setInterceptFileChooserDialog' && call.params.enabled));
   assert.ok(calls.some(call => call.method === 'Browser.setDownloadBehavior' && call.params.downloadPath === '/tmp/import-downloads'));
+});
+
+test('a report download only releases its own live flow after Chrome completes it', async () => {
+  const calls = [];
+  const observe = observeDownloads(async (method, params, session) => {
+    calls.push({ method, params, session });
+    if (method === 'Page.getFrameTree') {
+      return { frameTree: { frame: { id: session === 'report-session' ? 'report-frame' : 'old-frame' } } };
+    }
+    return { result: { value: true } };
+  }, () => {});
+  for (const sessionId of ['old-session', 'report-session']) {
+    await observe({ method: 'Target.attachedToTarget', params: { sessionId } });
+  }
+  const start = guid => observe({
+    method: 'Browser.downloadWillBegin', params: { guid, frameId: 'report-frame' },
+  });
+  const progress = (guid, state) => observe({
+    method: 'Browser.downloadProgress', params: { guid, state, receivedBytes: 1471, totalBytes: 1471 },
+  });
+  await start('canceled');
+  await progress('canceled', 'canceled');
+  await progress('canceled', 'completed');
+  await progress('unknown', 'completed');
+  await start('report');
+  await progress('report', 'inProgress');
+  assert.deepEqual(calls, [], 'equal byte counts do not prove that Chrome committed the file');
+  await progress('report', 'completed');
+  await progress('report', 'completed');
+  const signals = calls.filter(call => call.method === 'Runtime.evaluate');
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0].session, 'report-session');
+  assert.match(signals[0].params.expression, /qc-ci-report-download-complete/);
 });

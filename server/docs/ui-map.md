@@ -41,9 +41,12 @@ the control after scrolling.
 The crawler uses the selected device's accessibility tree and real input
 driver. It visits newly observed states, deduplicates signatures, verifies
 the route back to each branch before continuing, and bounds depth, screens,
-actions and runtime. Web restarts from the initial URL when it needs to
-replay a branch, including resetting in-memory app state in a fresh document,
-and stops on an origin change. Android stops if the foreground
+actions and runtime. On a fresh web entry page, the crawler gives controls
+time to appear and reports partial coverage if the inventory stays empty.
+On web, it tries short routes through previously observed transitions,
+verifying each state along the way. When that cannot restore a branch, it
+restarts from the initial URL in a fresh document. It stops on an origin
+change. Android stops if the foreground
 app changes. Native navigation can use one unique accessible Back, Close,
 or Cancel control, or an exact configured `backControl`. For a mobile
 fixture that supports relaunch, `resetAppId` must match the open app and
@@ -64,6 +67,12 @@ For configured editors it tracks whether the exposed value matches the
 synthetic input, which lets a filled form lead to new actions. Actual field
 values, focus and geometry are excluded. Similar-looking screens can be
 grouped if they expose the same signature.
+
+Checked and selected states keep their screenshots and incoming
+transitions. When their control inventory differs only in checked or
+selected values, `sameControlsAs` points to the state whose controls are
+explored. Enable `expandSelectionStates` to verify actions from every
+combination that the scan reaches within its limits.
 
 ## MCP operations
 

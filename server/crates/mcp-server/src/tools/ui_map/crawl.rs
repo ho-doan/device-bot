@@ -35,6 +35,8 @@ pub struct Options {
     #[serde(default)]
     pub fixture_controls: Vec<String>,
     #[serde(default)]
+    pub expand_selection_states: bool,
+    #[serde(default)]
     pub inputs: BTreeMap<String, String>,
     pub back_control: Option<String>,
     pub reset_app_id: Option<String>,
@@ -104,6 +106,7 @@ struct LiveControl {
 
 struct Observation {
     fingerprint: u64,
+    control_signature: u64,
     title: String,
     location: Option<String>,
     controls: Vec<LiveControl>,
@@ -149,6 +152,33 @@ struct PathStep {
     before: u64,
     after: u64,
     initially_offscreen: Option<bool>,
+}
+
+type Navigation = HashMap<u64, Vec<Arc<PathStep>>>;
+
+fn known_route(navigation: &Navigation, from: u64, to: u64) -> Option<Vec<Arc<PathStep>>> {
+    let mut queue = VecDeque::from([from]);
+    let mut previous = HashMap::from([(from, None)]);
+    while let Some(screen) = queue.pop_front() {
+        if screen == to {
+            let mut route = Vec::new();
+            let mut screen = to;
+            while let Some(step) = previous[&screen] {
+                let step: &Arc<PathStep> = step;
+                route.push(Arc::clone(step));
+                screen = step.before;
+            }
+            route.reverse();
+            return Some(route);
+        }
+        for step in navigation.get(&screen).into_iter().flatten() {
+            if let std::collections::hash_map::Entry::Vacant(entry) = previous.entry(step.after) {
+                entry.insert(Some(step));
+                queue.push_back(step.after);
+            }
+        }
+    }
+    None
 }
 
 #[derive(Clone)]
@@ -208,8 +238,11 @@ impl Engine<'_> {
         if self.stop.load(Ordering::Acquire) {
             return Err("Scan stopped by the operator.".into());
         }
-        if Instant::now() >= self.deadline || self.input_budget == 0 {
-            return Err("Scan time or navigation replay budget reached.".into());
+        if Instant::now() >= self.deadline {
+            return Err("Scan time limit reached.".into());
+        }
+        if self.input_budget == 0 {
+            return Err("Navigation replay budget reached.".into());
         }
         Ok(())
     }
@@ -308,6 +341,7 @@ impl Engine<'_> {
                                     == Some(expected)
                             })
                         }),
+                    c.action,
                 )
             })
             .collect();
@@ -317,6 +351,25 @@ impl Engine<'_> {
         location.hash(&mut hasher);
         title.hash(&mut hasher);
         dialogs.hash(&mut hasher);
+        let mut control_hasher = hasher.clone();
+        let mut selection_independent = identities
+            .iter()
+            .map(|(key, label, enabled, selected, checked, filled, action)| {
+                (
+                    key,
+                    label,
+                    enabled,
+                    selected.is_some(),
+                    checked.is_some(),
+                    filled,
+                    action,
+                )
+            })
+            .collect::<Vec<_>>();
+        selection_independent.sort_unstable();
+        selection_independent.dedup();
+        selection_independent.hash(&mut control_hasher);
+        let control_signature = control_hasher.finish();
         identities.hash(&mut hasher);
         let fingerprint = hasher.finish();
         controls.truncate(160);
@@ -331,6 +384,7 @@ impl Engine<'_> {
             .unwrap_or_else(|| "UI screen".into());
         Ok(Observation {
             fingerprint,
+            control_signature,
             title,
             location,
             controls,
@@ -351,6 +405,19 @@ impl Engine<'_> {
             last = next;
         }
         Err("The UI did not settle to a repeatable screen signature.".into())
+    }
+
+    async fn settled_entry(&self) -> Result<Observation, String> {
+        let mut observation = self.settled().await?;
+        if matches!(self.scope, Scope::Web { .. }) {
+            // A fresh document can report its route before publishing controls.
+            let ready_by = Instant::now() + Duration::from_secs(4);
+            while observation.controls.is_empty() && Instant::now() < ready_by {
+                self.check()?;
+                observation = self.settled().await?;
+            }
+        }
+        Ok(observation)
     }
 
     async fn perform(&mut self, row: &LiveControl, action: &str) -> Result<(), String> {
@@ -392,7 +459,8 @@ impl Engine<'_> {
         &mut self,
         expected: u64,
         root: u64,
-        path: &[std::sync::Arc<PathStep>],
+        path: &[Arc<PathStep>],
+        navigation: &Navigation,
     ) -> Result<Observation, String> {
         let mut here = self.observe().await?;
         if here.fingerprint == expected {
@@ -400,6 +468,16 @@ impl Engine<'_> {
         }
 
         if matches!(self.scope, Scope::Web { .. }) {
+            if let Some(route) = known_route(navigation, here.fingerprint, expected)
+                .filter(|route| route.len() <= path.len() + 1)
+            {
+                match self.replay_path(here, &route).await {
+                    Ok(restored) => return Ok(restored),
+                    Err(_) => {
+                        self.context().await?;
+                    }
+                }
+            }
             let Scope::Web { start } = &self.scope else {
                 unreachable!()
             };
@@ -418,7 +496,7 @@ impl Engine<'_> {
                     .await
                     .map_err(|error| format!("Could not reset the entry document: {error}"))?;
             }
-            here = self.settled().await?;
+            here = self.settled_entry().await?;
         } else if let Some(app) = &self.options.reset_app_id {
             self.check()?;
             self.input_budget -= 1;
@@ -476,6 +554,18 @@ impl Engine<'_> {
         if here.fingerprint != root {
             return Err("Cannot restore the entry screen safely. The map is partial.".into());
         }
+        let here = self.replay_path(here, path).await?;
+        if here.fingerprint != expected {
+            return Err("Could not restore the intended screen.".into());
+        }
+        Ok(here)
+    }
+
+    async fn replay_path(
+        &mut self,
+        mut here: Observation,
+        path: &[Arc<PathStep>],
+    ) -> Result<Observation, String> {
         for step in path {
             if here.fingerprint != step.before {
                 return Err("The recorded route now leads to a different screen.".into());
@@ -504,9 +594,6 @@ impl Engine<'_> {
             if here.fingerprint != step.after {
                 return Err("The recorded route no longer reproduces the observed screen.".into());
             }
-        }
-        if here.fingerprint != expected {
-            return Err("Could not restore the intended screen.".into());
         }
         Ok(here)
     }
@@ -732,7 +819,13 @@ async fn classify_scope(robot: &dyn Robot, opt: &Options) -> Result<Scope, Strin
     }
 }
 
-async fn record(engine: &Engine<'_>, map: &mut UiMap, dir: &Path, obs: &mut Observation) -> String {
+async fn record(
+    engine: &Engine<'_>,
+    map: &mut UiMap,
+    dir: &Path,
+    obs: &mut Observation,
+    same_controls_as: Option<&str>,
+) -> String {
     let id = format!("s{}", map.screens.len() + 1);
     let viewport = if matches!(engine.scope, Scope::Web { .. }) {
         engine
@@ -794,7 +887,21 @@ async fn record(engine: &Engine<'_>, map: &mut UiMap, dir: &Path, obs: &mut Obse
         location: obs.location.clone(),
         screenshot,
         viewport,
-        controls: obs.controls.iter().map(|c| c.control.clone()).collect(),
+        same_controls_as: same_controls_as.map(str::to_owned),
+        controls: obs
+            .controls
+            .iter()
+            .map(|c| {
+                let mut control = c.control.clone();
+                if let Some(screen) = same_controls_as
+                    && control.status == "pending"
+                {
+                    control.status = "same_controls".into();
+                    control.note = Some(format!("Same actionable controls as {screen}."));
+                }
+                control
+            })
+            .collect(),
     });
     id
 }
@@ -828,16 +935,22 @@ pub(super) async fn scan(
         deadline: Instant::now() + Duration::from_secs(opt.time_seconds()),
         input_budget: opt.actions() * (opt.depth() + 2) + 20,
     };
-    let mut root = engine.settled().await?;
-    let root_id = record(&engine, map, dir, &mut root).await;
+    let mut root = engine.settled_entry().await?;
+    if matches!(engine.scope, Scope::Web { .. }) && root.controls.is_empty() {
+        map.notes
+            .push("No controls were found on the entry page after waiting for it to load.".into());
+    }
+    let root_id = record(&engine, map, dir, &mut root, None).await;
     let mut seen = HashMap::from([(root.fingerprint, root_id.clone())]);
+    let mut control_signatures = HashMap::from([(root.control_signature, root_id.clone())]);
     let mut queue = VecDeque::from([(
         root.fingerprint,
         root_id,
-        Vec::<std::sync::Arc<PathStep>>::new(),
+        Vec::<Arc<PathStep>>::new(),
         root.controls,
     )]);
     let root_fp = root.fingerprint;
+    let mut navigation = Navigation::new();
     save_map(dir, map).await?;
     'crawl: while let Some((fingerprint, from, path, inventory)) = queue.pop_front() {
         for original in inventory.iter().filter(|c| c.action.is_some()) {
@@ -857,7 +970,9 @@ pub(super) async fn scan(
                 break 'crawl;
             }
             engine.check()?;
-            let here = engine.restore(fingerprint, root_fp, &path).await?;
+            let here = engine
+                .restore(fingerprint, root_fp, &path, &navigation)
+                .await?;
             let action = original.action.unwrap();
             let Some(row) = here
                 .controls
@@ -922,20 +1037,31 @@ pub(super) async fn scan(
                     Some("No new screen signature observed.".into()),
                 );
             } else {
+                let step = Arc::new(PathStep {
+                    key: original.key.clone(),
+                    action,
+                    before: fingerprint,
+                    after: next.fingerprint,
+                    initially_offscreen: original.control.initially_offscreen,
+                });
                 let to = if let Some(to) = seen.get(&next.fingerprint) {
                     to.clone()
                 } else if map.screens.len() < opt.screens() {
-                    let to = record(&engine, map, dir, &mut next).await;
+                    let representative = if opt.expand_selection_states {
+                        None
+                    } else {
+                        control_signatures
+                            .get(&next.control_signature)
+                            .map(String::as_str)
+                    };
+                    let to = record(&engine, map, dir, &mut next, representative).await;
                     seen.insert(next.fingerprint, to.clone());
-                    let mut child_path = path.clone();
-                    child_path.push(std::sync::Arc::new(PathStep {
-                        key: original.key.clone(),
-                        action,
-                        before: fingerprint,
-                        after: next.fingerprint,
-                        initially_offscreen: original.control.initially_offscreen,
-                    }));
-                    queue.push_back((next.fingerprint, to.clone(), child_path, next.controls));
+                    if representative.is_none() {
+                        control_signatures.insert(next.control_signature, to.clone());
+                        let mut child_path = path.clone();
+                        child_path.push(Arc::clone(&step));
+                        queue.push_back((next.fingerprint, to.clone(), child_path, next.controls));
+                    }
                     to
                 } else {
                     mark(
@@ -948,6 +1074,7 @@ pub(super) async fn scan(
                     map.notes.push("Screen budget reached.".into());
                     break 'crawl;
                 };
+                navigation.entry(fingerprint).or_default().push(step);
                 map.transitions.push(Transition {
                     from: from.clone(),
                     to,

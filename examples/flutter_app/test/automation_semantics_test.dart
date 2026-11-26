@@ -1,3 +1,5 @@
+import 'dart:ui' show SemanticsAction;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/main.dart';
@@ -5,6 +7,43 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:device_bot_flutter/src/widget_tree.dart';
 
 void main() {
+  for (final width in [420.0, 1200.0]) {
+    testWidgets('workspace navigation exposes tap actions at $width px', (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final semantics = tester.ensureSemantics();
+      try {
+        await tester.pumpWidget(const OrbitApp());
+        await tester.pumpAndSettle();
+        final demo = find.byKey(const ValueKey('demo-button'));
+        await tester.ensureVisible(demo);
+        await tester.tap(demo);
+        await tester.pumpAndSettle();
+
+        final actions = tester.semantics
+            .simulatedAccessibilityTraversal()
+            .map((node) => node.getSemanticsData())
+            .where((data) => data.hasAction(SemanticsAction.tap))
+            .toList();
+        final labels = actions.map((data) => data.label);
+        expect(labels, contains(startsWith('Overview')));
+        expect(labels, contains(startsWith('Account')));
+        if (width >= 800) {
+          expect(
+            actions.map((data) => data.identifier),
+            contains('rail-sign-out-button'),
+          );
+        }
+      } finally {
+        semantics.dispose();
+      }
+    });
+  }
+
   for (final platform in [
     TargetPlatform.android,
     TargetPlatform.iOS,

@@ -13,6 +13,9 @@ struct FixtureState {
     page: usize,
     focus: bool,
     entered: bool,
+    checked: bool,
+    show_extra_control_when_checked: bool,
+    empty_queries: usize,
     taps: Vec<String>,
     resets: usize,
 }
@@ -86,6 +89,10 @@ impl Robot for Fixture {
                 state.page = 3;
                 "external"
             }
+            (0, 70) => {
+                state.checked = !state.checked;
+                "toggle"
+            }
             (1 | 2, 10) => {
                 state.page = 0;
                 "back"
@@ -107,6 +114,7 @@ impl Robot for Fixture {
         let mut state = self.0.lock().unwrap();
         state.page = 0;
         state.entered = false;
+        state.checked = false;
         state.focus = false;
         state.resets += 1;
         Ok(())
@@ -136,19 +144,29 @@ impl Robot for Fixture {
     }
 
     async fn list_elements(&self, _: &str) -> Result<Vec<UiElement>, RobotError> {
-        let s = self.0.lock().unwrap();
+        let mut s = self.0.lock().unwrap();
+        if s.empty_queries > 0 {
+            s.empty_queries -= 1;
+            return Ok(Vec::new());
+        }
         let rows = match s.page {
             0 => {
                 let mut editor = node("Search", "search", 30, ElementType::TextField);
                 editor.focused = Some(s.focus);
                 editor.value = s.entered.then(|| "synthetic-QC-value".into());
+                let mut toggle = node("Toggle task", "toggle", 70, ElementType::CheckBox);
+                toggle.checked = Some(s.checked);
                 let mut rows = vec![
                     node("Left", "left", 10, ElementType::Button),
                     node("Right", "right", 20, ElementType::Button),
                     editor,
                     node("Delete data", "delete", 40, ElementType::Button),
                     node("External help", "external", 50, ElementType::Link),
+                    toggle,
                 ];
+                if s.checked && s.show_extra_control_when_checked {
+                    rows.push(node("Extra action", "extra", 80, ElementType::Button));
+                }
                 if s.entered {
                     rows.push(node(
                         "Search results",
@@ -279,6 +297,99 @@ async fn maps_distinct_screens_and_restores_branch_with_test_input_only() {
         route_result(&map, "s1", "/missing").unwrap()["status"],
         "no_observed_route"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn groups_checked_states_only_when_the_control_inventory_matches() {
+    for (expand, show_extra_control_when_checked) in [(false, false), (true, false), (false, true)]
+    {
+        let dir = Temp::new();
+        let robot: std::sync::Arc<dyn Robot> =
+            std::sync::Arc::new(Fixture(Mutex::new(FixtureState {
+                show_extra_control_when_checked,
+                ..FixtureState::default()
+            })));
+        let mut map = graph();
+        let opt: Options = serde_json::from_value(json!({
+            "deviceId":"chrome:fixture",
+            "allowedTaps":["toggle"],
+            "expandSelectionStates":expand,
+            "settleMs":100,
+        }))
+        .unwrap();
+        crawl::scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+            .await
+            .unwrap();
+        let grouped = !expand && !show_extra_control_when_checked;
+        assert_eq!(map.screens.len(), 2);
+        assert_eq!(map.attempted, if grouped { 1 } else { 2 });
+        assert_eq!(map.transitions.len(), map.attempted);
+        assert_eq!(
+            map.screens[1].same_controls_as.as_deref(),
+            grouped.then_some("s1")
+        );
+        let toggle = map.screens[1]
+            .controls
+            .iter()
+            .find(|control| control.label == "Toggle task")
+            .unwrap();
+        assert_eq!(
+            toggle.status,
+            if grouped { "same_controls" } else { "observed" }
+        );
+        assert!(map.screens[1].screenshot);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn waits_for_controls_on_a_cold_web_entry_and_reports_empty_inventory() {
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId":"chrome:fixture",
+        "allowedTaps":["left"],
+        "settleMs":100,
+    }))
+    .unwrap();
+    for empty_queries in [4, usize::MAX] {
+        let dir = Temp::new();
+        let robot: std::sync::Arc<dyn Robot> =
+            std::sync::Arc::new(Fixture(Mutex::new(FixtureState {
+                empty_queries,
+                ..FixtureState::default()
+            })));
+        let mut map = graph();
+        crawl::scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+            .await
+            .unwrap();
+        if empty_queries == 4 {
+            assert_eq!(map.attempted, 1);
+            assert_eq!(map.transitions.len(), 1);
+            assert!(map.notes.is_empty());
+        } else {
+            assert_eq!(map.attempted, 0);
+            assert!(map.screens[0].controls.is_empty());
+            assert!(map.notes.iter().any(|note| note.starts_with("No controls")));
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn reuses_observed_web_routes_to_restore_siblings_without_reloading() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture::default());
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId":"chrome:fixture",
+        "allowedTaps":["left", "right", "back", "same"],
+        "settleMs":100,
+    }))
+    .unwrap();
+    crawl::scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    assert_eq!(map.attempted, 5);
+    assert_eq!(map.transitions.len(), 4);
+    assert_eq!(fixture.0.lock().unwrap().resets, 2);
 }
 
 #[tokio::test(start_paused = true)]

@@ -89,7 +89,9 @@ class WorkspaceShell extends StatelessWidget {
                 ),
                 const VerticalDivider(width: 1),
               ],
-              Expanded(child: child),
+              // Keep the nested Navigator's route semantics within the content
+              // area so its barriers cannot hide the adjacent navigation rail.
+              Expanded(child: Semantics(container: true, child: child)),
             ],
           ),
         ),

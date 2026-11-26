@@ -92,6 +92,7 @@ pub(super) fn definition() -> ToolDefinition {
                 "allButtons":{"type":"boolean"},
                 "allowedTaps":{"type":"array","maxItems":150,"items":{"type":"string"}},
                 "fixtureControls":{"type":"array","maxItems":30,"items":{"type":"string"}},
+                "expandSelectionStates":{"type":"boolean","description":"Explore every checked or selected variant even if it exposes the same actionable controls"},
                 "inputs":{"type":"object","maxProperties":30,"additionalProperties":{"type":"string"}},
                 "backControl":{"type":"string"},
                 "resetAppId":{"type":"string","description":"Relaunch this exact foreground mobile fixture to restore the entry screen"},

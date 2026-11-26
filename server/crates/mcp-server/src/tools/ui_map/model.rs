@@ -26,6 +26,8 @@ pub struct Screen {
     pub screenshot: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewport: Option<robot_core::WebViewport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub same_controls_as: Option<String>,
     pub controls: Vec<Control>,
 }
 

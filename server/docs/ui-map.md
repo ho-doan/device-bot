@@ -43,11 +43,13 @@ driver. It visits newly observed states, deduplicates signatures, verifies
 the route back to each branch before continuing, and bounds depth, screens,
 actions and runtime. On a fresh web entry page, the crawler gives controls
 time to appear and reports partial coverage if the inventory stays empty.
-On web, it tries short routes through previously observed transitions,
-verifying each state along the way. When that cannot restore a branch, it
-restarts from the initial URL in a fresh document. It stops on an origin
-change. Android stops if the foreground
-app changes. Native navigation can use one unique accessible Back, Close,
+On web and Android, it tries short routes through previously observed
+transitions, verifying each state along the way. When web cannot restore a
+branch, it restarts from the initial URL in a fresh document. It stops on an
+origin change. Android stops if the foreground app changes. When an Android
+screen cannot be restored and the app is still in scope, the crawler reports
+that screen's untried controls and continues with other branches. Native
+navigation can use one unique accessible Back, Close,
 or Cancel control, or an exact configured `backControl`. For a mobile
 fixture that supports relaunch, `resetAppId` must match the open app and
 lets the scanner restart it before replaying a branch. If a native screen

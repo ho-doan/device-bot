@@ -44,11 +44,20 @@ fn escape_templates(value: &mut Value) {
 }
 
 impl Action<'_> {
-    fn yaml(&self, name: &str, settle_ms: u64, capture: bool) -> Result<String, String> {
+    fn yaml(
+        &self,
+        scope: &Scope,
+        name: &str,
+        settle_ms: u64,
+        capture: bool,
+    ) -> Result<String, String> {
         let mut selector = json!({"timeout_ms":3000});
         if self.initially_offscreen.is_some() {
             selector["scroll_into_view"] = json!(true);
             selector["timeout_ms"] = json!(8000);
+        } else if scope.is_android() {
+            // Selecting a stable element and verifying editor focus take several UIAutomator dumps.
+            selector["timeout_ms"] = json!(15000);
         }
         if let Some(id) = self.resource_id {
             selector["resource_id"] = json!(id);
@@ -146,7 +155,7 @@ pub(super) async fn run(
     tokio::fs::create_dir_all(&directory)
         .await
         .map_err(|e| e.to_string())?;
-    let yaml = action.yaml(name, settle_ms, true)?;
+    let yaml = action.yaml(scope, name, settle_ms, true)?;
     let yaml_path = format!("{relative}/scenario.yaml");
     tokio::fs::write(dir.join(&yaml_path), &yaml)
         .await
@@ -196,7 +205,7 @@ pub(super) async fn restore(
     action: Action<'_>,
     settle_ms: u64,
 ) -> Result<(), String> {
-    let yaml = action.yaml("restore_ui_map_branch", settle_ms, false)?;
+    let yaml = action.yaml(scope, "restore_ui_map_branch", settle_ms, false)?;
     let scratch = dir.join(".restore");
     let report = execute(robot, scope, device, &scratch, &yaml, action.input).await?;
     tokio::fs::remove_dir_all(scratch)
@@ -226,7 +235,6 @@ async fn execute(
     }
     let mut runner = FlowRunner::new(Some(Box::new(client)), scratch.to_owned());
     runner.set_environment(env);
-    Ok(runner
-        .run(&flow, &Profile::default(), &[], Duration::from_secs(25))
-        .await)
+    let timeout = Duration::from_secs(if scope.is_android() { 45 } else { 25 });
+    Ok(runner.run(&flow, &Profile::default(), &[], timeout).await)
 }

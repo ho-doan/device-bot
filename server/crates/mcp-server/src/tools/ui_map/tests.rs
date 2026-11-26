@@ -11,6 +11,8 @@ struct Fixture(Mutex<FixtureState>);
 #[derive(Default)]
 struct FixtureState {
     page: usize,
+    android: bool,
+    left_no_longer_reproducible: bool,
     focus: bool,
     entered: bool,
     checked: bool,
@@ -18,6 +20,17 @@ struct FixtureState {
     empty_queries: usize,
     taps: Vec<String>,
     resets: usize,
+}
+
+impl Fixture {
+    fn reset(&self) {
+        let mut state = self.0.lock().unwrap();
+        state.page = 0;
+        state.entered = false;
+        state.checked = false;
+        state.focus = false;
+        state.resets += 1;
+    }
 }
 
 fn node(label: &str, id: &str, x: i32, kind: ElementType) -> UiElement {
@@ -46,16 +59,29 @@ fn node(label: &str, id: &str, x: i32, kind: ElementType) -> UiElement {
 #[async_trait]
 impl Robot for Fixture {
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
+        let android = self.0.lock().unwrap().android;
         Ok(vec![RobotDevice {
-            id: "chrome:fixture".into(),
+            id: if android {
+                "android-fixture"
+            } else {
+                "chrome:fixture"
+            }
+            .into(),
             name: "Fixture".into(),
-            platform: robot_core::Platform::Chrome,
+            platform: if android {
+                robot_core::Platform::Android
+            } else {
+                robot_core::Platform::Chrome
+            },
             state: robot_core::DeviceState::Available,
         }])
     }
 
     async fn stream_context(&self, _: &str) -> Result<Value, RobotError> {
         let state = self.0.lock().unwrap();
+        if state.android {
+            return Ok(json!({"appId": if state.page == 3 { "other.app" } else { "fixture.app" }}));
+        }
         let url = [
             "http://localhost/",
             "http://localhost/left",
@@ -73,7 +99,10 @@ impl Robot for Fixture {
         let mut state = self.0.lock().unwrap();
         let action = match (state.page, point.x as i32) {
             (0, 10) => {
-                state.page = 1;
+                if !state.left_no_longer_reproducible || !state.taps.iter().any(|tap| tap == "left")
+                {
+                    state.page = 1;
+                }
                 "left"
             }
             (0, 20) => {
@@ -105,18 +134,20 @@ impl Robot for Fixture {
         Ok(())
     }
 
-    async fn launch_app(&self, _: &str, _: &str) -> Result<(), RobotError> {
-        unreachable!()
+    async fn launch_app(&self, _: &str, app: &str) -> Result<(), RobotError> {
+        assert_eq!(app, "fixture.app");
+        self.reset();
+        Ok(())
+    }
+
+    async fn terminate_app(&self, _: &str, app: &str) -> Result<(), RobotError> {
+        assert_eq!(app, "fixture.app");
+        Ok(())
     }
 
     async fn open_url(&self, _: &str, url: &str, _: Option<&str>) -> Result<(), RobotError> {
         assert_eq!(url, "http://localhost/");
-        let mut state = self.0.lock().unwrap();
-        state.page = 0;
-        state.entered = false;
-        state.checked = false;
-        state.focus = false;
-        state.resets += 1;
+        self.reset();
         Ok(())
     }
 
@@ -390,6 +421,44 @@ async fn reuses_observed_web_routes_to_restore_siblings_without_reloading() {
     assert_eq!(map.attempted, 5);
     assert_eq!(map.transitions.len(), 4);
     assert_eq!(fixture.0.lock().unwrap().resets, 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn android_skips_an_unrestorable_branch_and_reuses_a_known_sibling_route() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        android: true,
+        left_no_longer_reproducible: true,
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId":"android-fixture",
+        "resetAppId":"fixture.app",
+        "allowedTaps":["left", "right", "back", "same"],
+        "settleMs":100,
+    }))
+    .unwrap();
+    crawl::scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    assert_eq!(map.attempted, 3);
+    assert_eq!(map.transitions.len(), 3);
+    assert_eq!(fixture.0.lock().unwrap().resets, 2);
+    assert!(map.notes.iter().any(|note| note.starts_with("s2:")));
+    assert!(
+        map.screens[1]
+            .controls
+            .iter()
+            .all(|control| control.status == "skipped")
+    );
+    assert!(
+        map.screens[2]
+            .controls
+            .iter()
+            .any(|control| control.status == "observed")
+    );
 }
 
 #[tokio::test(start_paused = true)]

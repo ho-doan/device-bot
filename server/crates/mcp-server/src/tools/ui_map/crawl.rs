@@ -189,6 +189,16 @@ pub(super) enum Scope {
 }
 
 impl Scope {
+    pub(super) fn is_android(&self) -> bool {
+        matches!(
+            self,
+            Self::Mobile {
+                platform: Platform::Android,
+                ..
+            }
+        )
+    }
+
     pub(super) async fn location(
         &self,
         robot: &dyn Robot,
@@ -420,6 +430,22 @@ impl Engine<'_> {
         Ok(observation)
     }
 
+    async fn observe_known(&self, accepted: &[u64]) -> Result<Observation, String> {
+        if !self.scope.is_android() {
+            return self.settled().await;
+        }
+        tokio::time::sleep(Duration::from_millis(self.options.delay())).await;
+        let mut here = self.observe().await?;
+        for _ in 0..3 {
+            if accepted.contains(&here.fingerprint) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(140)).await;
+            here = self.observe().await?;
+        }
+        Ok(here)
+    }
+
     async fn perform(&mut self, row: &LiveControl, action: &str) -> Result<(), String> {
         self.check()?;
         self.input_budget -= 1;
@@ -467,20 +493,20 @@ impl Engine<'_> {
             return Ok(here);
         }
 
-        if matches!(self.scope, Scope::Web { .. }) {
-            if let Some(route) = known_route(navigation, here.fingerprint, expected)
+        if (matches!(self.scope, Scope::Web { .. }) || self.scope.is_android())
+            && let Some(route) = known_route(navigation, here.fingerprint, expected)
                 .filter(|route| route.len() <= path.len() + 1)
-            {
-                match self.replay_path(here, &route).await {
-                    Ok(restored) => return Ok(restored),
-                    Err(_) => {
-                        self.context().await?;
-                    }
-                }
-            }
-            let Scope::Web { start } = &self.scope else {
-                unreachable!()
+        {
+            here = match self.replay_path(here, &route).await {
+                Ok(restored) => return Ok(restored),
+                Err(_) => self.observe().await?,
             };
+            if here.fingerprint == expected {
+                return Ok(here);
+            }
+        }
+
+        if let Scope::Web { start } = &self.scope {
             self.check()?;
             self.input_budget -= 1;
             let device = &self.options.device_id;
@@ -509,7 +535,7 @@ impl Engine<'_> {
                 .launch_app(device, app)
                 .await
                 .map_err(|error| format!("Could not relaunch the fixture app: {error}"))?;
-            here = self.settled().await?;
+            here = self.observe_known(&[root, expected]).await?;
         } else {
             let mut visited = HashSet::new();
             while here.fingerprint != root
@@ -590,7 +616,7 @@ impl Engine<'_> {
             } else {
                 self.perform(row, step.action).await?;
             }
-            here = self.settled().await?;
+            here = self.observe_known(&[step.after]).await?;
             if here.fingerprint != step.after {
                 return Err("The recorded route no longer reproduces the observed screen.".into());
             }
@@ -970,9 +996,27 @@ pub(super) async fn scan(
                 break 'crawl;
             }
             engine.check()?;
-            let here = engine
+            let here = match engine
                 .restore(fingerprint, root_fp, &path, &navigation)
-                .await?;
+                .await
+            {
+                Ok(here) => here,
+                Err(error) if engine.scope.is_android() => {
+                    // Preserve the app and scan budget guards when an individual route drifts.
+                    engine.context().await?;
+                    map.notes.push(format!("{from}: {error}"));
+                    if let Some(screen) = map.screens.iter_mut().find(|screen| screen.id == from) {
+                        for control in screen.controls.iter_mut().filter(|c| c.status == "pending")
+                        {
+                            control.status = "skipped".into();
+                            control.note = Some("Could not restore this screen.".into());
+                        }
+                    }
+                    save_map(dir, map).await?;
+                    continue 'crawl;
+                }
+                Err(error) => return Err(error),
+            };
             let action = original.action.unwrap();
             let Some(row) = here
                 .controls

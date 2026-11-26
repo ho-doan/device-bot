@@ -19,6 +19,7 @@ import 'package:mobile_mcp_companion/features/live/data/video_session.dart';
 
 import 'package:mobile_mcp_companion/core/network/mcp_client.dart';
 import 'package:mobile_mcp_companion/core/models/admin_models.dart';
+import 'package:mobile_mcp_companion/core/models/live_models.dart';
 
 /// Where a fitted screenshot sits inside the mirror viewport.
 export '../domain/live_geometry.dart';
@@ -231,6 +232,12 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
         _selectedIndex != null && _selectedIndex! < _elements.length
         ? _elements[_selectedIndex!]
         : null;
+    final canGestureSelected =
+        selected != null &&
+        selected.enabled &&
+        selected.bounds.width > 0 &&
+        selected.bounds.height > 0 &&
+        !_tappingSelected;
     final source = switch (_source) {
       'flutter' => 'Flutter tree',
       'native' => 'native tree',
@@ -269,7 +276,7 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                     child: Text(
                       _stopped
                           ? 'Live mirror stopped.'
-                          : 'Select an element to inspect. Use Tap selected to control the device. Drag the video to scroll.'
+                          : 'Select an element to inspect, then choose a tap gesture. Drag the video to scroll.'
                                 '${source == null ? '' : ' ${_elements.length} elements from the $source.'}',
                       key: const Key('android-live-status'),
                     ),
@@ -549,6 +556,42 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                                     ),
                                               label: const Text('Tap selected'),
                                             ),
+                                            Wrap(
+                                              spacing: 8,
+                                              runSpacing: 4,
+                                              children: [
+                                                OutlinedButton(
+                                                  key: const Key(
+                                                    'live-long-press-selected',
+                                                  ),
+                                                  onPressed: canGestureSelected
+                                                      ? () => _cubit
+                                                            .pointerGestureSelected(
+                                                              LiveInputAction
+                                                                  .longPress,
+                                                            )
+                                                      : null,
+                                                  child: const Text(
+                                                    'Long press selected',
+                                                  ),
+                                                ),
+                                                OutlinedButton(
+                                                  key: const Key(
+                                                    'live-double-tap-selected',
+                                                  ),
+                                                  onPressed: canGestureSelected
+                                                      ? () => _cubit
+                                                            .pointerGestureSelected(
+                                                              LiveInputAction
+                                                                  .doubleTap,
+                                                            )
+                                                      : null,
+                                                  child: const Text(
+                                                    'Double tap selected',
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
                                             SelectableText(
                                               'Selector: ${selected.selector}\n${selected.className}\n'
                                               '${selected.bounds.left},${selected.bounds.top}  ${selected.bounds.width}×${selected.bounds.height}',
@@ -578,6 +621,22 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                                                 .tap,
                                                         child: Text(
                                                           'YAML: Tap element',
+                                                        ),
+                                                      ),
+                                                      DropdownMenuItem(
+                                                        value:
+                                                            InspectorFlowAction
+                                                                .longPress,
+                                                        child: Text(
+                                                          'YAML: Long press element',
+                                                        ),
+                                                      ),
+                                                      DropdownMenuItem(
+                                                        value:
+                                                            InspectorFlowAction
+                                                                .doubleTap,
+                                                        child: Text(
+                                                          'YAML: Double tap element',
                                                         ),
                                                       ),
                                                       DropdownMenuItem(

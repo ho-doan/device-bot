@@ -85,6 +85,22 @@ pub trait Robot: Send + Sync {
         }
         self.tap(id, point).await
     }
+    /// Sends an explicit gesture, never silently downgrading to a single tap.
+    async fn pointer_gesture(
+        &self,
+        id: &str,
+        point: Point,
+        gesture: crate::PointerGesture,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        if gesture == crate::PointerGesture::Tap {
+            return self.tap_in_context(id, point, context).await;
+        }
+        Err(RobotError::Unsupported(format!(
+            "{} for {id}",
+            gesture.name()
+        )))
+    }
     async fn stream_context(&self, _id: &str) -> Result<Value, RobotError> {
         Ok(Value::Null)
     }

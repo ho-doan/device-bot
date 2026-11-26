@@ -40,6 +40,8 @@ Map<String, dynamic> _$LiveInputToJson(LiveInput instance) => <String, dynamic>{
 
 const _$LiveInputActionEnumMap = {
   LiveInputAction.tap: 'tap',
+  LiveInputAction.longPress: 'long_press',
+  LiveInputAction.doubleTap: 'double_tap',
   LiveInputAction.scroll: 'scroll',
   LiveInputAction.swipe: 'swipe',
   LiveInputAction.typeText: 'type',

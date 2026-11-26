@@ -37,14 +37,16 @@ pub(super) fn definitions() -> [ToolDefinition; 5] {
         ToolDefinition {
             name: TAP_NAME.into(),
             title: Some("Tap mobile screen coordinates".into()),
-            description: "Tap a screen coordinate on the selected device.".into(),
+            description: "Tap, press and hold, or double tap a screen coordinate on the selected device. Defaults to a single tap. durationMs is only for long_press and defaults to 700.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "deviceId": { "type": "string", "minLength": 1 },
                     "x": { "type": "number" },
                     "y": { "type": "number" },
-                    "webContext": { "type": "object" }
+                    "webContext": { "type": "object" },
+                    "gesture": { "enum": ["tap", "long_press", "double_tap"] },
+                    "durationMs": { "type": "integer", "minimum": 1, "maximum": robot_core::PointerGesture::MAX_LONG_PRESS_MS }
                 },
                 "required": ["deviceId", "x", "y"],
                 "additionalProperties": false
@@ -142,6 +144,24 @@ pub(super) async fn tap(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResult
         Ok(value) => value,
         Err(error) => return error,
     };
+    let name = match arguments.get("gesture") {
+        None => "tap",
+        Some(value) => match value.as_str() {
+            Some(name) => name,
+            None => return ToolResult::execution_error("gesture must be a string"),
+        },
+    };
+    let duration = match arguments.get("durationMs") {
+        None => None,
+        Some(value) => match value.as_u64() {
+            Some(value) => Some(value),
+            None => return ToolResult::execution_error("durationMs must be an integer"),
+        },
+    };
+    let gesture = match robot_core::PointerGesture::parse(name, duration) {
+        Ok(gesture) => gesture,
+        Err(error) => return ToolResult::execution_error(error.to_string()),
+    };
 
     let context: Option<robot_core::WebContext> = match arguments.get("webContext") {
         Some(value) => match serde_json::from_value(value.clone()) {
@@ -153,10 +173,11 @@ pub(super) async fn tap(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResult
         None => None,
     };
     match robot
-        .tap_in_context(&device_id, Point { x, y }, context.as_ref())
+        .pointer_gesture(&device_id, Point { x, y }, gesture, context.as_ref())
         .await
     {
-        Ok(()) => ToolResult::text("Tap completed"),
+        Ok(()) if gesture == robot_core::PointerGesture::Tap => ToolResult::text("Tap completed"),
+        Ok(()) => ToolResult::text(format!("{} completed", gesture.name())),
         Err(error) => ToolResult::execution_error(error.to_string()),
     }
 }

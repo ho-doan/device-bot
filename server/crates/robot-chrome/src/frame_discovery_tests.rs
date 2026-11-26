@@ -36,7 +36,9 @@ async fn discover(
             let result = match method {
                 "Target.createBrowserContext" => json!({"browserContextId":"case"}),
                 "Target.createTarget" => json!({"targetId":"page"}),
-                "Target.getTargets" => json!({"targetInfos":[{"targetId":"page","type":"page","browserContextId":"case"}]}),
+                "Target.getTargets" => {
+                    json!({"targetInfos":[{"targetId":"page","type":"page","browserContextId":"case"}]})
+                }
                 "Target.attachToTarget" => json!({"sessionId":"page-session"}),
                 "Page.getFrameTree" => trees
                     .get(session)

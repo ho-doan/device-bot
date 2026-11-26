@@ -73,6 +73,16 @@ final class DeviceKitXCTestHostAgent {
       ensureApp()
       let ok = driver.tapElement(filter: string(command.params["filter"]) ?? "")
       return ["ok": ok, "message": ok ? "tap_element" : "tap_element_failed"]
+    case "long_press", "double_tap":
+      ensureApp()
+      guard let x = number(command.params["x"]), let y = number(command.params["y"]) else {
+        return ["ok": false, "message": "gesture_coordinates_required"]
+      }
+      let ok = driver.pointerGesture(
+        x: x, y: y, kind: command.method,
+        durationMs: number(command.params["durationMs"]).map(Double.init)
+      )
+      return ["ok": ok, "message": ok ? command.method : "gesture_failed"]
     case "swipe":
       ensureApp()
       let ok = driver.swipe(

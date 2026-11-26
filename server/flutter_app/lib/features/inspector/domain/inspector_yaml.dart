@@ -2,7 +2,15 @@ import 'package:mobile_mcp_companion/core/models/flow_yaml.dart';
 
 import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
-enum InspectorFlowAction { tap, typeText, assertVisible, scrollUp, scrollDown }
+enum InspectorFlowAction {
+  tap,
+  longPress,
+  doubleTap,
+  typeText,
+  assertVisible,
+  scrollUp,
+  scrollDown,
+}
 
 String buildInspectorFlowYaml({
   required AdminElement element,
@@ -10,6 +18,7 @@ String buildInspectorFlowYaml({
   required int sequence,
   String inputText = '',
   List<AdminElement> elements = const [],
+  int? durationMs,
 }) {
   final peers = elements
       .where(
@@ -92,6 +101,11 @@ String buildInspectorFlowYaml({
   switch (action) {
     case InspectorFlowAction.tap:
       return '  - id: tap_element_$sequence\n    tap_element:\n$selector';
+    case InspectorFlowAction.longPress:
+      return '  - id: long_press_element_$sequence\n    long_press_element:\n$selector'
+          '${durationMs == null ? '' : '\n      duration_ms: $durationMs'}';
+    case InspectorFlowAction.doubleTap:
+      return '  - id: double_tap_element_$sequence\n    double_tap_element:\n$selector';
     case InspectorFlowAction.typeText:
       return '  - id: tap_element_$sequence\n    tap_element:\n$selector\n'
           '  - id: type_text_$sequence\n    type_text:\n'

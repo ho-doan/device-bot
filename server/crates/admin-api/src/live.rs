@@ -172,11 +172,15 @@ async fn dispatch_input(
     input: &LiveInput,
 ) -> Result<String, RobotError> {
     match input.action.as_str() {
-        "tap" => {
+        "tap" | "long_press" | "double_tap" => {
             let point = required_point(input.x, input.y)?;
-            robot.tap(device_id, point).await?;
+            let gesture = robot_core::PointerGesture::parse(&input.action, input.duration_ms)?;
+            robot
+                .pointer_gesture(device_id, point, gesture, None)
+                .await?;
             Ok(format!(
-                "{device_id} tap {},{}",
+                "{device_id} {} {},{}",
+                gesture.name(),
                 point.x.round(),
                 point.y.round()
             ))
@@ -231,7 +235,7 @@ async fn dispatch_input(
             Ok(format!("{device_id} type"))
         }
         _ => Err(RobotError::InvalidInput(
-            "action must be tap, swipe, scroll, type, or clear".into(),
+            "action must be tap, long_press, double_tap, swipe, scroll, type, or clear".into(),
         )),
     }
 }

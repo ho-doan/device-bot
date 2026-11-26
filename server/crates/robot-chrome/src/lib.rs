@@ -646,6 +646,18 @@ impl ChromeRobot {
         context: &WebContext,
         expression: &str,
     ) -> Result<(), RobotError> {
+        self.eval_in_context_value(target, context, expression, false)
+            .await
+            .map(|_| ())
+    }
+
+    async fn eval_in_context_value(
+        &self,
+        target: &ChromeTarget,
+        context: &WebContext,
+        expression: &str,
+        map_pointer: bool,
+    ) -> Result<(Value, Option<Point>), RobotError> {
         if let Some(page) = &context.page {
             if page.url.as_deref().is_some_and(|url| url != target.url)
                 || page
@@ -698,7 +710,134 @@ impl ChromeRobot {
         let result = self
             .session_eval(target, session, &frame.id, expression)
             .await?;
-        self.ensure_eval_ok(&result)
+        self.ensure_eval_ok(&result)?;
+        let mapping = if map_pointer {
+            let chain = frames::frame_chain(&tree, &frame.id);
+            let origin = frames::map_bounds(
+                Bounds {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                },
+                &owners,
+                &chain,
+            )?;
+            let coordinate = |axis: &str, offset: i32| {
+                result["result"]["value"][axis]
+                    .as_f64()
+                    .map(|value| value + f64::from(offset))
+                    .filter(|value| value.is_finite() && *value >= 0.)
+                    .ok_or_else(|| {
+                        RobotError::InvalidInput("DOM element has no visible pointer center".into())
+                    })
+            };
+            let point = Point {
+                x: coordinate("x", origin.left)?,
+                y: coordinate("y", origin.top)?,
+            };
+            let mut parent = &tree;
+            let mut parent_point = point;
+            for child in chain {
+                let owner = owners
+                    .iter()
+                    .find(|owner| owner.frame_id == child.id)
+                    .ok_or_else(|| RobotError::InvalidInput("Missing DOM frame owner".into()))?;
+                // Root CDP node lookup is not enough for out-of-process iframes.
+                // Verify the expected hit in each parent document before dispatch.
+                let expression = format!(
+                    r#"(() => {{
+                      const e = document.querySelectorAll('iframe,frame')[{}];
+                      return !!e && (e.name || '') === {} && (e.src || '') === {}
+                        && document.elementFromPoint({}, {}) === e;
+                    }})()"#,
+                    owner.dom_index,
+                    json!(owner.name),
+                    json!(owner.url),
+                    parent_point.x,
+                    parent_point.y
+                );
+                let parent_session = frames::session_for_frame(&tree, &parent.id, &authorized);
+                let hit = self
+                    .session_eval(target, parent_session, &parent.id, &expression)
+                    .await?;
+                self.ensure_eval_ok(&hit)?;
+                if hit["result"]["value"] != true {
+                    return Err(RobotError::InvalidInput(
+                        "Chrome frame is covered or its pointer coordinates changed; inspect it again".into(),
+                    ));
+                }
+                parent = child;
+                parent_point.x -= owner.left;
+                parent_point.y -= owner.top;
+            }
+            Some(point)
+        } else {
+            None
+        };
+        Ok((result, mapping))
+    }
+
+    async fn checked_pointer_point(
+        &self,
+        target: &ChromeTarget,
+        context: &WebContext,
+    ) -> Result<Point, RobotError> {
+        let reference = context.element_ref.as_ref().ok_or_else(|| {
+            RobotError::InvalidInput(
+                "Inspect the DOM element again before sending the gesture".into(),
+            )
+        })?;
+        let script = format!(
+            "({})(document, {}, {})",
+            include_str!("dom-pointer-point.js"),
+            include_str!("../../robot-ios-real/webview-helper/dom-references.js"),
+            serde_json::to_string(reference).unwrap()
+        );
+        let (_, mapping) = self
+            .eval_in_context_value(target, context, &script, true)
+            .await?;
+        mapping.ok_or_else(|| RobotError::InvalidInput("Missing DOM pointer mapping".into()))
+    }
+
+    async fn dispatch_pointer_gesture(
+        &self,
+        target: &ChromeTarget,
+        point: Point,
+        gesture: robot_core::PointerGesture,
+    ) -> Result<(), RobotError> {
+        use robot_core::PointerGesture::*;
+        match gesture {
+            Tap => self.dispatch_tap(target, point).await,
+            LongPress { duration_ms } => {
+                // Chrome owns both ends of this gesture, even if the MCP caller times out.
+                self.cdp(
+                    target,
+                    "Input.synthesizeTapGesture",
+                    json!({
+                        "x": point.x, "y": point.y, "duration": duration_ms,
+                        "tapCount": 1, "gestureSourceType": "mouse",
+                    }),
+                )
+                .await
+                .map(|_| ())
+            }
+            DoubleTap => {
+                self.dispatch_mouse(target, "mouseMoved", point, None)
+                    .await?;
+                let mut events = Vec::with_capacity(4);
+                for count in [1, 2] {
+                    for event in ["mousePressed", "mouseReleased"] {
+                        let mut params = Self::mouse_event_params(event, point, Some("left"));
+                        params["clickCount"] = json!(count);
+                        events.push(params);
+                    }
+                }
+                self.cdp_many(target, "Input.dispatchMouseEvent", events)
+                    .await
+                    .map(|_| ())
+            }
+        }
     }
 
     async fn dispatch_tap(&self, target: &ChromeTarget, point: Point) -> Result<(), RobotError> {
@@ -1263,6 +1402,34 @@ impl Robot for ChromeRobot {
     async fn tap(&self, device_id: &str, point: Point) -> Result<(), RobotError> {
         let target = self.page(device_id).await?;
         self.dispatch_tap(&target, point).await
+    }
+
+    async fn pointer_gesture(
+        &self,
+        id: &str,
+        point: Point,
+        gesture: robot_core::PointerGesture,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        if gesture == robot_core::PointerGesture::Tap {
+            return self.tap_in_context(id, point, context).await;
+        }
+        let target = self.page(id).await?;
+        self.cdp(&target, "Page.bringToFront", json!({})).await?;
+        let point = if let Some(context) = context.filter(|value| !value.is_empty()) {
+            self.checked_pointer_point(&target, context).await?
+        } else {
+            point
+        };
+        if ![point.x, point.y]
+            .into_iter()
+            .all(|value| value.is_finite() && value >= 0.)
+        {
+            return Err(RobotError::InvalidInput(
+                "Invalid Chrome pointer coordinates".into(),
+            ));
+        }
+        self.dispatch_pointer_gesture(&target, point, gesture).await
     }
 
     async fn launch_app(&self, device_id: &str, _app_id: &str) -> Result<(), RobotError> {

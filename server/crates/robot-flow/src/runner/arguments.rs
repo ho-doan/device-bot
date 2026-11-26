@@ -63,6 +63,20 @@ pub(super) fn tap_arguments(device: &str, element: &Value, b: (f64, f64, f64, f6
     args
 }
 
+pub(super) fn pointer_gesture_arguments(
+    device: &str,
+    element: &Value,
+    bounds: (f64, f64, f64, f64),
+    gesture: robot_core::PointerGesture,
+) -> Value {
+    let mut args = tap_arguments(device, element, bounds);
+    args["gesture"] = json!(gesture.name());
+    if let robot_core::PointerGesture::LongPress { duration_ms } = gesture {
+        args["durationMs"] = json!(duration_ms);
+    }
+    args
+}
+
 pub(super) fn rectangle(v: &Value) -> Result<(f64, f64, f64, f64)> {
     let b = &v["bounds"];
     let r = (

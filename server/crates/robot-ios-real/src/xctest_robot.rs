@@ -1213,6 +1213,31 @@ impl Robot for IosXCTestRobot {
             .await
             .map(|_| ())
     }
+    async fn pointer_gesture(
+        &self,
+        device_id: &str,
+        point: Point,
+        gesture: robot_core::PointerGesture,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        if gesture == robot_core::PointerGesture::Tap {
+            return self.tap_in_context(device_id, point, context).await;
+        }
+        if context.is_some_and(|value| !value.is_empty()) {
+            return Err(RobotError::Unsupported(
+                "iOS WebView gestures require native screen coordinates".into(),
+            ));
+        }
+        validate_device_id(device_id)?;
+        valid_point(point)?;
+        let mut params = json!({ "x": point.x, "y": point.y });
+        if let robot_core::PointerGesture::LongPress { duration_ms } = gesture {
+            params["durationMs"] = json!(duration_ms);
+        }
+        self.dispatch(device_id, gesture.name(), params)
+            .await
+            .map(|_| ())
+    }
 
     async fn type_text_in_context(
         &self,

@@ -3,6 +3,49 @@
 use crate::RobotError;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerGesture {
+    Tap,
+    LongPress { duration_ms: u64 },
+    DoubleTap,
+}
+
+impl PointerGesture {
+    pub const DEFAULT_LONG_PRESS_MS: u64 = 700;
+    pub const MAX_LONG_PRESS_MS: u64 = 3_000;
+
+    pub fn parse(name: &str, duration_ms: Option<u64>) -> Result<Self, RobotError> {
+        match (name, duration_ms) {
+            ("tap", None) => Ok(Self::Tap),
+            ("double_tap", None) => Ok(Self::DoubleTap),
+            ("long_press", duration) => {
+                let duration_ms = duration.unwrap_or(Self::DEFAULT_LONG_PRESS_MS);
+                if !(1..=Self::MAX_LONG_PRESS_MS).contains(&duration_ms) {
+                    return Err(RobotError::InvalidInput(format!(
+                        "long_press duration must be 1..{} ms",
+                        Self::MAX_LONG_PRESS_MS
+                    )));
+                }
+                Ok(Self::LongPress { duration_ms })
+            }
+            ("tap" | "double_tap", Some(_)) => Err(RobotError::InvalidInput(
+                "duration is only supported for long_press".into(),
+            )),
+            _ => Err(RobotError::InvalidInput(
+                "gesture must be tap, long_press, or double_tap".into(),
+            )),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Tap => "tap",
+            Self::LongPress { .. } => "long_press",
+            Self::DoubleTap => "double_tap",
+        }
+    }
+}
+
 /// IME action on the focused editor. These are distinct actions; Enter is not
 /// a substitute for a named action the field is not configured to perform.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

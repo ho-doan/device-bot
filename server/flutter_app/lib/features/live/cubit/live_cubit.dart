@@ -503,7 +503,7 @@ class LiveCubit extends Cubit<LiveState> {
             final step = recording.prepare(
               input,
               snapshot,
-              command.action == LiveInputAction.tap ? selected : null,
+              command.action.isPointerClick ? selected : null,
             );
             await onInput(input);
             await recording.commit(step);
@@ -550,17 +550,25 @@ class LiveCubit extends Cubit<LiveState> {
     });
   }
 
-  Future<void> tapSelected() async {
+  Future<void> tapSelected() => pointerGestureSelected(LiveInputAction.tap);
+
+  Future<void> pointerGestureSelected(LiveInputAction action) async {
+    if (!action.isPointerClick) return;
     if (_tappingSelected) return;
     final index = _selectedIndex;
     if (index == null || index >= _elements.length) return;
     final element = _elements[index];
-    if (!element.enabled || !element.clickable) return;
+    if (!element.enabled ||
+        (action == LiveInputAction.tap && !element.clickable) ||
+        element.bounds.width <= 0 ||
+        element.bounds.height <= 0) {
+      return;
+    }
     final bounds = element.bounds;
     emit(state.copyWith(tappingSelected: true, status: null));
     try {
       await send({
-        'action': 'tap',
+        'action': action.wireName,
         if (element.webContext != null)
           'webContext': element.webContext!.toJson(),
         'x': ((bounds.left + bounds.right) / 2).round(),

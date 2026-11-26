@@ -36,20 +36,35 @@ class LiveRecording {
     final sequence = _nextSequence++;
     final command = LiveInput.fromJson(input);
     final action = command.action;
-    if (action == LiveInputAction.tap && selected != null) {
+    if (action.isPointerClick && selected != null) {
       return buildInspectorFlowYaml(
         element: selected,
         elements: elements,
-        action: InspectorFlowAction.tap,
+        action: switch (action) {
+          LiveInputAction.longPress => InspectorFlowAction.longPress,
+          LiveInputAction.doubleTap => InspectorFlowAction.doubleTap,
+          _ => InspectorFlowAction.tap,
+        },
         sequence: sequence,
+        durationMs: command.durationMs,
       );
     }
     final String tool;
     final Map<String, dynamic> args = {'deviceId': '<selected>'};
     switch (action) {
       case LiveInputAction.tap:
+      case LiveInputAction.longPress:
+      case LiveInputAction.doubleTap:
         tool = 'mobile_click_on_screen_at_coordinates';
-        args.addAll({'x': command.x, 'y': command.y});
+        args.addAll({
+          'x': command.x,
+          'y': command.y,
+          if (action != LiveInputAction.tap) 'gesture': action.wireName,
+          if (action == LiveInputAction.longPress && command.durationMs != null)
+            'durationMs': command.durationMs,
+          if (command.webContext != null)
+            'webContext': command.webContext!.toJson(),
+        });
       case LiveInputAction.typeText:
         tool = 'mobile_type_keys';
         args['text'] = command.text;

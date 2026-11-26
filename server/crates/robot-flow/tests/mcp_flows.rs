@@ -152,6 +152,62 @@ fn bindings() -> BTreeMap<String, Value> {
 }
 
 #[tokio::test]
+async fn selector_pointer_gestures_send_one_typed_call_per_fresh_match() {
+    let mut hold_only = node("Press");
+    hold_only["clickable"] = json!(false);
+    let state = Arc::new(Mutex::new(State {
+        queries: VecDeque::from([json!([hold_only]), json!([node("Open")])]),
+        ..State::default()
+    }));
+    let report = run(
+        &flow("  - long_press_element: {label: Press, duration_ms: 925}\n  - double_tap_element: {label: Open}\n"),
+        &Profile::default(), state.clone(),
+    ).await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    let state = state.lock().unwrap();
+    let inputs: Vec<_> = state
+        .calls
+        .iter()
+        .filter_map(|call| {
+            (call["params"]["name"] == "mobile_click_on_screen_at_coordinates")
+                .then(|| call["params"]["arguments"].clone())
+        })
+        .collect();
+    assert_eq!(
+        inputs,
+        [
+            json!({"deviceId":"device-1","x":60.0,"y":50.0,"gesture":"long_press","durationMs":925}),
+            json!({"deviceId":"device-1","x":60.0,"y":50.0,"gesture":"double_tap"}),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn invalid_or_ambiguous_pointer_gestures_never_send_input() {
+    for yaml in [
+        "  - long_press_element: {label: A, duration_ms: 0}\n",
+        "  - double_tap_element: {label: A, duration_ms: 500}\n",
+        "  - double_tap_element: {label: A, native_tap: true}\n",
+        "  - long_press_element: {label: A, timeout_ms: 200}\n",
+    ] {
+        let state = Arc::new(Mutex::new(State {
+            queries: VecDeque::from([json!([node("A"), node("A")])]),
+            ..State::default()
+        }));
+        let report = run(&flow(yaml), &Profile::default(), state.clone()).await;
+        assert_ne!(report.status, "PASS", "{yaml}");
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .calls
+                .iter()
+                .any(|call| call["params"]["name"] == "mobile_click_on_screen_at_coordinates")
+        );
+    }
+}
+
+#[tokio::test]
 async fn list_elements_probes_counts_timing_and_first_match_without_actions() {
     let state = Arc::new(Mutex::new(State {
         queries: VecDeque::from([json!([]), json!([node("First"), node("Second")]), json!([])]),

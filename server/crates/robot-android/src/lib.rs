@@ -485,6 +485,45 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
         Ok(())
     }
 
+    async fn pointer_gesture(
+        &self,
+        device_id: &str,
+        point: Point,
+        gesture: robot_core::PointerGesture,
+        context: Option<&robot_core::WebContext>,
+    ) -> Result<(), RobotError> {
+        use robot_core::PointerGesture::*;
+        if gesture == Tap {
+            return self.tap_in_context(device_id, point, context).await;
+        }
+        if context.is_some_and(|value| !value.is_empty()) {
+            return Err(RobotError::Unsupported(
+                "Android DOM pointer gestures".into(),
+            ));
+        }
+        match gesture {
+            Tap => unreachable!(),
+            LongPress { duration_ms } => {
+                self.swipe(device_id, point, point, Some(duration_ms)).await
+            }
+            DoubleTap => {
+                ensure_device_id(device_id)?;
+                let x = android_coordinate(point.x, "x")?;
+                let y = android_coordinate(point.y, "y")?;
+                // Use one shell and a short gap so Android recognizes two taps
+                // without measuring the delay across separate ADB round trips.
+                self.run_adb(&[
+                    "-s".into(),
+                    device_id.into(),
+                    "shell".into(),
+                    format!("input tap {x} {y} && sleep 0.07 && input tap {x} {y}"),
+                ])
+                .await
+                .map(|_| ())
+            }
+        }
+    }
+
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
         ensure_device_id(device_id)?;
         ensure_app_id(app_id)?;
@@ -1238,6 +1277,45 @@ mod tests {
             }
             Ok(successful(""))
         }
+    }
+
+    #[tokio::test]
+    async fn stationary_press_and_double_tap_use_single_android_shell_operations() {
+        let robot = AndroidRobot::with_runner(
+            "adb-test",
+            FakeRunner::new([successful(""), successful("")]),
+        );
+        let at = Point { x: 24., y: 42. };
+        robot
+            .pointer_gesture(
+                "phone",
+                at,
+                robot_core::PointerGesture::LongPress { duration_ms: 845 },
+                None,
+            )
+            .await
+            .unwrap();
+        robot
+            .pointer_gesture("phone", at, robot_core::PointerGesture::DoubleTap, None)
+            .await
+            .unwrap();
+        let calls = robot.runner.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls[0].1,
+            [
+                "-s", "phone", "shell", "input", "swipe", "24", "42", "24", "42", "845"
+            ]
+        );
+        assert_eq!(
+            calls[1].1,
+            [
+                "-s",
+                "phone",
+                "shell",
+                "input tap 24 42 && sleep 0.07 && input tap 24 42",
+            ]
+        );
     }
 
     #[tokio::test]

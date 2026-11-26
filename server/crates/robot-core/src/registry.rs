@@ -125,6 +125,18 @@ impl Robot for RobotRegistry {
             .tap_in_context(id, point, context)
             .await
     }
+    async fn pointer_gesture(
+        &self,
+        id: &str,
+        point: Point,
+        gesture: crate::PointerGesture,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .pointer_gesture(id, point, gesture, context)
+            .await
+    }
     async fn stream_context(&self, id: &str) -> Result<Value, RobotError> {
         self.driver_for(id).await?.stream_context(id).await
     }

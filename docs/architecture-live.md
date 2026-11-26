@@ -80,7 +80,8 @@ encoder. Sau khi điều hướng hoặc đổi kích thước viewport, mở l�
 
 ### Điều khiển và ghi YAML
 
-- Chọn element chỉ mở inspector; **Tap selected** mới gửi tap.
+- Chọn element chỉ mở inspector. **Tap selected**, **Long press selected** và
+  **Double tap selected** mới gửi gesture lên driver.
 - **Up 50 px / Down 50 px** gửi `mobile_scroll` với `deltaY: -50 / 50` và
   `deltaX: 0`. Chrome dùng wheel; Android dùng swipe có độ dịch chuyển 50 px.
   Khoảng dịch chuyển nội dung thực tế trên Android còn phụ thuộc app/gesture.

@@ -25,6 +25,7 @@ pub(crate) struct AuthorizedFrame {
 #[derive(Clone, Debug)]
 pub(crate) struct FrameOwnerBox {
     pub frame_id: String,
+    pub dom_index: usize,
     pub css: Option<String>,
     pub name: String,
     pub url: String,
@@ -287,6 +288,7 @@ pub(crate) fn bind_owners(children: &[FrameNode], raw: &[Value]) -> Vec<FrameOwn
         used.insert(raw_index);
         boxes.push(FrameOwnerBox {
             frame_id: child.id.clone(),
+            dom_index: raw_index,
             css: owner["css"]
                 .as_str()
                 .filter(|css| !css.is_empty())
@@ -424,6 +426,7 @@ mod tests {
         vec![
             FrameOwnerBox {
                 frame_id: "checkout".into(),
+                dom_index: 0,
                 css: Some("iframe#checkout".into()),
                 name: "checkout".into(),
                 url: "https://shop.example/frame".into(),
@@ -433,6 +436,7 @@ mod tests {
             },
             FrameOwnerBox {
                 frame_id: "pay-a".into(),
+                dom_index: 1,
                 css: None,
                 name: "payment".into(),
                 url: "https://pay.example/a".into(),
@@ -442,6 +446,7 @@ mod tests {
             },
             FrameOwnerBox {
                 frame_id: "pay-b".into(),
+                dom_index: 2,
                 css: None,
                 name: "payment".into(),
                 url: "https://pay.example/b".into(),
@@ -451,6 +456,7 @@ mod tests {
             },
             FrameOwnerBox {
                 frame_id: "nested".into(),
+                dom_index: 0,
                 css: Some("iframe[name=\"card\"]".into()),
                 name: "card".into(),
                 url: "https://pay.example/nested".into(),

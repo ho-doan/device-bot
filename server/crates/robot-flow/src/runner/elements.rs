@@ -92,6 +92,22 @@ impl FlowRunner {
         tap: bool,
         unique: bool,
     ) -> Result<Value> {
+        self.find_matching(args, tap, tap, unique).await
+    }
+
+    pub(super) async fn find_gesture_target(&mut self, args: &Value) -> Result<Value> {
+        // Some platforms expose long-only or double-click targets without a
+        // single-click semantic action. Still require a unique enabled node.
+        self.find_matching(args, false, true, true).await
+    }
+
+    async fn find_matching(
+        &mut self,
+        args: &Value,
+        clickable: bool,
+        enabled: bool,
+        unique: bool,
+    ) -> Result<Value> {
         let s = schema::selector(args, &self.profile)?;
         let deadline = Instant::now()
             + Duration::from_millis(
@@ -105,7 +121,7 @@ impl FlowRunner {
             let mut attempts = 0;
             loop {
                 let mut found = self.query(&s).await?;
-                if tap {
+                if clickable {
                     let controls = found
                         .iter()
                         .filter(|e| e["clickable"] == true)
@@ -130,7 +146,8 @@ impl FlowRunner {
                 });
                 if let Some(e) = found.first() {
                     let bounds = rectangle(e)?;
-                    if !tap || (e["enabled"] == true && e["clickable"] == true) {
+                    if (!enabled || e["enabled"] == true) && (!clickable || e["clickable"] == true)
+                    {
                         // Unselected resource IDs may be snapshot-local handles.
                         // Stability tracks the observed selector/geometry, not those
                         // handles. Explicitly selected IDs remain part of the match.

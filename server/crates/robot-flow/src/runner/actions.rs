@@ -1,8 +1,8 @@
 //! Dispatch validated flow actions through the runner MCP interface.
 
 use super::arguments::{
-    app_launch_call, gesture_arguments, number, required, route_tool_arguments, string,
-    swipe_arguments,
+    app_launch_call, gesture_arguments, number, pointer_gesture_arguments, rectangle, required,
+    route_tool_arguments, string, swipe_arguments,
 };
 use super::artifacts::write;
 use super::{FlowRunner, SWIPE, StepEvidence, TAP, TYPE};
@@ -169,6 +169,20 @@ impl FlowRunner {
             }
             "tap_element" | "focus_field" => {
                 self.focus(args).await?;
+            }
+            "long_press_element" | "double_tap_element" => {
+                let element = self.find_gesture_target(args).await?;
+                let gesture = schema::pointer_gesture_step(action, args)?;
+                self.call(
+                    TAP,
+                    pointer_gesture_arguments(
+                        self.device_id()?,
+                        &element,
+                        rectangle(&element)?,
+                        gesture,
+                    ),
+                )
+                .await?;
             }
             "fill_field" => {
                 let s = schema::selector(args, &self.profile)?;

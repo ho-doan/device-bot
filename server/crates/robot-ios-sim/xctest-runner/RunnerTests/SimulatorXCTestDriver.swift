@@ -138,14 +138,28 @@ final class DeviceKitXCTestDriver {
   }
 
   func tap(x: CGFloat, y: CGFloat) -> Bool {
+    pointerGesture(x: x, y: y, kind: "tap", durationMs: nil)
+  }
+
+  func pointerGesture(x: CGFloat, y: CGFloat, kind: String, durationMs: Double?) -> Bool {
     guard let app else { return false }
     let frame = app.frame
     guard frame.width > 0, frame.height > 0, frame.contains(CGPoint(x: x, y: y)) else {
       return false
     }
-    app.coordinate(withNormalizedOffset: .zero)
+    let coordinate = app.coordinate(withNormalizedOffset: .zero)
       .withOffset(CGVector(dx: x, dy: y))
-      .tap()
+    switch kind {
+    case "tap":
+      coordinate.tap()
+    case "long_press":
+      guard let durationMs, (1...3_000).contains(durationMs) else { return false }
+      coordinate.press(forDuration: durationMs / 1_000)
+    case "double_tap":
+      coordinate.doubleTap()
+    default:
+      return false
+    }
     return true
   }
 

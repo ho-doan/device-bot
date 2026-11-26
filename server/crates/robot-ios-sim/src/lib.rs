@@ -662,6 +662,7 @@ impl IosSimulatorRobot {
                 "DEVICE_BOT_Y" => Some(("y", json!(value.parse::<f64>().ok()?))),
                 "DEVICE_BOT_END_X" => Some(("toX", json!(value.parse::<f64>().ok()?))),
                 "DEVICE_BOT_END_Y" => Some(("toY", json!(value.parse::<f64>().ok()?))),
+                "DEVICE_BOT_DURATION_MS" => Some(("durationMs", json!(value.parse::<u64>().ok()?))),
                 "DEVICE_BOT_DURATION_SECONDS" => Some((
                     "durationMs",
                     json!(value.parse::<f64>().ok()?.mul_add(1000.0, 0.0) as u64),
@@ -684,9 +685,9 @@ impl IosSimulatorRobot {
                     .dispatch_for(device_id, "screen-geometry", Value::Object(params), timeout)
                     .await
             }
-            "tap" => {
+            "tap" | "long_press" | "double_tap" => {
                 agent
-                    .dispatch_for(device_id, "tap", Value::Object(params), timeout)
+                    .dispatch_for(device_id, action, Value::Object(params), timeout)
                     .await
             }
             "tap-element" => {
@@ -1196,6 +1197,34 @@ impl Robot for IosSimulatorRobot {
         )
         .await
         .map(|_| ())
+    }
+    async fn pointer_gesture(
+        &self,
+        device_id: &str,
+        point: Point,
+        gesture: robot_core::PointerGesture,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        if gesture == robot_core::PointerGesture::Tap {
+            return self.tap_in_context(device_id, point, context).await;
+        }
+        if context.is_some_and(|value| !value.is_empty()) {
+            return Err(RobotError::Unsupported(
+                "iOS Simulator WebView gestures require native screen coordinates".into(),
+            ));
+        }
+        Self::valid_point(point, gesture.name())?;
+        let app = self.active_app(device_id).await?;
+        let mut params = vec![
+            ("DEVICE_BOT_X", point.x.to_string()),
+            ("DEVICE_BOT_Y", point.y.to_string()),
+        ];
+        if let robot_core::PointerGesture::LongPress { duration_ms } = gesture {
+            params.push(("DEVICE_BOT_DURATION_MS", duration_ms.to_string()));
+        }
+        self.run_xctest(device_id, &app, gesture.name(), &params, None)
+            .await
+            .map(|_| ())
     }
     async fn type_text_in_context(
         &self,

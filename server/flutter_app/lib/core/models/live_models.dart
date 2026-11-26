@@ -7,6 +7,10 @@ enum LiveEventType { frame, elements, error, unknown }
 
 enum LiveInputAction {
   tap,
+  @JsonValue('long_press')
+  longPress,
+  @JsonValue('double_tap')
+  doubleTap,
   scroll,
   swipe,
   @JsonValue('type')
@@ -14,7 +18,15 @@ enum LiveInputAction {
   clear,
   unknown;
 
-  String get wireName => this == typeText ? 'type' : name;
+  String get wireName => switch (this) {
+    typeText => 'type',
+    longPress => 'long_press',
+    doubleTap => 'double_tap',
+    _ => name,
+  };
+
+  bool get isPointerClick =>
+      this == tap || this == longPress || this == doubleTap;
 }
 
 @JsonSerializable(explicitToJson: true, includeIfNull: false)

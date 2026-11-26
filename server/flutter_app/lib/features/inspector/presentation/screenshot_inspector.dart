@@ -449,6 +449,12 @@ _InspectorElementKind _inspectorElementKind(AdminElement element) {
 }
 
 List<InspectorFlowAction> _inspectorFlowActions(AdminElement element) {
+  const taps = [
+    InspectorFlowAction.tap,
+    InspectorFlowAction.longPress,
+    InspectorFlowAction.doubleTap,
+    InspectorFlowAction.assertVisible,
+  ];
   if (RegExp(
     r'scroll|listview|recyclerview',
     caseSensitive: false,
@@ -464,11 +470,9 @@ List<InspectorFlowAction> _inspectorFlowActions(AdminElement element) {
       return [InspectorFlowAction.typeText];
     case _InspectorElementKind.action:
     case _InspectorElementKind.toggle:
-      return [InspectorFlowAction.tap, InspectorFlowAction.assertVisible];
+      return taps;
     case _InspectorElementKind.other:
-      return element.clickable
-          ? [InspectorFlowAction.tap, InspectorFlowAction.assertVisible]
-          : [InspectorFlowAction.assertVisible];
+      return element.clickable ? taps : [InspectorFlowAction.assertVisible];
   }
 }
 
@@ -476,6 +480,10 @@ String _inspectorFlowActionLabel(InspectorFlowAction action) {
   switch (action) {
     case InspectorFlowAction.tap:
       return 'Tap element';
+    case InspectorFlowAction.longPress:
+      return 'Long press element';
+    case InspectorFlowAction.doubleTap:
+      return 'Double tap element';
     case InspectorFlowAction.typeText:
       return 'Type text';
     case InspectorFlowAction.assertVisible:

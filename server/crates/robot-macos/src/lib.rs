@@ -847,6 +847,29 @@ impl Robot for MacosRobot {
         self.accessibility_tap(point).await
     }
 
+    async fn pointer_gesture(
+        &self,
+        device_id: &str,
+        point: Point,
+        gesture: robot_core::PointerGesture,
+        context: Option<&robot_core::WebContext>,
+    ) -> Result<(), RobotError> {
+        if gesture == robot_core::PointerGesture::Tap {
+            return self.tap_in_context(device_id, point, context).await;
+        }
+        if context.is_some_and(|value| !value.is_empty()) {
+            return Err(RobotError::Unsupported("macOS DOM pointer gestures".into()));
+        }
+        self.require_device(device_id)?;
+        let _guard = self.capture_lock.lock().await;
+        if live::Target::parse(device_id)?.is_some() {
+            self.live_guard(device_id, &[point]).await?;
+        } else {
+            self.require_input_target().await?;
+        }
+        pointer::gesture(point, gesture).await
+    }
+
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
         if live::Target::parse(device_id)?.is_some() {

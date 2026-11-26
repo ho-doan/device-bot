@@ -706,6 +706,8 @@ fn expand(
         }
         if [
             "tap_element",
+            "long_press_element",
+            "double_tap_element",
             "assert_element",
             "assert_absent",
             "assert_state",
@@ -768,6 +770,8 @@ fn expand(
             "screenshot",
             "tap",
             "tap_element",
+            "long_press_element",
+            "double_tap_element",
             "type_text",
             "swipe",
             "assert_element",
@@ -810,6 +814,9 @@ fn expand(
         if action == "network_fault" {
             network_fault_step(&args)?;
         }
+        if matches!(action.as_str(), "long_press_element" | "double_tap_element") {
+            pointer_gesture_step(&action, &args)?;
+        }
         if let Some(n) = args.get("timeout_ms") {
             if n.as_u64().is_none_or(|n| n == 0 || n > 120_000) {
                 return Err("timeout_ms must be 1..120000".into());
@@ -845,7 +852,9 @@ fn validate_action_keys(action: &str, args: &Value) -> Result<()> {
         "note_limitation" => "message",
         "network_fault" => "action fault min_hits timeout_ms",
         "start_screen_recording" | "stop_screen_recording" | "reset_fields" => "",
-        "tap_element" | "assert_element" | "assert_absent" | "focus_field" => selector,
+        "tap_element" | "double_tap_element" | "assert_element" | "assert_absent"
+        | "focus_field" => selector,
+        "long_press_element" => return check_keys(args, &format!("{selector} duration_ms")),
         "list_elements" => return check_keys(args, &format!("{selector} samples interval_ms")),
         "assert_state" => return check_keys(args, &format!("{selector} property expected")),
         "assert_value" => return check_keys(args, &format!("{selector} expected")),
@@ -858,6 +867,26 @@ fn validate_action_keys(action: &str, args: &Value) -> Result<()> {
         _ => return Err(format!("unknown action {action}").into()),
     };
     check_keys(args, extra)
+}
+
+pub(crate) fn pointer_gesture_step(
+    action: &str,
+    args: &Value,
+) -> Result<robot_core::PointerGesture> {
+    let name = match action {
+        "long_press_element" => "long_press",
+        "double_tap_element" => "double_tap",
+        _ => return Err(format!("not a pointer gesture: {action}").into()),
+    };
+    let duration = args
+        .get("duration_ms")
+        .map(|value| {
+            value
+                .as_u64()
+                .ok_or_else(|| crate::FlowError::from("duration_ms must be an integer"))
+        })
+        .transpose()?;
+    robot_core::PointerGesture::parse(name, duration).map_err(|error| error.to_string().into())
 }
 
 #[derive(Deserialize)]

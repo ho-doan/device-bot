@@ -115,9 +115,10 @@ YAML suite on Linux and Windows.
 
 ## Live control and web deployment
 
-Live control is available for Android and Chrome. Select an element to inspect
-it, then use **Tap selected** to control it. **Up 50 px / Down 50 px** send pixel
-scroll commands. Successful actions are recorded automatically; **Export YAML**
+Select an element to inspect it, then choose **Tap selected**, **Long press
+selected**, or **Double tap selected**. **Up 50 px / Down 50 px** send pixel
+scroll commands. For Android and Chrome, successful actions are recorded
+automatically and **Export YAML**
 saves a complete `robot-flow` v2 scenario for the current platform. Run it with:
 
 ```bash

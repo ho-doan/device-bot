@@ -954,6 +954,70 @@ if ($null -eq $apps) {
         )).await.map(|_| ())
     }
 
+    async fn pointer_gesture(
+        &self,
+        device_id: &str,
+        point: Point,
+        gesture: robot_core::PointerGesture,
+        context: Option<&robot_core::WebContext>,
+    ) -> Result<(), RobotError> {
+        use robot_core::PointerGesture::*;
+        if gesture == Tap {
+            return self.tap_in_context(device_id, point, context).await;
+        }
+        if context.is_some_and(|value| !value.is_empty()) {
+            return Err(RobotError::Unsupported(
+                "Windows DOM pointer gestures".into(),
+            ));
+        }
+        self.require_device(device_id)?;
+        if ![point.x, point.y]
+            .into_iter()
+            .all(|value| value.is_finite() && (i32::MIN as f64..=i32::MAX as f64).contains(&value))
+        {
+            return Err(RobotError::InvalidInput(
+                "Invalid Windows pointer coordinates".into(),
+            ));
+        }
+        let guard = self.capture_lock.clone().lock_owned().await;
+        let prefix = self.live_input_prefix(device_id, &[point]).await?;
+        if prefix.is_empty() {
+            self.activate_target().await?;
+        }
+        let down = "[MobileMcpMouse]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)";
+        let up = "[MobileMcpMouse]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)";
+        let operation = match gesture {
+            Tap => unreachable!(),
+            LongPress { duration_ms } => format!(
+                "{down}; try {{ Start-Sleep -Milliseconds {duration_ms} }} finally {{ {up} }}"
+            ),
+            DoubleTap => {
+                let check = if prefix.is_empty() {
+                    ""
+                } else {
+                    "if ([DeviceBotLive]::GetForegroundWindow() -ne $target) { throw 'Target lost focus during double tap.' }; [DeviceBotLive]::CheckPoint($target, [System.Windows.Forms.Cursor]::Position.X, [System.Windows.Forms.Cursor]::Position.Y);"
+                };
+                format!("{down}; {up}; Start-Sleep -Milliseconds 40; {check} {down}; {up}")
+            }
+        };
+        let script = format!(
+            "{}\n{prefix}\n[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({}, {}); {operation}",
+            mouse_helpers(),
+            point.x.round(),
+            point.y.round(),
+        );
+        // The helper must finish its mouse-up even if the request is cancelled.
+        let this = self.clone();
+        tokio::spawn(async move {
+            let _guard = guard;
+            this.powershell(script).await.map(|_| ())
+        })
+        .await
+        .map_err(|error| {
+            RobotError::CommandFailed(format!("Windows gesture task failed: {error}"))
+        })?
+    }
+
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
         self.require_device(device_id)?;
         let _input = self.capture_lock.lock().await;

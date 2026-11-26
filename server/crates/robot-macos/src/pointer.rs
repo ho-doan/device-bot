@@ -1,4 +1,4 @@
-//! Quartz drag gestures. Always release the button when cancelled or failed.
+//! Quartz pointer gestures. Always release the button when cancelled or failed.
 use robot_core::{Point, RobotError};
 #[cfg(any(target_os = "macos", test))]
 use std::time::Duration;
@@ -67,6 +67,27 @@ async fn drag_with<F: FnMut(u32, Point) -> Result<(), RobotError>>(
     Ok(())
 }
 
+#[cfg(any(target_os = "macos", test))]
+async fn press_with<F: FnMut(u32, Point) -> Result<(), RobotError>>(
+    at: Point,
+    hold_ms: u64,
+    post: F,
+) -> Result<(), RobotError> {
+    let mut pointer = HeldPointer {
+        post,
+        at,
+        held: false,
+    };
+    (pointer.post)(DOWN, at)?;
+    pointer.held = true;
+    if hold_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(hold_ms)).await;
+    }
+    (pointer.post)(UP, at)?;
+    pointer.held = false;
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 struct PointerSource(super::ffi::CfOwned);
 // CGEventSource has no UI-thread affinity. The drag owns it exclusively and
@@ -75,41 +96,77 @@ struct PointerSource(super::ffi::CfOwned);
 unsafe impl Send for PointerSource {}
 #[cfg(target_os = "macos")]
 impl PointerSource {
-    fn post(&mut self, kind: u32, at: Point) -> Result<(), RobotError> {
-        post(kind, at, self.0.0)
+    fn new() -> Result<Self, RobotError> {
+        use super::ffi::{AXIsProcessTrusted, CFTypeRef, CfOwned};
+        #[link(name = "CoreGraphics", kind = "framework")]
+        unsafe extern "C" {
+            fn CGEventSourceCreate(state: i32) -> CFTypeRef;
+            fn CGEventSourceSetLocalEventsSuppressionInterval(source: CFTypeRef, seconds: f64);
+        }
+        if !unsafe { AXIsProcessTrusted() } {
+            return Err(RobotError::CommandFailed(
+                "Grant Accessibility permission to Device Bot before sending pointer input".into(),
+            ));
+        }
+        // Keep synthetic button state separate from physical/remote desktop input.
+        let source = CfOwned(unsafe { CGEventSourceCreate(-1) }); // kCGEventSourceStatePrivate
+        if source.0.is_null() {
+            return Err(RobotError::CommandFailed(
+                "Could not create macOS pointer source".into(),
+            ));
+        }
+        unsafe { CGEventSourceSetLocalEventsSuppressionInterval(source.0, 0.0) };
+        Ok(Self(source))
+    }
+    fn post(&mut self, kind: u32, at: Point, click_count: i64) -> Result<(), RobotError> {
+        post(kind, at, self.0.0, click_count)
     }
 }
 
 #[cfg(target_os = "macos")]
 pub(super) async fn drag(start: Point, end: Point, duration_ms: u64) -> Result<(), RobotError> {
-    use super::ffi::{AXIsProcessTrusted, CFTypeRef, CfOwned};
-    #[link(name = "CoreGraphics", kind = "framework")]
-    unsafe extern "C" {
-        fn CGEventSourceCreate(state: i32) -> CFTypeRef;
-        fn CGEventSourceSetLocalEventsSuppressionInterval(source: CFTypeRef, seconds: f64);
-    }
-    if !unsafe { AXIsProcessTrusted() } {
-        return Err(RobotError::CommandFailed(
-            "Grant Accessibility permission to Device Bot before dragging".into(),
-        ));
-    }
-    // Keep synthetic button state separate from physical/remote desktop input.
-    let source = CfOwned(unsafe { CGEventSourceCreate(-1) }); // kCGEventSourceStatePrivate
-    if source.0.is_null() {
-        return Err(RobotError::CommandFailed(
-            "Could not create macOS pointer source".into(),
-        ));
-    }
-    unsafe { CGEventSourceSetLocalEventsSuppressionInterval(source.0, 0.0) };
-    let mut source = PointerSource(source);
+    let mut source = PointerSource::new()?;
     drag_with(start, end, duration_ms, move |kind, at| {
-        source.post(kind, at)
+        source.post(kind, at, 1)
     })
     .await
 }
 
 #[cfg(target_os = "macos")]
-fn post(kind: u32, at: Point, source: super::ffi::CFTypeRef) -> Result<(), RobotError> {
+pub(super) async fn gesture(
+    at: Point,
+    gesture: robot_core::PointerGesture,
+) -> Result<(), RobotError> {
+    use robot_core::PointerGesture::{DoubleTap, LongPress, Tap};
+    if !at.x.is_finite() || !at.y.is_finite() {
+        return Err(RobotError::InvalidInput(
+            "Pointer coordinates must be finite".into(),
+        ));
+    }
+    let mut source = PointerSource::new()?;
+    source.post(MOVED, at, 1)?;
+    // Move the source through the closure so it is exclusively owned across await.
+    let mut post = move |kind, at, count| source.post(kind, at, count);
+    match gesture {
+        Tap => press_with(at, 0, |kind, at| post(kind, at, 1)).await,
+        LongPress { duration_ms } => {
+            press_with(at, duration_ms, |kind, at| post(kind, at, 1)).await
+        }
+        DoubleTap => {
+            press_with(at, 0, |kind, at| post(kind, at, 1)).await?;
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            press_with(at, 0, |kind, at| post(kind, at, 2)).await
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn post(
+    kind: u32,
+    at: Point,
+    source: super::ffi::CFTypeRef,
+    click_count: i64,
+) -> Result<(), RobotError> {
     use super::ffi::{CFTypeRef, CGPoint, CfOwned};
     #[link(name = "CoreGraphics", kind = "framework")]
     unsafe extern "C" {
@@ -132,7 +189,7 @@ fn post(kind: u32, at: Point, source: super::ffi::CFTypeRef) -> Result<(), Robot
     }
     unsafe {
         CGEventSetFlags(event.0, 0);
-        CGEventSetIntegerValueField(event.0, 1, 1); // kCGMouseEventClickState
+        CGEventSetIntegerValueField(event.0, 1, click_count); // kCGMouseEventClickState
         CGEventPost(1, event.0); // kCGSessionEventTap
     }
     Ok(())
@@ -145,9 +202,37 @@ pub(super) async fn drag(_start: Point, _end: Point, _duration_ms: u64) -> Resul
     ))
 }
 
+#[cfg(not(target_os = "macos"))]
+pub(super) async fn gesture(
+    _at: Point,
+    _gesture: robot_core::PointerGesture,
+) -> Result<(), RobotError> {
+    Err(RobotError::Unsupported(
+        "macOS pointer events require macOS".into(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cancelled_long_press_releases_without_dragging() {
+        let mut events = vec![];
+        let at = Point { x: 1., y: 2. };
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(2),
+                press_with(at, 700, |kind, _| {
+                    events.push(kind);
+                    Ok(())
+                })
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(events, [DOWN, UP]);
+    }
+
     #[tokio::test]
     async fn drag_moves_to_endpoint_and_releases() {
         let mut events = Vec::new();

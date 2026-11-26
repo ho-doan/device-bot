@@ -251,10 +251,17 @@ class McpClient {
     final command = LiveInput.fromJson(input);
     switch (command.action) {
       case LiveInputAction.tap:
+      case LiveInputAction.longPress:
+      case LiveInputAction.doubleTap:
         await callTool('mobile_click_on_screen_at_coordinates', {
           'deviceId': deviceId,
           'x': command.x,
           'y': command.y,
+          if (command.action != LiveInputAction.tap)
+            'gesture': command.action.wireName,
+          if (command.action == LiveInputAction.longPress &&
+              command.durationMs != null)
+            'durationMs': command.durationMs,
           if (command.webContext != null)
             'webContext': command.webContext!.toJson(),
         });
@@ -382,9 +389,9 @@ class McpClient {
     }
   }
 
-  /// Tap, swipe, or type on the Android device while the mirror is open.
+  /// Send supported input on the Android device while the mirror is open.
   ///
-  /// Coordinates are screenshot pixels. `action` is `tap`, `swipe`, or `type`.
+  /// Coordinates are screenshot pixels.
   Future<void> sendAndroidInput(
     String deviceId,
     Map<String, dynamic> input,

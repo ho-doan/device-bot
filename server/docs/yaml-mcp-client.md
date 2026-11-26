@@ -218,6 +218,7 @@ not establish native device parity; see the recorded verification results.
 | `launch_app` | Shared launch: HTTP/HTTPS `app_id` uses `mobile_open_url`; native app IDs/paths use `mobile_launch_app`. Launch is not cold-reset |
 | `tap`, `type_text`, `swipe` | Existing coordinate/text MCP calls |
 | `tap_element`, `focus_field` | Fresh unique actionable match; optional native tap/focus proof |
+| `long_press_element`, `double_tap_element` | Fresh unique enabled match with screen bounds; send a hold or double-click gesture |
 | `fill_field` | Focus, type or run explicit replacement recipe, then verify |
 | `gesture` | `from`/`to` fractions in target bounds, optional `duration_ms` |
 | `scroll` | Measured viewport, `direction: up/down` |
@@ -251,6 +252,31 @@ app identifier/executable path or an HTTP/HTTPS URL through `app_id`. The separa
 The MCP navigation tool still requires a Chrome page; the old macOS/Safari
 direct-driver examples are not equivalent MCP flows. Screenshots in v1 retain their explicit path
 semantics; v2 paths stay under the case artifact directory.
+
+### Press and hold or double tap an element
+
+```yaml
+version: 2
+name: pointer-gestures
+steps:
+  - select_device: {platform: android}
+  - long_press_element: {resource_id: 'com.example:id/item', duration_ms: 850}
+  - assert_element: {label: Actions, timeout_ms: 3000}
+  - double_tap_element: {resource_id: 'com.example:id/item'}
+```
+
+`long_press_element` defaults to 700 ms and accepts 1–3000 ms. Set a duration
+long enough for the target app's hold threshold. `double_tap_element` does not
+take a duration. These actions resolve one enabled element with screen bounds
+at execution time, even if it has no single-tap action. They do not accept
+`native_tap` or `require_focus`. Check the result with
+an assertion when the gesture itself matters.
+
+At the MCP layer use `mobile_click_on_screen_at_coordinates` with
+`gesture: long_press` or `gesture: double_tap`. For long press, `durationMs`
+is optional. Omitting `gesture` preserves the original single-tap behavior.
+iOS WebViews require native screen coordinates for these new gestures. The
+drivers reject WebView DOM references that cannot be mapped safely.
 
 ## Evidence and adoption
 

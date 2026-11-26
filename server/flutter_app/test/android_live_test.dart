@@ -463,15 +463,17 @@ void main() {
   });
 
   testWidgets(
-    'selection only inspects YAML; explicit Tap selected sends the center',
+    'selected pointer gestures send the center and record selector actions',
     (tester) async {
       final inputs = <Map<String, dynamic>>[];
+      final recording = LiveRecording(deviceId: 'phone', platform: 'android');
       final updates = StreamController<AndroidLiveUpdate>();
       addTearDown(updates.close);
       await tester.pumpWidget(
         _app(
           home: AndroidLiveDialog(
             deviceName: 'Phone',
+            recording: recording,
             connect: () => updates.stream,
             onInput: (input) async {
               inputs.add(input);
@@ -514,6 +516,27 @@ void main() {
       expect(inputs, [
         {'action': 'tap', 'x': 20, 'y': 40},
       ]);
+      for (final key in [
+        'live-long-press-selected',
+        'live-double-tap-selected',
+      ]) {
+        final button = find.byKey(Key(key));
+        await tester.ensureVisible(button);
+        await tester.tap(button);
+        await tester.pump();
+      }
+      expect(inputs.skip(1), [
+        {'action': 'long_press', 'x': 20, 'y': 40},
+        {'action': 'double_tap', 'x': 20, 'y': 40},
+      ]);
+      expect(
+        recording.toYaml(),
+        contains('long_press_element:\n      label: "Save"'),
+      );
+      expect(
+        recording.toYaml(),
+        contains('double_tap_element:\n      label: "Save"'),
+      );
     },
   );
   testWidgets(

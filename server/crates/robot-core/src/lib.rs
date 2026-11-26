@@ -28,7 +28,9 @@ pub use elements::{
     element_matches_filter, prepare_elements,
 };
 pub use error::RobotError;
-pub use input::{ImeAction, PointerGesture, UiAction};
+pub use input::{
+    DEFAULT_DRAG_DURATION_MS, ImeAction, MAX_DRAG_DURATION_MS, PointerGesture, UiAction,
+};
 pub use observation::{ObservationBatch, ObservationOptions, ObservationRecord};
 pub use registry::RobotRegistry;
 pub use robot::{Robot, UiRunnerStatus};

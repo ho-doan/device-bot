@@ -6,10 +6,23 @@ enum InspectorFlowAction {
   tap,
   longPress,
   doubleTap,
+  swipeLeft,
+  swipeRight,
   typeText,
   assertVisible,
   scrollUp,
   scrollDown,
+}
+
+enum HorizontalSwipe {
+  left,
+  right;
+
+  double get startX => this == left ? 0.9 : 0.1;
+  double get endX => this == left ? 0.1 : 0.9;
+  InspectorFlowAction get flowAction => this == left
+      ? InspectorFlowAction.swipeLeft
+      : InspectorFlowAction.swipeRight;
 }
 
 String buildInspectorFlowYaml({
@@ -106,6 +119,14 @@ String buildInspectorFlowYaml({
           '${durationMs == null ? '' : '\n      duration_ms: $durationMs'}';
     case InspectorFlowAction.doubleTap:
       return '  - id: double_tap_element_$sequence\n    double_tap_element:\n$selector';
+    case InspectorFlowAction.swipeLeft:
+    case InspectorFlowAction.swipeRight:
+      final direction = action == InspectorFlowAction.swipeLeft
+          ? 'left'
+          : 'right';
+      return '  - id: swipe_element_$sequence\n    swipe_element:\n$selector'
+          '\n      direction: $direction'
+          '${durationMs == null ? '' : '\n      duration_ms: $durationMs'}';
     case InspectorFlowAction.typeText:
       return '  - id: tap_element_$sequence\n    tap_element:\n$selector\n'
           '  - id: type_text_$sequence\n    type_text:\n'

@@ -65,6 +65,7 @@ pub struct ChromeRobot {
     recordings: Arc<Mutex<HashMap<String, ActiveRecording>>>,
     observers: Arc<Mutex<HashMap<String, observation::Observer>>>,
     boot_lock: Arc<Mutex<()>>,
+    drag_lock: Arc<Mutex<()>>,
     browser_session: Arc<Mutex<Option<connection::BrowserSession>>>,
     browser_connection: Arc<Mutex<Option<Arc<Mutex<connection::BrowserConnection>>>>>,
     test_proxy: Arc<Mutex<Option<test_proxy::TestProxy>>>,
@@ -95,6 +96,7 @@ impl ChromeRobot {
             recordings: Arc::new(Mutex::new(HashMap::new())),
             observers: Arc::default(),
             boot_lock: Arc::default(),
+            drag_lock: Arc::default(),
             browser_session: Arc::default(),
             browser_connection: Arc::default(),
             test_proxy: Arc::default(),
@@ -657,7 +659,7 @@ impl ChromeRobot {
         context: &WebContext,
         expression: &str,
         map_pointer: bool,
-    ) -> Result<(Value, Option<Point>), RobotError> {
+    ) -> Result<(Value, Vec<Point>), RobotError> {
         if let Some(page) = &context.page {
             if page.url.as_deref().is_some_and(|url| url != target.url)
                 || page
@@ -723,21 +725,28 @@ impl ChromeRobot {
                 &owners,
                 &chain,
             )?;
-            let coordinate = |axis: &str, offset: i32| {
-                result["result"]["value"][axis]
+            let coordinate = |point: &Value, axis: &str, offset: i32| {
+                point[axis]
                     .as_f64()
                     .map(|value| value + f64::from(offset))
                     .filter(|value| value.is_finite() && *value >= 0.)
                     .ok_or_else(|| {
-                        RobotError::InvalidInput("DOM element has no visible pointer center".into())
+                        RobotError::InvalidInput("DOM element has no visible pointer point".into())
                     })
             };
-            let point = Point {
-                x: coordinate("x", origin.left)?,
-                y: coordinate("y", origin.top)?,
-            };
+            let points = result["result"]["value"]
+                .as_array()
+                .ok_or_else(|| RobotError::InvalidInput("Missing DOM pointer mapping".into()))?
+                .iter()
+                .map(|value| {
+                    Ok(Point {
+                        x: coordinate(value, "x", origin.left)?,
+                        y: coordinate(value, "y", origin.top)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, RobotError>>()?;
             let mut parent = &tree;
-            let mut parent_point = point;
+            let mut parent_points: Vec<_> = points.iter().map(|p| [p.x, p.y]).collect();
             for child in chain {
                 let owner = owners
                     .iter()
@@ -749,13 +758,12 @@ impl ChromeRobot {
                     r#"(() => {{
                       const e = document.querySelectorAll('iframe,frame')[{}];
                       return !!e && (e.name || '') === {} && (e.src || '') === {}
-                        && document.elementFromPoint({}, {}) === e;
+                        && {}.every(([x, y]) => document.elementFromPoint(x, y) === e);
                     }})()"#,
                     owner.dom_index,
                     json!(owner.name),
                     json!(owner.url),
-                    parent_point.x,
-                    parent_point.y
+                    json!(parent_points),
                 );
                 let parent_session = frames::session_for_frame(&tree, &parent.id, &authorized);
                 let hit = self
@@ -768,36 +776,45 @@ impl ChromeRobot {
                     ));
                 }
                 parent = child;
-                parent_point.x -= owner.left;
-                parent_point.y -= owner.top;
+                for point in &mut parent_points {
+                    point[0] -= owner.left;
+                    point[1] -= owner.top;
+                }
             }
-            Some(point)
+            points
         } else {
-            None
+            Vec::new()
         };
         Ok((result, mapping))
     }
 
-    async fn checked_pointer_point(
+    async fn checked_pointer_points(
         &self,
         target: &ChromeTarget,
         context: &WebContext,
-    ) -> Result<Point, RobotError> {
+        fractions: &[[f64; 2]],
+    ) -> Result<Vec<Point>, RobotError> {
         let reference = context.element_ref.as_ref().ok_or_else(|| {
             RobotError::InvalidInput(
                 "Inspect the DOM element again before sending the gesture".into(),
             )
         })?;
         let script = format!(
-            "({})(document, {}, {})",
+            "({})(document, {}, {}, {})",
             include_str!("dom-pointer-point.js"),
             include_str!("../../robot-ios-real/webview-helper/dom-references.js"),
-            serde_json::to_string(reference).unwrap()
+            serde_json::to_string(reference).unwrap(),
+            json!(fractions),
         );
         let (_, mapping) = self
             .eval_in_context_value(target, context, &script, true)
             .await?;
-        mapping.ok_or_else(|| RobotError::InvalidInput("Missing DOM pointer mapping".into()))
+        if mapping.len() != fractions.len() {
+            return Err(RobotError::InvalidInput(
+                "Incomplete DOM pointer mapping".into(),
+            ));
+        }
+        Ok(mapping)
     }
 
     async fn dispatch_pointer_gesture(
@@ -838,6 +855,58 @@ impl ChromeRobot {
                     .map(|_| ())
             }
         }
+    }
+
+    async fn dispatch_touch_drag(
+        &self,
+        target: &ChromeTarget,
+        start: Point,
+        end: Point,
+        duration: u64,
+    ) -> Result<(), RobotError> {
+        const METHOD: &str = "Input.dispatchTouchEvent";
+        let at = |kind, x, y| json!({"type":kind,"touchPoints":[{"x":x,"y":y,"id":0}]});
+        let motion = async {
+            self.cdp(target, METHOD, at("touchStart", start.x, start.y))
+                .await?;
+            const STEPS: u64 = 12;
+            let started = tokio::time::Instant::now();
+            for step in 1..=STEPS {
+                let t = step as f64 / STEPS as f64;
+                tokio::time::sleep_until(started + Duration::from_millis(duration * step / STEPS))
+                    .await;
+                self.cdp(
+                    target,
+                    METHOD,
+                    at(
+                        "touchMove",
+                        start.x + (end.x - start.x) * t,
+                        start.y + (end.y - start.y) * t,
+                    ),
+                )
+                .await?;
+            }
+            Ok(())
+        }
+        .await;
+        let kind = if motion.is_ok() {
+            "touchEnd"
+        } else {
+            "touchCancel"
+        };
+        let release = self
+            .cdp(target, METHOD, json!({"type":kind,"touchPoints":[]}))
+            .await;
+        if motion.is_ok() && release.is_err() {
+            let _ = self
+                .cdp(
+                    target,
+                    METHOD,
+                    json!({"type":"touchCancel","touchPoints":[]}),
+                )
+                .await;
+        }
+        motion.and(release.map(|_| ()))
     }
 
     async fn dispatch_tap(&self, target: &ChromeTarget, point: Point) -> Result<(), RobotError> {
@@ -1417,7 +1486,8 @@ impl Robot for ChromeRobot {
         let target = self.page(id).await?;
         self.cdp(&target, "Page.bringToFront", json!({})).await?;
         let point = if let Some(context) = context.filter(|value| !value.is_empty()) {
-            self.checked_pointer_point(&target, context).await?
+            self.checked_pointer_points(&target, context, &[[0.5, 0.5]])
+                .await?[0]
         } else {
             point
         };
@@ -1456,6 +1526,62 @@ impl Robot for ChromeRobot {
         self.cdp(&target, "Input.insertText", json!({ "text": text }))
             .await
             .map(|_| ())
+    }
+
+    async fn drag(
+        &self,
+        device_id: &str,
+        start: Point,
+        end: Point,
+        duration: u64,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        if !(1..=robot_core::MAX_DRAG_DURATION_MS).contains(&duration) {
+            return Err(RobotError::InvalidInput(
+                "Drag duration must be 1..3000 ms".into(),
+            ));
+        }
+        let guard = self.drag_lock.clone().lock_owned().await;
+        let target = self.page(device_id).await?;
+        self.cdp(&target, "Page.bringToFront", json!({})).await?;
+        let (start, end) = if let Some(context) = context.filter(|value| !value.is_empty()) {
+            let fractions = [[start.x, start.y], [end.x, end.y]];
+            if fractions.iter().flatten().any(|v| !(0. ..=1.).contains(v)) {
+                return Err(RobotError::InvalidInput(
+                    "DOM drag coordinates must be fractions in 0..1".into(),
+                ));
+            }
+            let points = self
+                .checked_pointer_points(&target, context, &fractions)
+                .await?;
+            (points[0], points[1])
+        } else {
+            (start, end)
+        };
+        let metrics = self
+            .cdp(&target, "Page.getLayoutMetrics", json!({}))
+            .await?;
+        let viewport = &metrics["cssVisualViewport"];
+        let width = viewport["clientWidth"].as_f64().unwrap_or_default();
+        let height = viewport["clientHeight"].as_f64().unwrap_or_default();
+        if (start.x == end.x && start.y == end.y)
+            || [start, end]
+                .iter()
+                .any(|p| !(0. ..width).contains(&p.x) || !(0. ..height).contains(&p.y))
+        {
+            return Err(RobotError::InvalidInput(
+                "Drag endpoints must differ and be inside the Chrome viewport".into(),
+            ));
+        }
+        // Once contact begins, finish or cancel it even if the caller disconnects.
+        let this = self.clone();
+        tokio::spawn(async move {
+            let _guard = guard;
+            this.dispatch_touch_drag(&target, start, end, duration)
+                .await
+        })
+        .await
+        .map_err(|error| RobotError::CommandFailed(format!("Chrome drag task failed: {error}")))?
     }
 
     async fn swipe(

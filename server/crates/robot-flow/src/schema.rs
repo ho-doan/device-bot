@@ -708,6 +708,7 @@ fn expand(
             "tap_element",
             "long_press_element",
             "double_tap_element",
+            "swipe_element",
             "assert_element",
             "assert_absent",
             "assert_state",
@@ -772,6 +773,7 @@ fn expand(
             "tap_element",
             "long_press_element",
             "double_tap_element",
+            "swipe_element",
             "type_text",
             "swipe",
             "assert_element",
@@ -816,6 +818,9 @@ fn expand(
         }
         if matches!(action.as_str(), "long_press_element" | "double_tap_element") {
             pointer_gesture_step(&action, &args)?;
+        }
+        if action == "swipe_element" {
+            swipe_element_step(&args)?;
         }
         if let Some(n) = args.get("timeout_ms") {
             if n.as_u64().is_none_or(|n| n == 0 || n > 120_000) {
@@ -863,6 +868,7 @@ fn validate_action_keys(action: &str, args: &Value) -> Result<()> {
             return check_keys(args, &format!("{selector} text text_from_env sensitive"));
         }
         "gesture" => return check_keys(args, &format!("{selector} from to duration_ms")),
+        "swipe_element" => return check_keys(args, &format!("{selector} direction duration_ms")),
         "scroll" => return check_keys(args, &format!("{selector} direction")),
         _ => return Err(format!("unknown action {action}").into()),
     };
@@ -887,6 +893,22 @@ pub(crate) fn pointer_gesture_step(
         })
         .transpose()?;
     robot_core::PointerGesture::parse(name, duration).map_err(|error| error.to_string().into())
+}
+
+pub(crate) fn swipe_element_step(args: &Value) -> Result<(bool, u64)> {
+    let left = match args["direction"].as_str() {
+        Some("left") => true,
+        Some("right") => false,
+        _ => return Err("swipe_element.direction must be left or right".into()),
+    };
+    let duration = match args.get("duration_ms") {
+        None => robot_core::DEFAULT_DRAG_DURATION_MS,
+        Some(value) => value
+            .as_u64()
+            .filter(|n| (1..=robot_core::MAX_DRAG_DURATION_MS).contains(n))
+            .ok_or("swipe_element.duration_ms must be 1..3000")?,
+    };
+    Ok((left, duration))
 }
 
 #[derive(Deserialize)]

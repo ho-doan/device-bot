@@ -457,7 +457,10 @@ class LiveCubit extends Cubit<LiveState> {
     });
   }
 
-  Future<void> send(Map<String, dynamic> input) {
+  Future<void> send(
+    Map<String, dynamic> input, {
+    HorizontalSwipe? selectedSwipe,
+  }) {
     final queuedVideo = _video;
     final snapshot = List<AdminElement>.of(_elements);
     final selected = _selectedIndex == null ? null : snapshot[_selectedIndex!];
@@ -503,7 +506,10 @@ class LiveCubit extends Cubit<LiveState> {
             final step = recording.prepare(
               input,
               snapshot,
-              command.action.isPointerClick ? selected : null,
+              command.action.isPointerClick || selectedSwipe != null
+                  ? selected
+                  : null,
+              selectedSwipe: selectedSwipe,
             );
             await onInput(input);
             await recording.commit(step);
@@ -574,6 +580,37 @@ class LiveCubit extends Cubit<LiveState> {
         'x': ((bounds.left + bounds.right) / 2).round(),
         'y': ((bounds.top + bounds.bottom) / 2).round(),
       });
+    } finally {
+      if (_active) emit(state.copyWith(tappingSelected: false));
+    }
+  }
+
+  Future<void> swipeSelected(HorizontalSwipe direction) async {
+    final index = _selectedIndex;
+    if (_tappingSelected || index == null || index >= _elements.length) return;
+    final element = _elements[index];
+    final bounds = element.bounds;
+    if (!element.enabled || bounds.width <= 0 || bounds.height <= 0) return;
+    final context = element.webContext;
+    final dom =
+        context != null && (!context.isEmpty || context.elementRef != null);
+    double x(double fraction) =>
+        dom ? fraction : bounds.left + bounds.width * fraction;
+    final y = dom ? 0.5 : (bounds.top + bounds.bottom) / 2;
+    emit(state.copyWith(tappingSelected: true, status: null));
+    try {
+      await send(
+        LiveInput(
+          action: LiveInputAction.swipe,
+          x: x(direction.startX),
+          y: y,
+          endX: x(direction.endX),
+          endY: y,
+          mode: 'drag',
+          webContext: dom ? context : null,
+        ).toJson(),
+        selectedSwipe: direction,
+      );
     } finally {
       if (_active) emit(state.copyWith(tappingSelected: false));
     }

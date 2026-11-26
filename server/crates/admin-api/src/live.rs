@@ -119,6 +119,7 @@ pub(crate) struct LiveInput {
     end_y: Option<f64>,
     text: Option<String>,
     duration_ms: Option<u64>,
+    mode: Option<String>,
     delta_x: Option<f64>,
     delta_y: Option<f64>,
 }
@@ -188,15 +189,33 @@ async fn dispatch_input(
         "swipe" => {
             let start = required_point(input.x, input.y)?;
             let end = required_point(input.end_x, input.end_y)?;
-            let duration_ms = input.duration_ms.unwrap_or(300);
-            if !(1..=60_000).contains(&duration_ms) {
-                return Err(RobotError::InvalidInput(
-                    "durationMs must be between 1 and 60000".into(),
-                ));
+            let duration_ms = input
+                .duration_ms
+                .unwrap_or(robot_core::DEFAULT_DRAG_DURATION_MS);
+            match input.mode.as_deref() {
+                Some("drag") => {
+                    if !(1..=robot_core::MAX_DRAG_DURATION_MS).contains(&duration_ms)
+                        || (start.x == end.x && start.y == end.y)
+                    {
+                        return Err(RobotError::InvalidInput(
+                            "Drag requires distinct endpoints and durationMs between 1 and 3000"
+                                .into(),
+                        ));
+                    }
+                    robot.drag(device_id, start, end, duration_ms, None).await?;
+                }
+                None if (1..=60_000).contains(&duration_ms) => {
+                    robot
+                        .swipe(device_id, start, end, Some(duration_ms))
+                        .await?;
+                }
+                None => {
+                    return Err(RobotError::InvalidInput(
+                        "durationMs must be between 1 and 60000".into(),
+                    ));
+                }
+                _ => return Err(RobotError::InvalidInput("Unrecognized swipe mode".into())),
             }
-            robot
-                .swipe(device_id, start, end, Some(duration_ms))
-                .await?;
             Ok(format!(
                 "{device_id} swipe {},{} -> {},{}",
                 start.x.round(),
@@ -544,6 +563,7 @@ mod tests {
                 end_y: None,
                 text: None,
                 duration_ms: None,
+                mode: None,
                 delta_x: None,
                 delta_y: None,
             }),
@@ -690,6 +710,7 @@ mod tests {
                 end_y: None,
                 text: None,
                 duration_ms: None,
+                mode: None,
                 delta_x: None,
                 delta_y: None,
             }),
@@ -709,6 +730,7 @@ mod tests {
                 end_y: None,
                 text: None,
                 duration_ms: None,
+                mode: None,
                 delta_x: None,
                 delta_y: None,
             }),
@@ -728,6 +750,7 @@ mod tests {
                 end_y: None,
                 text: Some("  hello  ".into()),
                 duration_ms: None,
+                mode: None,
                 delta_x: None,
                 delta_y: None,
             }),
@@ -747,6 +770,7 @@ mod tests {
                 end_y: None,
                 text: Some("   ".into()),
                 duration_ms: None,
+                mode: None,
                 delta_x: None,
                 delta_y: None,
             }),

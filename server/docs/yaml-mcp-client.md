@@ -219,6 +219,7 @@ not establish native device parity; see the recorded verification results.
 | `tap`, `type_text`, `swipe` | Existing coordinate/text MCP calls |
 | `tap_element`, `focus_field` | Fresh unique actionable match; optional native tap/focus proof |
 | `long_press_element`, `double_tap_element` | Fresh unique enabled match with screen bounds; send a hold or double-click gesture |
+| `swipe_element` | Fresh unique enabled match; drag left or right across the item |
 | `fill_field` | Focus, type or run explicit replacement recipe, then verify |
 | `gesture` | `from`/`to` fractions in target bounds, optional `duration_ms` |
 | `scroll` | Measured viewport, `direction: up/down` |
@@ -277,6 +278,23 @@ At the MCP layer use `mobile_click_on_screen_at_coordinates` with
 is optional. Omitting `gesture` preserves the original single-tap behavior.
 iOS WebViews require native screen coordinates for these new gestures. The
 drivers reject WebView DOM references that cannot be mapped safely.
+
+For rows that reveal actions when swiped, target the whole row rather than its
+label or a smaller child. The direction describes the pointer motion.
+
+```yaml
+steps:
+  - swipe_element: {resource_id: 'inbox-row-42', direction: left}
+  - assert_element: {label: Archive}
+  - swipe_element: {resource_id: 'inbox-row-42', direction: right}
+```
+
+`swipe_element` drags along the middle of the row between 10% and 90% of its
+width and defaults to 300 ms (range 1–3000). It uses
+`mobile_swipe_on_screen` with `mode: drag`. Chrome sends a touch drag;
+omitting the mode keeps the old wheel behavior. Scoped Chrome DOM drags use a
+fresh reference and validate both endpoints, including in iframes. For iOS
+WebViews use native accessibility bounds or a coordinate drag.
 
 ## Evidence and adoption
 

@@ -30,21 +30,24 @@ class LiveRecording {
   String prepare(
     Map<String, dynamic> input,
     List<AdminElement> elements,
-    AdminElement? selected,
-  ) {
+    AdminElement? selected, {
+    HorizontalSwipe? selectedSwipe,
+  }) {
     // Deleting an earlier action must not reuse an existing YAML step ID.
     final sequence = _nextSequence++;
     final command = LiveInput.fromJson(input);
     final action = command.action;
-    if (action.isPointerClick && selected != null) {
+    if (selected != null && (action.isPointerClick || selectedSwipe != null)) {
       return buildInspectorFlowYaml(
         element: selected,
         elements: elements,
-        action: switch (action) {
-          LiveInputAction.longPress => InspectorFlowAction.longPress,
-          LiveInputAction.doubleTap => InspectorFlowAction.doubleTap,
-          _ => InspectorFlowAction.tap,
-        },
+        action:
+            selectedSwipe?.flowAction ??
+            switch (action) {
+              LiveInputAction.longPress => InspectorFlowAction.longPress,
+              LiveInputAction.doubleTap => InspectorFlowAction.doubleTap,
+              _ => InspectorFlowAction.tap,
+            },
         sequence: sequence,
         durationMs: command.durationMs,
       );
@@ -87,6 +90,9 @@ class LiveRecording {
           'endX': command.endX,
           'endY': command.endY,
           'durationMs': command.durationMs ?? 300,
+          if (command.mode != null) 'mode': command.mode,
+          if (command.webContext != null)
+            'webContext': command.webContext!.toJson(),
         });
       case LiveInputAction.unknown:
         throw ArgumentError('Unsupported recorded action $action');

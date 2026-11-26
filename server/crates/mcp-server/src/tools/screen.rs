@@ -55,7 +55,7 @@ pub(super) fn definitions() -> [ToolDefinition; 5] {
         ToolDefinition {
             name: SWIPE_NAME.into(),
             title: Some("Swipe across a mobile screen".into()),
-            description: "Swipe between two screen coordinates; duration defaults to 300ms.".into(),
+            description: "Swipe between two screen coordinates. Set mode to drag for a press-move-release instead of Chrome wheel scrolling. With drag and webContext, coordinates are fractions in 0..1 within a fresh DOM element reference. Duration defaults to 300ms.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -64,7 +64,9 @@ pub(super) fn definitions() -> [ToolDefinition; 5] {
                     "startY": { "type": "number" },
                     "endX": { "type": "number" },
                     "endY": { "type": "number" },
-                    "durationMs": { "type": "integer", "minimum": 1, "maximum": 60000 }
+                    "durationMs": { "type": "integer", "minimum": 1, "maximum": 60000 },
+                    "mode": { "enum": ["drag"] },
+                    "webContext": { "type": "object" }
                 },
                 "required": ["deviceId", "startX", "startY", "endX", "endY"],
                 "additionalProperties": false
@@ -208,18 +210,56 @@ pub(super) async fn swipe(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResu
         Err(error) => return error,
     };
 
-    match robot
-        .swipe(
-            &device_id,
-            Point {
-                x: start_x,
-                y: start_y,
-            },
-            Point { x: end_x, y: end_y },
-            duration_ms,
-        )
-        .await
-    {
+    let start = Point {
+        x: start_x,
+        y: start_y,
+    };
+    let end = Point { x: end_x, y: end_y };
+    let result = match arguments.get("mode") {
+        None if arguments.get("webContext").is_none() => {
+            robot.swipe(&device_id, start, end, duration_ms).await
+        }
+        Some(mode) if mode == "drag" => {
+            let duration = duration_ms.unwrap_or(robot_core::DEFAULT_DRAG_DURATION_MS);
+            if !(1..=robot_core::MAX_DRAG_DURATION_MS).contains(&duration) {
+                return ToolResult::execution_error("Drag durationMs must be 1..3000");
+            }
+            let context = match arguments.get("webContext") {
+                None => None,
+                Some(value) => {
+                    match serde_json::from_value::<robot_core::WebContext>(value.clone()) {
+                        Ok(context) if context.element_ref.is_some() => Some(context),
+                        _ => {
+                            return ToolResult::execution_error(
+                                "Drag webContext requires a valid elementRef",
+                            );
+                        }
+                    }
+                }
+            };
+            if context.is_some()
+                && [start.x, start.y, end.x, end.y]
+                    .iter()
+                    .any(|v| !(0. ..=1.).contains(v))
+            {
+                return ToolResult::execution_error(
+                    "DOM drag coordinates must be fractions in 0..1",
+                );
+            }
+            if start.x == end.x && start.y == end.y {
+                return ToolResult::execution_error("Drag endpoints must differ");
+            }
+            robot
+                .drag(&device_id, start, end, duration, context.as_ref())
+                .await
+        }
+        _ => {
+            return ToolResult::execution_error(
+                "webContext requires mode: drag, and drag is the only explicit mode",
+            );
+        }
+    };
+    match result {
         Ok(()) => ToolResult::text("Swipe completed"),
         Err(error) => ToolResult::execution_error(error.to_string()),
     }

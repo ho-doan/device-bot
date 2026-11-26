@@ -455,25 +455,31 @@ List<InspectorFlowAction> _inspectorFlowActions(AdminElement element) {
     InspectorFlowAction.doubleTap,
     InspectorFlowAction.assertVisible,
   ];
-  if (RegExp(
+  final scrollable = RegExp(
     r'scroll|listview|recyclerview',
     caseSensitive: false,
-  ).hasMatch(element.className)) {
-    return [
-      InspectorFlowAction.scrollDown,
-      InspectorFlowAction.scrollUp,
-      InspectorFlowAction.assertVisible,
-    ];
-  }
-  switch (_inspectorElementKind(element)) {
-    case _InspectorElementKind.input:
-      return [InspectorFlowAction.typeText];
-    case _InspectorElementKind.action:
-    case _InspectorElementKind.toggle:
-      return taps;
-    case _InspectorElementKind.other:
-      return element.clickable ? taps : [InspectorFlowAction.assertVisible];
-  }
+  ).hasMatch(element.className);
+  final actions = scrollable
+      ? [
+          InspectorFlowAction.scrollDown,
+          InspectorFlowAction.scrollUp,
+          InspectorFlowAction.assertVisible,
+        ]
+      : switch (_inspectorElementKind(element)) {
+          _InspectorElementKind.input => [InspectorFlowAction.typeText],
+          _InspectorElementKind.action || _InspectorElementKind.toggle => taps,
+          _InspectorElementKind.other =>
+            element.clickable ? taps : [InspectorFlowAction.assertVisible],
+        };
+  return [
+    ...actions,
+    if (element.enabled &&
+        element.bounds.width > 0 &&
+        element.bounds.height > 0) ...[
+      InspectorFlowAction.swipeLeft,
+      InspectorFlowAction.swipeRight,
+    ],
+  ];
 }
 
 String _inspectorFlowActionLabel(InspectorFlowAction action) {
@@ -484,6 +490,10 @@ String _inspectorFlowActionLabel(InspectorFlowAction action) {
       return 'Long press element';
     case InspectorFlowAction.doubleTap:
       return 'Double tap element';
+    case InspectorFlowAction.swipeLeft:
+      return 'Swipe left';
+    case InspectorFlowAction.swipeRight:
+      return 'Swipe right';
     case InspectorFlowAction.typeText:
       return 'Type text';
     case InspectorFlowAction.assertVisible:

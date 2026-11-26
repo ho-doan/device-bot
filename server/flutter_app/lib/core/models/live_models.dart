@@ -40,6 +40,7 @@ class LiveInput {
     this.deltaX,
     this.deltaY,
     this.durationMs,
+    this.mode,
     this.text,
     this.webContext,
   });
@@ -50,6 +51,7 @@ class LiveInput {
   final LiveInputAction action;
   final num? x, y, endX, endY, deltaX, deltaY;
   final int? durationMs;
+  final String? mode;
   final String? text;
   final WebContext? webContext;
   LiveInput withWebContext(WebContext context) => LiveInput(
@@ -61,6 +63,7 @@ class LiveInput {
     deltaX: deltaX,
     deltaY: deltaY,
     durationMs: durationMs,
+    mode: mode,
     text: text,
     webContext: context,
   );
@@ -73,6 +76,7 @@ class LiveInput {
     deltaX: deltaX,
     deltaY: deltaY,
     durationMs: durationMs,
+    mode: mode,
     text: text,
     webContext: webContext,
   );

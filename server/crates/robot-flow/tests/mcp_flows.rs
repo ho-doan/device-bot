@@ -183,6 +183,69 @@ async fn selector_pointer_gestures_send_one_typed_call_per_fresh_match() {
 }
 
 #[tokio::test]
+async fn swipe_element_uses_current_bounds_or_fresh_dom_reference() {
+    let mut native = node("Inbox");
+    native["clickable"] = json!(false);
+    let mut dom = node("Web row");
+    let context = json!({"elementRef":"new-document-node","framePath":[{"css":"#inbox"}]});
+    dom["webContext"] = context.clone();
+    let state = Arc::new(Mutex::new(State {
+        queries: VecDeque::from([json!([native]), json!([dom])]),
+        ..State::default()
+    }));
+    let report = run(
+        &flow("  - swipe_element: {label: Inbox, direction: left}\n  - swipe_element: {label: Web row, direction: right, duration_ms: 420, web_context: {frame_path: [{css: '#inbox'}]}}\n"),
+        &Profile::default(), state.clone(),
+    ).await;
+    assert_eq!(report.status, "PASS", "{:?}", report.error);
+    let state = state.lock().unwrap();
+    let args: Vec<_> = state
+        .calls
+        .iter()
+        .filter(|call| call["params"]["name"] == "mobile_swipe_on_screen")
+        .map(|call| call["params"]["arguments"].clone())
+        .collect();
+    assert_eq!(
+        args,
+        [
+            json!({"deviceId":"device-1","mode":"drag","startX":100.0,"startY":50.0,"endX":20.0,"endY":50.0,"durationMs":300}),
+            json!({"deviceId":"device-1","mode":"drag","startX":0.1,"startY":0.5,"endX":0.9,"endY":0.5,"durationMs":420,"webContext":context}),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn invalid_or_ambiguous_swipe_element_never_sends_drag() {
+    for args in [
+        "{label: Row}",
+        "{label: Row, direction: up}",
+        "{label: Row, direction: left, duration_ms: 3001}",
+        "{label: Row, direction: right, native_tap: true}",
+        "{label: Row, direction: left}",
+    ] {
+        let state = Arc::new(Mutex::new(State {
+            queries: VecDeque::from([json!([node("Row"), node("Row")])]),
+            ..State::default()
+        }));
+        let report = run(
+            &flow(&format!("  - swipe_element: {args}\n")),
+            &Profile::default(),
+            state.clone(),
+        )
+        .await;
+        assert_ne!(report.status, "PASS", "{args}");
+        assert!(
+            !state
+                .lock()
+                .unwrap()
+                .calls
+                .iter()
+                .any(|call| call["params"]["name"] == "mobile_swipe_on_screen")
+        );
+    }
+}
+
+#[tokio::test]
 async fn invalid_or_ambiguous_pointer_gestures_never_send_input() {
     for yaml in [
         "  - long_press_element: {label: A, duration_ms: 0}\n",

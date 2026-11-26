@@ -283,6 +283,9 @@ class McpClient {
           'endX': command.endX,
           'endY': command.endY,
           'durationMs': command.durationMs,
+          if (command.mode != null) 'mode': command.mode,
+          if (command.webContext != null)
+            'webContext': command.webContext!.toJson(),
         });
       case LiveInputAction.typeText:
         await callTool('mobile_type_keys', {

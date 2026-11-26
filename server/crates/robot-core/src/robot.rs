@@ -101,6 +101,23 @@ pub trait Robot: Send + Sync {
             gesture.name()
         )))
     }
+    /// A press, move and release. With a DOM context the endpoints are fractions
+    /// within the referenced element rather than absolute screen coordinates.
+    async fn drag(
+        &self,
+        id: &str,
+        start: Point,
+        end: Point,
+        duration: u64,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        if context.is_some_and(|value| !value.is_empty()) {
+            return Err(RobotError::Unsupported(
+                "context-bound DOM dragging is unavailable".into(),
+            ));
+        }
+        self.swipe(id, start, end, Some(duration)).await
+    }
     async fn stream_context(&self, _id: &str) -> Result<Value, RobotError> {
         Ok(Value::Null)
     }

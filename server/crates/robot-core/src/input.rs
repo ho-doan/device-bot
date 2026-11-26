@@ -3,6 +3,9 @@
 use crate::RobotError;
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_DRAG_DURATION_MS: u64 = 300;
+pub const MAX_DRAG_DURATION_MS: u64 = 3_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PointerGesture {
     Tap,

@@ -537,6 +537,36 @@ void main() {
         recording.toYaml(),
         contains('double_tap_element:\n      label: "Save"'),
       );
+      for (final direction in ['left', 'right']) {
+        final button = find.byKey(Key('live-swipe-$direction-selected'));
+        await tester.ensureVisible(button);
+        await tester.tap(button);
+        await tester.pump();
+        expect(
+          recording.toYaml(),
+          contains(
+            'swipe_element:\n      label: "Save"\n      direction: $direction',
+          ),
+        );
+      }
+      expect(inputs.skip(3), [
+        {
+          'action': 'swipe',
+          'mode': 'drag',
+          'x': 28,
+          'y': 40,
+          'endX': 12,
+          'endY': 40,
+        },
+        {
+          'action': 'swipe',
+          'mode': 'drag',
+          'x': 12,
+          'y': 40,
+          'endX': 28,
+          'endY': 40,
+        },
+      ]);
     },
   );
   testWidgets(

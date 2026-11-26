@@ -289,6 +289,20 @@ impl Robot for RobotRegistry {
     async fn type_text(&self, id: &str, text: &str) -> Result<(), RobotError> {
         self.driver_for(id).await?.type_text(id, text).await
     }
+    async fn drag(
+        &self,
+        id: &str,
+        start: Point,
+        end: Point,
+        duration: u64,
+        context: Option<&WebContext>,
+    ) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .drag(id, start, end, duration, context)
+            .await
+    }
+
     async fn swipe(
         &self,
         id: &str,

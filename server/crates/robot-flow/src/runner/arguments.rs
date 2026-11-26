@@ -110,6 +110,29 @@ pub(super) fn gesture_arguments(args: &Value, e: &Value, device: &str) -> Result
         json!({"deviceId":device,"startX":x(sx),"startY":y(sy),"endX":x(ex),"endY":y(ey),"durationMs":args.get("duration_ms").and_then(Value::as_u64).unwrap_or(350)}),
     )
 }
+pub(super) fn swipe_element_arguments(
+    args: &Value,
+    element: &Value,
+    device: &str,
+) -> Result<Value> {
+    let (left, duration) = schema::swipe_element_step(args)?;
+    let (start, end) = if left { (0.9, 0.1) } else { (0.1, 0.9) };
+    let bounds = rectangle(element)?;
+    let context = element.get("webContext").filter(|value| !value.is_null());
+    let (start_x, end_x, y) = if context.is_some() {
+        (start, end, 0.5)
+    } else {
+        let x = |fraction| bounds.0 + (bounds.2 - bounds.0) * fraction;
+        (x(start), x(end), (bounds.1 + bounds.3) / 2.)
+    };
+    let mut payload = json!({"deviceId": device, "mode": "drag",
+        "startX": start_x, "startY": y, "endX": end_x, "endY": y, "durationMs": duration});
+    if let Some(context) = context {
+        payload["webContext"] = context.clone();
+    }
+    Ok(payload)
+}
+
 pub(super) fn swipe_arguments(args: &Value, device: &str) -> Result<Value> {
     Ok(
         json!({"deviceId":device,"startX":number(&args["start"],"x")?,"startY":number(&args["start"],"y")?,"endX":number(&args["end"],"x")?,"endY":number(&args["end"],"y")?,"durationMs":args.get("duration_ms").and_then(Value::as_u64).unwrap_or(300)}),

@@ -590,6 +590,23 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                                     'Double tap selected',
                                                   ),
                                                 ),
+                                                for (final direction
+                                                    in HorizontalSwipe.values)
+                                                  OutlinedButton(
+                                                    key: Key(
+                                                      'live-swipe-${direction.name}-selected',
+                                                    ),
+                                                    onPressed:
+                                                        canGestureSelected
+                                                        ? () => _cubit
+                                                              .swipeSelected(
+                                                                direction,
+                                                              )
+                                                        : null,
+                                                    child: Text(
+                                                      'Swipe ${direction.name}',
+                                                    ),
+                                                  ),
                                               ],
                                             ),
                                             SelectableText(
@@ -637,6 +654,22 @@ class _AndroidLiveDialogState extends State<AndroidLiveDialog> {
                                                                 .doubleTap,
                                                         child: Text(
                                                           'YAML: Double tap element',
+                                                        ),
+                                                      ),
+                                                      DropdownMenuItem(
+                                                        value:
+                                                            InspectorFlowAction
+                                                                .swipeLeft,
+                                                        child: Text(
+                                                          'YAML: Swipe left',
+                                                        ),
+                                                      ),
+                                                      DropdownMenuItem(
+                                                        value:
+                                                            InspectorFlowAction
+                                                                .swipeRight,
+                                                        child: Text(
+                                                          'YAML: Swipe right',
                                                         ),
                                                       ),
                                                       DropdownMenuItem(

@@ -19,6 +19,7 @@ LiveInput _$LiveInputFromJson(Map<String, dynamic> json) => LiveInput(
   deltaX: json['deltaX'] as num?,
   deltaY: json['deltaY'] as num?,
   durationMs: (json['durationMs'] as num?)?.toInt(),
+  mode: json['mode'] as String?,
   text: json['text'] as String?,
   webContext: json['webContext'] == null
       ? null
@@ -34,6 +35,7 @@ Map<String, dynamic> _$LiveInputToJson(LiveInput instance) => <String, dynamic>{
   'deltaX': ?instance.deltaX,
   'deltaY': ?instance.deltaY,
   'durationMs': ?instance.durationMs,
+  'mode': ?instance.mode,
   'text': ?instance.text,
   'webContext': ?instance.webContext?.toJson(),
 };

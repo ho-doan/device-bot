@@ -24,6 +24,12 @@ async fn real_iframe_context_actions_and_navigation_rejection() {
                       <br><button id="gestures" onpointerdown="this.started=performance.now()"
                         onpointerup="this.dataset.held=Math.max(+this.dataset.held||0,performance.now()-this.started)"
                         ondblclick="this.dataset.doubles=(+this.dataset.doubles||0)+1">Gestures</button>
+                      <br><button id="swipe-card" style="width:200px; touch-action:pan-y;"
+                        ontouchstart="this.startX=event.touches[0].clientX;this.dataset.moves=0"
+                        ontouchmove="this.dataset.moves=+this.dataset.moves+1"
+                        ontouchend="const dx=event.changedTouches[0].clientX-this.startX;
+                          if (Math.abs(dx)>60) {this.dataset.direction=dx<0?'left':'right';this.style.marginLeft='25px';}"
+                        onwheel="this.dataset.wheel='yes'">Swipe item</button>
                       <div style="height:1800px"></div>"#.into(),
                 };
                 let response = format!(
@@ -201,6 +207,47 @@ async fn real_iframe_context_actions_and_navigation_rejection() {
         "{events:?}"
     );
     assert_eq!(events["doubles"], 1, "{events:?}");
+    let swipe_context = rows
+        .iter()
+        .filter(|row| row.resource_id.as_deref() == Some("swipe-card"))
+        .filter_map(|row| row.web_context.as_ref())
+        .find(|context| context.frame_path.len() == 2)
+        .unwrap();
+    for (expected, from, to) in [("left", 0.9, 0.1), ("right", 0.1, 0.9)] {
+        robot
+            .drag(
+                &id,
+                Point { x: from, y: 0.5 },
+                Point { x: to, y: 0.5 },
+                250,
+                Some(swipe_context),
+            )
+            .await
+            .unwrap();
+        let (result, _) = robot.eval_in_context_value(&target, swipe_context,
+            "(() => {const d=document.getElementById('swipe-card').dataset;return {direction:d.direction,moves:+d.moves,wheel:d.wheel};})()",
+            false,
+        ).await.unwrap();
+        let data = &result["result"]["value"];
+        assert_eq!(data["direction"], expected, "{data:?}");
+        assert!(data["moves"].as_u64().is_some_and(|n| n >= 2), "{data:?}");
+        assert!(data["wheel"].is_null(), "{data:?}");
+    }
+    robot.eval_in_context(&target, swipe_context,
+        "(() => {const cover=document.createElement('div');cover.style='position:fixed;inset:0;z-index:100';document.body.append(cover);})()"
+    ).await.unwrap();
+    assert!(
+        robot
+            .drag(
+                &id,
+                Point { x: 0.9, y: 0.5 },
+                Point { x: 0.1, y: 0.5 },
+                250,
+                Some(swipe_context)
+            )
+            .await
+            .is_err()
+    );
     // Same stable selector, different document and nodes. Never activate the replacement.
     robot
         .open_url(&id, &format!("http://127.0.0.1:{port}/"), None)
@@ -210,6 +257,18 @@ async fn real_iframe_context_actions_and_navigation_rejection() {
     assert!(
         robot
             .tap_in_context(&id, Point { x: 0., y: 0. }, Some(&context))
+            .await
+            .is_err()
+    );
+    assert!(
+        robot
+            .drag(
+                &id,
+                Point { x: 0.9, y: 0.5 },
+                Point { x: 0.1, y: 0.5 },
+                250,
+                Some(swipe_context)
+            )
             .await
             .is_err()
     );

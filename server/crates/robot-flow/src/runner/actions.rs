@@ -2,7 +2,7 @@
 
 use super::arguments::{
     app_launch_call, gesture_arguments, number, pointer_gesture_arguments, rectangle, required,
-    route_tool_arguments, string, swipe_arguments,
+    route_tool_arguments, string, swipe_arguments, swipe_element_arguments,
 };
 use super::artifacts::write;
 use super::{FlowRunner, SWIPE, StepEvidence, TAP, TYPE};
@@ -166,6 +166,14 @@ impl FlowRunner {
                 }
                 self.call(SWIPE, gesture_arguments(args, &element, self.device_id()?)?)
                     .await?;
+            }
+            "swipe_element" => {
+                let element = self.find_gesture_target(args).await?;
+                self.call(
+                    SWIPE,
+                    swipe_element_arguments(args, &element, self.device_id()?)?,
+                )
+                .await?;
             }
             "tap_element" | "focus_field" => {
                 self.focus(args).await?;

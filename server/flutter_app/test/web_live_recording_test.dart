@@ -6,6 +6,7 @@ import 'package:mobile_mcp_companion/features/live/presentation/live_dialog.dart
 import 'package:mobile_mcp_companion/features/live/data/video_session.dart';
 import 'package:mobile_mcp_companion/features/live/data/live_recording.dart';
 import 'package:mobile_mcp_companion/core/network/mcp_client.dart';
+import 'package:mobile_mcp_companion/core/models/admin_models.dart';
 
 class _WebVideo extends Fake implements AndroidVideoSession {
   _WebVideo(this.recordingContext);
@@ -27,6 +28,68 @@ class _WebVideo extends Fake implements AndroidVideoSession {
 }
 
 void main() {
+  testWidgets(
+    'selected web swipe passes element-relative endpoints and records stable selector',
+    (tester) async {
+      final updates = StreamController<AndroidLiveUpdate>();
+      addTearDown(updates.close);
+      final inputs = <Map<String, dynamic>>[];
+      final recording = LiveRecording(
+        deviceId: 'chrome:case',
+        platform: 'chrome',
+      )..context = {'url': 'https://example.test/inbox'};
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AndroidLiveDialog(
+            deviceName: 'Web',
+            platform: 'chrome',
+            recording: recording,
+            connect: () => updates.stream,
+            onInput: (input) async => inputs.add(input),
+          ),
+        ),
+      );
+      updates.add(
+        AndroidLiveElements(
+          source: 'native',
+          elements: const [
+            AdminElement(
+              className: 'DIV',
+              resourceId: 'card',
+              text: 'Inbox',
+              contentDescription: null,
+              clickable: false,
+              enabled: true,
+              bounds: AdminBounds(left: 20, top: 40, right: 220, bottom: 90),
+              webContext: WebContext(elementRef: 'runtime-only'),
+            ),
+          ],
+        ),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('android-live-element-0')));
+      await tester.pump();
+      final left = find.byKey(const Key('live-swipe-left-selected'));
+      await tester.ensureVisible(left);
+      await tester.tap(left);
+      await tester.pump();
+      expect(inputs.single, {
+        'action': 'swipe',
+        'mode': 'drag',
+        'x': 0.9,
+        'y': 0.5,
+        'endX': 0.1,
+        'endY': 0.5,
+        'webContext': {'elementRef': 'runtime-only', 'framePath': []},
+      });
+      final yaml = recording.toYaml();
+      expect(yaml, contains('swipe_element:'));
+      expect(yaml, contains('resource_id: "card"'));
+      expect(yaml, contains('direction: left'));
+      expect(yaml, isNot(contains('runtime-only')));
+    },
+  );
+
   for (final oldContext in [
     {'url': 'about:blank'},
     {'captureBackend': 'browser-native'},

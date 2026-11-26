@@ -2,7 +2,8 @@
 
 use super::arguments::{
     app_launch_call, gesture_arguments, number, pointer_gesture_arguments, query_arguments,
-    required, route_tool_arguments, string, swipe_arguments, type_arguments,
+    required, route_tool_arguments, string, swipe_arguments, swipe_element_arguments,
+    type_arguments,
 };
 use super::{BATCH, FlowRunner, QUERY, SWIPE, TAP, TYPE};
 use crate::{
@@ -128,7 +129,8 @@ impl FlowRunner {
                 }
                 "tap_element" | "long_press_element" | "double_tap_element" | "focus_field"
                 | "fill_field" | "assert_element" | "assert_absent" | "assert_state"
-                | "assert_value" | "assert_count" | "gesture" | "scroll" | "list_elements" => {
+                | "assert_value" | "assert_count" | "gesture" | "swipe_element" | "scroll"
+                | "list_elements" => {
                     let s = schema::selector(args, &self.profile)?;
                     calls.push((QUERY, query_arguments(&s, "<selected>")));
                     if matches!(action.as_str(), "long_press_element" | "double_tap_element") {
@@ -173,6 +175,21 @@ impl FlowRunner {
                     }
                     if action == "assert_count" && args["count"].as_u64().is_none() {
                         return Err("assert_count.count must be an integer".into());
+                    }
+                    if action == "swipe_element" {
+                        if s.native_tap || s.require_focus {
+                            return Err(
+                                "swipe_element does not support native_tap or require_focus".into(),
+                            );
+                        }
+                        calls.push((
+                            SWIPE,
+                            swipe_element_arguments(
+                                args,
+                                &json!({"bounds":{"left":0,"top":0,"right":100,"bottom":100}}),
+                                "<selected>",
+                            )?,
+                        ));
                     }
                     if action == "gesture" {
                         calls.push((

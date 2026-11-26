@@ -24,6 +24,7 @@ class Dashboard extends StatelessWidget {
     required this.onBootDevice,
     required this.onLaunchApp,
     this.onLive,
+    this.onUiMap,
     this.onRestartWeb,
     this.onRunnerAction,
     this.busyDevices = const {},
@@ -35,6 +36,7 @@ class Dashboard extends StatelessWidget {
   final DashboardSnapshot snapshot;
   final ValueChanged<AdminDevice> onViewScreenshot;
   final ValueChanged<AdminDevice>? onLive;
+  final ValueChanged<AdminDevice>? onUiMap;
   final Future<void> Function(AdminDevice)? onRestartWeb;
   final Future<void> Function(AdminDevice) onBootDevice;
   final Future<void> Function(AdminDevice) onLaunchApp;
@@ -47,6 +49,7 @@ class Dashboard extends StatelessWidget {
           devices: snapshot.devices,
           onViewScreenshot: onViewScreenshot,
           onLive: onLive,
+          onUiMap: onUiMap,
           onRestartWeb: onRestartWeb,
           onBootDevice: onBootDevice,
           onLaunchApp: onLaunchApp,
@@ -80,6 +83,7 @@ class _DevicesPanel extends StatelessWidget {
     required this.devices,
     required this.onViewScreenshot,
     required this.onLive,
+    required this.onUiMap,
     this.onRestartWeb,
     required this.onBootDevice,
     required this.onLaunchApp,
@@ -92,6 +96,7 @@ class _DevicesPanel extends StatelessWidget {
   final Set<String> busyDevices;
   final ValueChanged<AdminDevice> onViewScreenshot;
   final ValueChanged<AdminDevice>? onLive;
+  final ValueChanged<AdminDevice>? onUiMap;
   final Future<void> Function(AdminDevice)? onRestartWeb;
   final Future<void> Function(AdminDevice) onBootDevice;
   final Future<void> Function(AdminDevice) onLaunchApp;
@@ -198,6 +203,18 @@ class _DevicesPanel extends StatelessWidget {
                               icon: Icon(
                                 Icons.videocam_outlined,
                                 semanticLabel: liveActionLabel(device),
+                              ),
+                            ),
+                          if (onUiMap != null)
+                            IconButton(
+                              key: ValueKey('ui-map-${device.id}'),
+                              tooltip: 'UI map for ${device.name}',
+                              onPressed: busy || device.state != 'available'
+                                  ? null
+                                  : () => onUiMap!(device),
+                              icon: Icon(
+                                Icons.hub_outlined,
+                                semanticLabel: 'UI map for ${device.name}',
                               ),
                             ),
                         ],

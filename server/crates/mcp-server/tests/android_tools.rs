@@ -555,7 +555,8 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
             "project_status",
             "project_cancel",
             "mobile_web_test_proxy",
-            "mobile_run_flow"
+            "mobile_run_flow",
+            "mobile_ui_map"
         ]
     );
 

@@ -16,6 +16,7 @@ mod runner_status;
 mod screen;
 mod stream;
 mod ui;
+mod ui_map;
 mod web_proxy;
 
 use std::sync::Arc;
@@ -28,6 +29,7 @@ pub(crate) struct ToolRegistry {
     streams: robot_stream::StreamManager,
     projects: project::Jobs,
     recordings: recording_transfer::RecordingTransfers,
+    maps: ui_map::Jobs,
 }
 
 impl ToolRegistry {
@@ -37,11 +39,13 @@ impl ToolRegistry {
             streams: robot_stream::StreamManager::default(),
             projects: project::Jobs::default(),
             recordings: recording_transfer::RecordingTransfers::default(),
+            maps: ui_map::Jobs::default(),
         }
     }
 
     pub(crate) async fn stop_streams(&self) {
         self.projects.shutdown().await;
+        self.maps.shutdown().await;
         self.streams.stop_all().await;
     }
 
@@ -67,6 +71,7 @@ impl ToolRegistry {
         definitions.extend(project::definitions());
         definitions.push(web_proxy::definition());
         definitions.push(flow::definition());
+        definitions.push(ui_map::definition());
         definitions
     }
 
@@ -85,6 +90,7 @@ impl ToolRegistry {
             }
             flow::NAME => Box::pin(flow::run(&self.robot, &params.arguments)).await,
             web_proxy::NAME => web_proxy::call(&self.robot, &params.arguments).await,
+            ui_map::NAME => self.maps.call(&self.robot, &params.arguments).await,
             stream::START_NAME => {
                 stream::start(&self.robot, &self.streams, &params.arguments).await
             }

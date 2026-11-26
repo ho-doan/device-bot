@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:mobile_mcp_companion/features/live/presentation/live_dialog.dart';
+import 'package:mobile_mcp_companion/features/ui_map/presentation/ui_map_page.dart';
 import 'package:mobile_mcp_companion/features/flows/presentation/flow_run_dialog.dart';
 import 'package:mobile_mcp_companion/features/projects/presentation/project_dialog.dart';
 import 'package:mobile_mcp_companion/features/devices/presentation/dashboard.dart';
@@ -205,6 +206,40 @@ class _CompanionHomeState extends State<_CompanionView> {
     );
   }
 
+  Future<void> _showUiMap([AdminDevice? device]) async {
+    final client = _client();
+    var id = device?.id;
+    var name = device?.name ?? 'Saved UI maps';
+    if (device != null && ['windows', 'macos'].contains(device.platform)) {
+      final window = await showDialog<AppWindow>(
+        context: context,
+        builder: (_) => WindowsLiveTargetDialog(
+          title: '${device.platform == 'macos' ? 'macOS' : 'Windows'} UI map',
+          runningApps: client.listRunningApps(device.id),
+          windowsFor: (pid) => client.listWindows(device.id, processId: pid),
+        ),
+      );
+      if (!mounted || window == null) return;
+      id = '${device.platform}:${window.processId}:${window.windowId}';
+      name = '${device.name} · ${window.label}';
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => UiMapPage(
+          deviceId: id,
+          deviceName: name,
+          call: (arguments) async =>
+              (await client.callTool(
+                'mobile_ui_map',
+                arguments,
+              )).structuredContent ??
+              const {},
+        ),
+      ),
+    );
+  }
+
   void _showScreenshot(AdminDevice device) async {
     DesktopCaptureSettings? capture;
     if (device.platform == 'macos' || device.platform == 'windows') {
@@ -366,6 +401,7 @@ class _CompanionHomeState extends State<_CompanionView> {
       snapshot: snapshot,
       onViewScreenshot: _showScreenshot,
       onLive: _showAndroidLive,
+      onUiMap: _showUiMap,
       onRestartWeb: _restartWeb,
       onBootDevice: _bootDevice,
       onLaunchApp: _launchApp,
@@ -414,6 +450,9 @@ class _CompanionHomeState extends State<_CompanionView> {
                       onRefresh: _refresh,
                       onImportFlow: _importFlow,
                       onRunProject: _runProject,
+                      onOpenUiMaps: state.status == QcConnectionStatus.connected
+                          ? _showUiMap
+                          : null,
                       activityStatus: _activityStatus,
                     ),
                     const SizedBox(height: 20),
@@ -436,6 +475,7 @@ class _ConnectionForm extends StatelessWidget {
     required this.onRefresh,
     required this.onImportFlow,
     required this.onRunProject,
+    this.onOpenUiMaps,
     required this.activityStatus,
   });
 
@@ -444,6 +484,7 @@ class _ConnectionForm extends StatelessWidget {
   final VoidCallback onRefresh;
   final VoidCallback onImportFlow;
   final VoidCallback onRunProject;
+  final VoidCallback? onOpenUiMaps;
   final String activityStatus;
 
   @override
@@ -513,6 +554,12 @@ class _ConnectionForm extends StatelessWidget {
               onPressed: onRunProject,
               icon: const Icon(Icons.folder_open),
               label: const Text('Project'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('open-ui-maps'),
+              onPressed: onOpenUiMaps,
+              icon: const Icon(Icons.hub_outlined),
+              label: const Text('UI maps'),
             ),
             SizedBox(
               width: 340,

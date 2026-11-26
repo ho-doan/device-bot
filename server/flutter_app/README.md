@@ -80,6 +80,9 @@ flowchart LR
   S --> UI
 ```
 
+The [UI map](../docs/ui-map.md) opens from the target's QC dashboard row for
+scans, or from **UI maps** in the toolbar for saved graphs.
+
 The web adapter uses Fetch streams for SSE so Live receives events before the
 response ends. Cancelling a subscription aborts its request. Regular web
 requests use Dio's browser adapter; native requests use its native adapter.

@@ -542,6 +542,7 @@ async fn android_vertical_slice_exposes_and_routes_all_tools() {
             "mobile_read_screen_recording_chunk",
             "mobile_start_stream",
             "mobile_stop_stream",
+            "mobile_get_viewport",
             "mobile_scroll",
             "mobile_list_displays",
             "mobile_take_screenshot",

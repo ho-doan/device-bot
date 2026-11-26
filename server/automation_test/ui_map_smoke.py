@@ -19,6 +19,10 @@ PAGES = {
     "/": """<h1>Map Home</h1>
         <a id="inbox" href="/inbox">Open Inbox</a>
         <a id="settings" href="/settings">Open Settings</a>
+        <button id="modal" onclick="document.getElementById('details').showModal()">Open Dialog</button>
+        <dialog id="details"><h2>Map Dialog</h2>
+          <button id="dismiss" onclick="this.closest('dialog').close()">Dismiss</button>
+        </dialog>
         <label>Search <input id="search" aria-label="Search"></label>
         <button id="delete" onclick="document.body.innerText='Unexpected delete'">Delete data</button>
         <script>document.querySelector('input').addEventListener('input', e => {
@@ -26,10 +30,14 @@ PAGES = {
             window.history.pushState({}, '', '/search');
             document.querySelector('h1').textContent = 'Map Results';
           }
-        });</script>""",
+        });</script>
+        <div style="height:1200px"></div>
+        <a id="below" href="/below">Open below the fold</a>""",
     "/inbox": """<h1>Map Inbox</h1><a id="thread" href="/thread">Open Thread</a>""",
     "/settings": """<h1>Map Settings</h1><a id="home" href="/">Back Home</a>""",
     "/thread": """<h1>Map Thread</h1><a id="back" href="/inbox">Back to Inbox</a>""",
+    "/below": """<h1>Map Below Fold</h1><a id="next" href="/end">Continue</a>""",
+    "/end": """<h1>Map End</h1>""",
 }
 
 
@@ -118,11 +126,12 @@ def exercise(server, binary, artifacts):
                 time.sleep(0.4)
                 initial = client.tool(
                     "mobile_ui_map", action="start", deviceId=device_id,
-                    allowedTaps=["inbox", "settings", "thread", "home", "back", "delete"],
-                    inputs={"search": "qc-fixture-query"}, settleMs=200,
+                    allowedTaps=["inbox", "settings", "thread", "home", "back", "delete",
+                                 "modal", "dismiss", "below", "next"],
+                    inputs={"search": "qc-fixture-query"}, settleMs=200, maxTimeSeconds=180,
                 )
                 map_id = initial["mapId"]
-                deadline = time.monotonic() + 90
+                deadline = time.monotonic() + 215
                 while True:
                     snapshot = client.tool("mobile_ui_map", action="status", mapId=map_id)
                     if snapshot["status"] != "running":
@@ -132,13 +141,31 @@ def exercise(server, binary, artifacts):
                         raise TimeoutError("UI map did not complete")
                     time.sleep(0.3)
                 by_title = {screen["title"]: screen for screen in snapshot["screens"]}
-                assert {"Map Home", "Map Inbox", "Map Thread", "Map Settings", "Map Results"} <= set(by_title), (by_title.keys(), snapshot["notes"])
+                assert {"Map Home", "Map Inbox", "Map Thread", "Map Settings", "Map Results",
+                        "Map Dialog", "Map Below Fold", "Map End"} <= set(by_title), (by_title.keys(), snapshot["notes"])
                 blocked = next(c for c in by_title["Map Home"]["controls"] if c["resourceId"] == "delete")
                 assert blocked["status"] == "skipped", blocked
                 assert "qc-fixture-query" not in json.dumps(snapshot)
+                controls = by_title["Map Home"]["controls"]
+                viewport = by_title["Map Home"]["viewport"]
+                assert viewport["contentHeight"] > viewport["height"], viewport
+                below = next(c for c in controls if c["resourceId"] == "below")
+                assert below["initiallyOffscreen"] is True and below["status"] == "observed", below
+                for resource in ("modal", "search", "below"):
+                    control = next(c for c in controls if c["resourceId"] == resource)
+                    evidence = client.tool("mobile_ui_map", action="action_evidence", mapId=map_id,
+                                           screenId=by_title["Map Home"]["id"], controlId=control["id"])
+                    assert "qc-fixture-query" not in evidence["yaml"]
+                    step = "focus_field" if resource == "search" else "tap_element"
+                    assert step in evidence["yaml"] and "screenshot" in evidence["yaml"]
+                    assert "scroll_into_view: true" in evidence["yaml"]
+                    assert evidence["base64"].startswith("iVBORw0KGgo"), evidence.keys()
+                assert [c["resourceId"] for c in by_title["Map Dialog"]["controls"]] == ["dismiss"]
                 route = client.tool("mobile_ui_map", action="route", mapId=map_id, to="Map Thread")
                 assert route["status"] == "observed", route
                 assert [step["label"] for step in route["steps"]] == ["Open Inbox", "Open Thread"], route
+                route = client.tool("mobile_ui_map", action="route", mapId=map_id, to="Map End")
+                assert [step["label"] for step in route["steps"]] == ["Open below the fold", "Continue"], route
                 image = client.tool("mobile_ui_map", action="screenshot", mapId=map_id,
                                     screenId=by_title["Map Thread"]["id"])
                 assert image["base64"].startswith("iVBORw0KGgo"), "Expected PNG evidence"
@@ -149,7 +176,7 @@ def exercise(server, binary, artifacts):
                 draft = client.tool("mobile_ui_map", action="route", mapId=map_id, to="/source-only")
                 assert draft["status"] == "source_only" and not draft["steps"], draft
                 assert client.tool("mobile_ui_map", action="list")["maps"][0]["mapId"] == map_id
-                print(f"PASS {len(by_title)} screens, {len(snapshot['transitions'])} transitions: {report / 'ui-maps' / map_id}")
+                print(f"PASS {len(snapshot['screens'])} states, {len(snapshot['transitions'])} transitions: {report / 'ui-maps' / map_id}")
             finally:
                 process.stdin.close()
                 try:

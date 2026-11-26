@@ -3,7 +3,7 @@
 use crate::{
     AppWindow, DesktopDisplay, ElementQuery, ImeAction, NativeVideoStream, Point, RobotDevice,
     RobotError, RunningApp, ScreenshotOptions, UiAction, UiElement, UiTarget, VideoStream,
-    WebContext, apply_element_query,
+    WebContext, WebViewport, apply_element_query,
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -269,6 +269,17 @@ pub trait Robot: Send + Sync {
         url: &str,
         app_id: Option<&str>,
     ) -> Result<(), RobotError>;
+
+    /// Open an entry URL in a fresh document, including for fragment-only navigation.
+    async fn reset_web_document(&self, device_id: &str, url: &str) -> Result<(), RobotError> {
+        self.open_url(device_id, url, None).await
+    }
+
+    async fn web_viewport(&self, _device_id: &str) -> Result<WebViewport, RobotError> {
+        Err(RobotError::Unsupported(
+            "Browser viewport metrics unavailable".into(),
+        ))
+    }
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError>;
     async fn clear_text(&self, device_id: &str) -> Result<(), RobotError> {
         Err(RobotError::Unsupported(format!(

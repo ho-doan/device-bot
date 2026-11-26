@@ -25,12 +25,17 @@
             bounds.right > 0 && bounds.bottom > 0 &&
             style.display !== 'none' && !['hidden', 'collapse'].includes(style.visibility);
     });
-    return rendered.slice(0, 500).map((element) => {
+    const modal = rendered.findLast(element => element.matches?.(
+        'dialog:modal, [role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"]'
+    ));
+    const visible = modal ? rendered.filter(element => modal.contains(element)) : rendered;
+    return visible.slice(0, 500).map((element) => {
             const bounds = element.getBoundingClientRect();
             const tag = element.tagName.toLowerCase();
             const type = (element.getAttribute('type') || '').toLowerCase();
             const role = (element.getAttribute('role') || '').toLowerCase();
             const menuItem = ['menuitem', 'menuitemcheckbox', 'menuitemradio'].includes(role);
+            const interactiveRole = ['button', 'link', 'checkbox', 'switch', 'radio'].includes(role);
             let elementType = '';
             if (role === 'checkbox' || type === 'checkbox') elementType = 'checkBox';
             else if (role === 'switch') elementType = 'switch';
@@ -41,18 +46,26 @@
             else if (tag === 'a' || role === 'link') elementType = 'link';
             else if (tag === 'img' || role === 'img') elementType = 'image';
             const selectable = type === 'checkbox' || type === 'radio' || role === 'checkbox' || role === 'radio' || role === 'switch';
+            const flutterId = element.getAttribute('flt-semantics-identifier') ||
+                (element.getAttribute('data-semantics-role') === 'text-field'
+                    ? element.parentElement?.getAttribute('flt-semantics-identifier') : null);
+            const ariaChecked = element.getAttribute('aria-checked');
+            const className = ['dialog', 'alertdialog'].includes(role) ? role :
+                role === 'heading' ? (element.getAttribute('aria-level') === '1' ? 'h1' : 'h2') : tag;
             return {
               elementRef: refs?.ref(element),
-              className: tag, resourceId: element.id || '',
+              className, resourceId: flutterId || element.id || '',
               text: (element.innerText || element.textContent || '').trim(),
               contentDescription: element.getAttribute('aria-label') || element.getAttribute('title') || '',
               value: typeof element.value === 'string' ? element.value : null,
               elementType,
               left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom,
-              clickable: typeof element.onclick === 'function' || role === 'button' || menuItem || ['a', 'button', 'input', 'select', 'textarea'].includes(tag),
+              clickable: typeof element.onclick === 'function' || interactiveRole || menuItem ||
+                  element.hasAttribute?.('flt-tappable') || ['a', 'button', 'input', 'select', 'textarea'].includes(tag),
               enabled: !element.disabled && element.getAttribute('aria-disabled') !== 'true',
               focused: document.activeElement === element,
-              checked: selectable ? !!element.checked : null,
+              checked: ariaChecked === 'true' ? true : ariaChecked === 'false' ? false :
+                  selectable && typeof element.checked === 'boolean' ? element.checked : null,
               selected: element.getAttribute('aria-selected') === 'true' ? true : (element.getAttribute('aria-selected') === 'false' ? false : null)
             };
         });

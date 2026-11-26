@@ -1,9 +1,9 @@
 //! Validate the complete compiled flow before executing any tool calls.
 
 use super::arguments::{
-    app_launch_call, gesture_arguments, number, pointer_gesture_arguments, query_arguments,
-    required, route_tool_arguments, string, swipe_arguments, swipe_element_arguments,
-    type_arguments,
+    SCROLL, VIEWPORT, app_launch_call, gesture_arguments, number, pointer_gesture_arguments,
+    query_arguments, required, route_tool_arguments, scroll_arguments, string, swipe_arguments,
+    swipe_element_arguments, type_arguments,
 };
 use super::{BATCH, FlowRunner, QUERY, SWIPE, TAP, TYPE};
 use crate::{
@@ -151,6 +151,15 @@ impl FlowRunner {
                         ));
                     }
                     if ["tap_element", "focus_field", "fill_field"].contains(&action.as_str()) {
+                        if s.scroll_into_view {
+                            if s.native_tap {
+                                return Err(
+                                    "scroll_into_view requires Chrome coordinate input".into()
+                                );
+                            }
+                            calls.push((VIEWPORT, d.clone()));
+                            calls.push((SCROLL, scroll_arguments("<selected>", 0., 0., 0., 0.)));
+                        }
                         calls.push(if s.native_tap {(BATCH,json!({"deviceId":"<selected>","actions":[{"type":"tap_element","filter":s.filter.as_ref().or(s.label.as_ref()).ok_or("native tap requires a filter or label")?}]}))}
                         else {(TAP,json!({"deviceId":"<selected>","x":0,"y":0}))});
                     }

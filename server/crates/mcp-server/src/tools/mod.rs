@@ -120,6 +120,7 @@ impl ToolRegistry {
                 input::press_ime_action(&self.robot, &params.arguments).await
             }
             screen::SCREENSHOT_NAME => screen::screenshot(&self.robot, &params.arguments).await,
+            screen::VIEWPORT_NAME => screen::viewport(&self.robot, &params.arguments).await,
             screen::DISPLAYS_NAME => screen::displays(&self.robot, &params.arguments).await,
             screen::TAP_NAME => screen::tap(&self.robot, &params.arguments).await,
             screen::SCROLL_NAME => screen::scroll(&self.robot, &params.arguments).await,

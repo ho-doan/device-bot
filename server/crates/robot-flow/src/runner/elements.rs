@@ -2,7 +2,8 @@
 use crate::outcome::{ErrorKind, FlowError};
 
 use super::arguments::{
-    gesture_arguments, query_arguments, rectangle, tap_arguments, type_arguments,
+    SCROLL, VIEWPORT, gesture_arguments, query_arguments, rectangle, scroll_arguments,
+    tap_arguments, type_arguments,
 };
 use super::artifacts::write;
 use super::{BATCH, ElementProbeReport, ElementProbeSample, FlowRunner, QUERY, SWIPE, TAP};
@@ -119,6 +120,8 @@ impl FlowRunner {
             let mut previous = Value::Null;
             let mut stable = 0;
             let mut attempts = 0;
+            let mut viewport = None;
+            let mut reveal_attempts = 0;
             loop {
                 let mut found = self.query(&s).await?;
                 if clickable {
@@ -148,6 +151,40 @@ impl FlowRunner {
                     let bounds = rectangle(e)?;
                     if (!enabled || e["enabled"] == true) && (!clickable || e["clickable"] == true)
                     {
+                        let root_document = e.pointer("/webContext/framePath")
+                            .and_then(Value::as_array).is_none_or(Vec::is_empty);
+                        if clickable && s.scroll_into_view && root_document {
+                            let device = self.device_id()?.to_owned();
+                            let (width, height) = match viewport {
+                                Some(size) => size,
+                                None => {
+                                    let result = self.call(VIEWPORT, json!({"deviceId":device})).await?;
+                                    let metric = |key| result["structuredContent"][key].as_f64()
+                                        .filter(|size| size.is_finite() && *size > 0.0)
+                                        .ok_or("invalid browser viewport dimensions");
+                                    let size = (metric("width")?, metric("height")?);
+                                    viewport = Some(size);
+                                    size
+                                }
+                            };
+                            let center_x = (bounds.0 + bounds.2) / 2.0;
+                            let center_y = (bounds.1 + bounds.3) / 2.0;
+                            let dx = reveal_delta(center_x, width);
+                            let dy = reveal_delta(center_y, height);
+                            if dx != 0.0 || dy != 0.0 {
+                                if reveal_attempts >= 6 {
+                                    return Err("control remained outside the browser viewport after scrolling".into());
+                                }
+                                reveal_attempts += 1;
+                                let scroll_x = center_x.clamp(width * 0.1, width * 0.9);
+                                let scroll_y = center_y.clamp(height * 0.1, height * 0.9);
+                                self.call(SCROLL, scroll_arguments(&device, scroll_x, scroll_y, dx, dy)).await?;
+                                stable = 0;
+                                previous = Value::Null;
+                                sleep(Duration::from_millis(160)).await;
+                                continue;
+                            }
+                        }
                         // Unselected resource IDs may be snapshot-local handles.
                         // Stability tracks the observed selector/geometry, not those
                         // handles. Explicitly selected IDs remain part of the match.
@@ -394,6 +431,15 @@ impl FlowRunner {
         )
         .await?;
         Ok(())
+    }
+}
+
+fn reveal_delta(center: f64, viewport: f64) -> f64 {
+    if (0.0..viewport).contains(&center) {
+        0.0
+    } else {
+        let limit = (viewport * 0.85).min(1_500.0);
+        (center - viewport / 2.0).clamp(-limit, limit)
     }
 }
 

@@ -43,7 +43,12 @@ fn node(label: &str, id: &str, x: i32, kind: ElementType) -> UiElement {
 #[async_trait]
 impl Robot for Fixture {
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
-        Ok(vec![])
+        Ok(vec![RobotDevice {
+            id: "chrome:fixture".into(),
+            name: "Fixture".into(),
+            platform: robot_core::Platform::Chrome,
+            state: robot_core::DeviceState::Available,
+        }])
     }
 
     async fn stream_context(&self, _: &str) -> Result<Value, RobotError> {
@@ -196,7 +201,7 @@ fn graph() -> UiMap {
 #[tokio::test(start_paused = true)]
 async fn maps_distinct_screens_and_restores_branch_with_test_input_only() {
     let dir = Temp::new();
-    let robot = Fixture::default();
+    let robot = std::sync::Arc::new(Fixture::default());
     let mut map = graph();
     let opt: Options = serde_json::from_value(json!({
         "deviceId":"chrome:fixture",
@@ -205,13 +210,14 @@ async fn maps_distinct_screens_and_restores_branch_with_test_input_only() {
         "settleMs":100
     }))
     .unwrap();
-    crawl::scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+    let driver: std::sync::Arc<dyn Robot> = robot.clone();
+    crawl::scan(&driver, &opt, &AtomicBool::new(false), &mut map, &dir.0)
         .await
         .unwrap();
     let state = robot.0.lock().unwrap();
     assert!(state.entered || state.taps.contains(&"editor".to_owned()));
     assert!(state.resets > 0);
-    assert_eq!(map.screens.len(), 3);
+    assert_eq!(map.screens.len(), 4);
     let root = &map.screens[0];
     assert!(root.screenshot && dir.0.join("s1.png").exists());
     assert_eq!(
@@ -228,7 +234,25 @@ async fn maps_distinct_screens_and_restores_branch_with_test_input_only() {
             .find(|c| c.label == "Search")
             .unwrap()
             .status,
-        "no_change"
+        "observed"
+    );
+    let input = root.controls.iter().find(|c| c.label == "Search").unwrap();
+    let evidence = input.evidence.as_ref().unwrap();
+    let yaml = std::fs::read_to_string(dir.0.join(&evidence.yaml)).unwrap();
+    assert!(!yaml.contains("synthetic-QC-value"));
+    assert!(yaml.contains("DEVICE_BOT_MAP_INPUT"));
+    assert!(dir.0.join(evidence.screenshot.as_ref().unwrap()).is_file());
+    let same = map
+        .screens
+        .iter()
+        .flat_map(|screen| &screen.controls)
+        .find(|control| control.label == "Same state")
+        .unwrap();
+    assert_eq!(same.status, "no_change");
+    assert!(
+        dir.0
+            .join(same.evidence.as_ref().unwrap().screenshot.as_ref().unwrap())
+            .is_file()
     );
     assert_eq!(
         route_result(&map, "s1", "right").unwrap()["steps"][0]["label"],
@@ -266,9 +290,11 @@ async fn never_inspects_or_records_a_tab_outside_starting_origin() {
         "deviceId":"chrome:fixture","allowedTaps":["external"],"settleMs":100,
     }))
     .unwrap();
-    let result = crawl::scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0).await;
+    let driver: std::sync::Arc<dyn Robot> = std::sync::Arc::new(robot);
+    let result = crawl::scan(&driver, &opt, &AtomicBool::new(false), &mut map, &dir.0).await;
     assert!(result.unwrap_err().contains("left the starting origin"));
     assert_eq!(map.screens.len(), 1);
+    assert!(!dir.0.join("actions/s1-c5/result.png").exists());
 }
 
 #[test]

@@ -87,3 +87,18 @@ pub struct Bounds {
     pub right: i32,
     pub bottom: i32,
 }
+/// Visible and document sizes in browser CSS pixels.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebViewport {
+    pub width: f64,
+    pub height: f64,
+    pub content_width: f64,
+    pub content_height: f64,
+}
+
+impl WebViewport {
+    pub fn contains(&self, point: Point) -> bool {
+        (0.0..self.width).contains(&point.x) && (0.0..self.height).contains(&point.y)
+    }
+}

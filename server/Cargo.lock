@@ -596,6 +596,7 @@ dependencies = [
  "robot-windows",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tokio",
  "tower",
  "url",

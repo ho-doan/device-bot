@@ -21,7 +21,7 @@ pub mod video;
 pub use capabilities::{Capabilities, Capability, CapabilityReport, CapabilityStatus};
 pub use device::{
     AppWindow, Bounds, DesktopDisplay, DeviceState, Platform, Point, RobotDevice, RunningApp,
-    ScreenshotOptions, UiTarget,
+    ScreenshotOptions, UiTarget, WebViewport,
 };
 pub use elements::{
     ElementQuery, ElementType, UiElement, apply_element_query, classify_class_name,

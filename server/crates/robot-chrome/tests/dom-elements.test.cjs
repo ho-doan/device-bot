@@ -48,6 +48,21 @@ test('empty fields have an empty value; non-fields have no value', async () => {
   assert.equal((await snapshot('div')).value, null);
 });
 
+test('Flutter editors keep their semantic identifier when focus assigns a DOM id', async () => {
+  const parentElement = { getAttribute: name => name === 'flt-semantics-identifier' ? 'email-field' : null };
+  for (const id of ['', 'username']) {
+    const editor = await snapshot('input', { 'data-semantics-role': 'text-field' }, { id, parentElement });
+    assert.equal(editor.resourceId, 'email-field');
+  }
+});
+
+test('ARIA checkbox state is observable without a native checked property', async () => {
+  const checked = await snapshot('flt-semantics', { role: 'checkbox', 'aria-checked': 'true' });
+  assert.equal(checked.elementType, 'checkBox');
+  assert.equal(checked.clickable, true);
+  assert.equal(checked.checked, true);
+});
+
 test('query enables Flutter accessibility and waits for fields; a later query does not click again', async () => {
   let ready = false, clicks = 0;
   const input = {

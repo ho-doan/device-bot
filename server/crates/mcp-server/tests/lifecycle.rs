@@ -154,6 +154,7 @@ async fn initialization_and_tools_list_follow_the_lifecycle() {
         "project_cancel",
         "mobile_web_test_proxy",
         "mobile_ui_map",
+        "mobile_get_viewport",
     ] {
         assert!(advertised.iter().any(|tool| tool["name"] == name), "{name}");
     }

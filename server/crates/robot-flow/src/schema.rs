@@ -74,6 +74,8 @@ pub struct Selector {
     #[serde(default)]
     pub require_focus: bool,
     #[serde(default)]
+    pub scroll_into_view: bool,
+    #[serde(default)]
     pub max_results: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_context: Option<FlowWebContext>,
@@ -842,7 +844,7 @@ fn expand(
 }
 
 fn validate_action_keys(action: &str, args: &Value) -> Result<()> {
-    let selector = "target filter label labels element_type resource_id prefer_resource_id class_contains row_with exclude_row_with allow_missing_row_anchor largest native_tap stable_samples replace_recipe verify_recipe require_focus max_results timeout_ms position source web_context";
+    let selector = "target filter label labels element_type resource_id prefer_resource_id class_contains row_with exclude_row_with allow_missing_row_anchor largest native_tap stable_samples replace_recipe verify_recipe require_focus scroll_into_view max_results timeout_ms position source web_context";
     let extra = match action {
         "run" => "recipe with",
         "if_element" => "target then else",

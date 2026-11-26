@@ -1,6 +1,7 @@
 //! MCP entry point, job lifecycle, and artifact persistence for UI maps.
 mod crawl;
 mod model;
+mod replay;
 
 #[cfg(test)]
 mod tests;
@@ -77,20 +78,23 @@ pub(super) fn definition() -> ToolDefinition {
     ToolDefinition {
         name: NAME.into(),
         title: Some("Explore UI screens and find navigation routes".into()),
-        description: "Create a bounded UI map from the app or Chrome tab already open. Start returns mapId; poll status, list saved maps, request a screenshot, or find an observed route between screen IDs. An inventory-only scan is the default. Pass exact allowedTaps, synthetic inputs keyed by label/resource ID, or allButtons for an isolated test target. Sensitive controls are skipped; Web stays on the initial origin. add_source_routes stores separately marked candidate, entry_unknown, or unsupported routes found from an authorized checkout, without treating them as observed.".into(),
+        description: "Create a bounded UI map from the app or Chrome tab already open. Start returns mapId; poll status, list saved maps, request a screenshot, find a route, or retrieve action evidence with its generated YAML. Pass exact allowedTaps, synthetic inputs, or allButtons for an isolated target. Use exact fixtureControls only for sensitive controls on a disposable fixture. Web stays on the initial origin. add_source_routes stores source findings separately from observed routes.".into(),
         input_schema: json!({
             "type":"object",
             "properties":{
-                "action":{"enum":["start","status","stop","list","route","screenshot","add_source_routes"]},
+                "action":{"enum":["start","status","stop","list","route","screenshot","action_evidence","add_source_routes"]},
                 "deviceId":{"type":"string","minLength":1,"maxLength":270},
                 "mapId":{"type":"string","format":"uuid"},
                 "screenId":{"type":"string","pattern":"^s[0-9]+$"},
+                "controlId":{"type":"string","pattern":"^c[0-9]+$"},
                 "from":{"type":"string","pattern":"^s[0-9]+$"},
                 "to":{"type":"string","description":"Screen ID, exact screen title, or exact source route"},
                 "allButtons":{"type":"boolean"},
                 "allowedTaps":{"type":"array","maxItems":150,"items":{"type":"string"}},
+                "fixtureControls":{"type":"array","maxItems":30,"items":{"type":"string"}},
                 "inputs":{"type":"object","maxProperties":30,"additionalProperties":{"type":"string"}},
                 "backControl":{"type":"string"},
+                "resetAppId":{"type":"string","description":"Relaunch this exact foreground mobile fixture to restore the entry screen"},
                 "maxScreens":{"type":"integer","minimum":1,"maximum":crawl::MAX_SCREENS},
                 "maxActions":{"type":"integer","minimum":1,"maximum":crawl::MAX_ACTIONS},
                 "maxDepth":{"type":"integer","minimum":1,"maximum":crawl::MAX_DEPTH},
@@ -190,19 +194,45 @@ impl Jobs {
                 {
                     return Err("No screenshot was captured for this screen.".into());
                 }
-                let path = dir.join(format!("{id}.png"));
-                if tokio::fs::metadata(&path)
-                    .await
-                    .map_err(|_| "UI map screenshot is missing.")?
-                    .len()
-                    > MAX_IMAGE_BYTES as u64
+                let png = read_image(&dir.join(format!("{id}.png"))).await?;
+                Ok(json!({"screenId":id,"mimeType":"image/png","base64":png}))
+            }
+            "action_evidence" => {
+                let screen_id = required(args, "screenId")?;
+                let control_id = required(args, "controlId")?;
+                let evidence = map
+                    .screens
+                    .iter()
+                    .find(|screen| screen.id == screen_id)
+                    .and_then(|screen| {
+                        screen
+                            .controls
+                            .iter()
+                            .find(|control| control.id == control_id)
+                    })
+                    .and_then(|control| control.evidence.as_ref())
+                    .ok_or("No action evidence was captured for this control.")?;
+                if !is_screen_id(screen_id)
+                    || !control_id.strip_prefix('c').is_some_and(|id| {
+                        !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit())
+                    })
                 {
-                    return Err("UI map screenshot exceeds the size limit.".into());
+                    return Err("Invalid screen or control ID.".into());
                 }
-                let png = tokio::fs::read(path)
+                let action_dir = dir
+                    .join("actions")
+                    .join(format!("{screen_id}-{control_id}"));
+                let yaml = tokio::fs::read_to_string(action_dir.join("scenario.yaml"))
                     .await
-                    .map_err(|_| "UI map screenshot is missing.")?;
-                Ok(json!({"screenId":id,"mimeType":"image/png","base64":STANDARD.encode(png)}))
+                    .map_err(|_| "UI map action YAML is missing.")?;
+                let screenshot = if evidence.screenshot.is_some() {
+                    Some(read_image(&action_dir.join("result.png")).await?)
+                } else {
+                    None
+                };
+                Ok(
+                    json!({"screenId":screen_id,"controlId":control_id,"yaml":yaml,"mimeType":"image/png","base64":screenshot}),
+                )
             }
             _ => Err("Unknown UI map action.".into()),
         }
@@ -233,16 +263,15 @@ impl Jobs {
             let _lease = lease;
             let outcome = tokio::time::timeout(
                 Duration::from_secs(options.time_seconds() + 30),
-                crawl::scan(&*robot, &options, &cancel, &mut map, &dir),
+                crawl::scan(&robot, &options, &cancel, &mut map, &dir),
             )
             .await;
             match outcome {
                 Ok(Ok(())) => {
-                    let untested = map
-                        .screens
-                        .iter()
-                        .flat_map(|s| &s.controls)
-                        .any(|c| matches!(c.status.as_str(), "pending" | "skipped" | "failed"));
+                    let untested = map.screens.iter().flat_map(|s| &s.controls).any(|c| {
+                        matches!(c.status.as_str(), "pending" | "failed")
+                            || c.status == "skipped" && c.note.as_deref() != Some("Disabled")
+                    });
                     map.status = if untested || map.notes.len() > 1 {
                         "partial"
                     } else {
@@ -293,6 +322,21 @@ impl Jobs {
             }
         }
     }
+}
+
+async fn read_image(path: &Path) -> Result<String, String> {
+    if tokio::fs::metadata(path)
+        .await
+        .map_err(|_| "UI map screenshot is missing.")?
+        .len()
+        > MAX_IMAGE_BYTES as u64
+    {
+        return Err("UI map screenshot exceeds the size limit.".into());
+    }
+    let png = tokio::fs::read(path)
+        .await
+        .map_err(|_| "UI map screenshot is missing.")?;
+    Ok(STANDARD.encode(png))
 }
 
 fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {

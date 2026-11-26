@@ -6,6 +6,13 @@ use crate::{
 };
 use serde_json::{Value, json};
 
+pub(super) const VIEWPORT: &str = "mobile_get_viewport";
+pub(super) const SCROLL: &str = "mobile_scroll";
+
+pub(super) fn scroll_arguments(device: &str, x: f64, y: f64, dx: f64, dy: f64) -> Value {
+    json!({"deviceId":device,"x":x,"y":y,"deltaX":dx,"deltaY":dy})
+}
+
 pub(super) fn query_arguments(s: &Selector, device: &str) -> Value {
     // The runner owns step/case deadlines and the transport owns its RPC deadline.
     // A separate fixed query limit would cut explicitly longer YAML waits short.

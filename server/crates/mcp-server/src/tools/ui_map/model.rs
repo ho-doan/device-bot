@@ -24,6 +24,8 @@ pub struct Screen {
     pub title: String,
     pub location: Option<String>,
     pub screenshot: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewport: Option<robot_core::WebViewport>,
     pub controls: Vec<Control>,
 }
 
@@ -36,6 +38,18 @@ pub struct Control {
     pub kind: String,
     pub status: String,
     pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<ActionEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initially_offscreen: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionEvidence {
+    pub yaml: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screenshot: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

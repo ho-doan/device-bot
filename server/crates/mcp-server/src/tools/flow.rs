@@ -26,8 +26,18 @@ pub(super) fn definition() -> ToolDefinition {
     }
 }
 
-struct CaseMcp {
+pub(super) struct CaseMcp {
     server: Server,
+    close_session: bool,
+}
+
+impl CaseMcp {
+    pub(super) fn for_existing_session(robot: Arc<dyn Robot>) -> Self {
+        Self {
+            server: Server::new(robot),
+            close_session: false,
+        }
+    }
 }
 
 #[async_trait]
@@ -68,10 +78,14 @@ impl Mcp for CaseMcp {
     }
 
     async fn close(&mut self) -> Result<()> {
-        self.server
-            .shutdown()
-            .await
-            .map_err(|e| e.to_string().into())
+        if self.close_session {
+            self.server
+                .shutdown()
+                .await
+                .map_err(|e| e.to_string().into())
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -105,6 +119,7 @@ pub(super) async fn run(robot: &Arc<dyn Robot>, args: &Value) -> ToolResult {
     let case = robot.fork_session().unwrap_or_else(|| Arc::clone(robot));
     let client = CaseMcp {
         server: Server::new(case),
+        close_session: true,
     };
     let mut runner = FlowRunner::new(Some(Box::new(client)), directory.clone());
     let report = runner

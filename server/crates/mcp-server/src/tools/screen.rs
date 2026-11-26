@@ -13,8 +13,16 @@ pub(super) const TAP_NAME: &str = "mobile_click_on_screen_at_coordinates";
 pub(super) const SCROLL_NAME: &str = "mobile_scroll";
 pub(super) const SWIPE_NAME: &str = "mobile_swipe_on_screen";
 
-pub(super) fn definitions() -> [ToolDefinition; 5] {
+pub(super) const VIEWPORT_NAME: &str = "mobile_get_viewport";
+
+pub(super) fn definitions() -> [ToolDefinition; 6] {
     [
+        ToolDefinition {
+            name: VIEWPORT_NAME.into(),
+            title: Some("Measure the browser viewport".into()),
+            description: "Report the visible viewport and content dimensions in Chrome CSS pixels.".into(),
+            input_schema: device_id_schema(),
+        },
         ToolDefinition { name:SCROLL_NAME.into(),title:Some("Scroll by pixels".into()),
             description:"Scroll at a viewport point by deltaX/deltaY pixels. Chrome uses wheel input; Android uses the equivalent touch displacement.".into(),
             input_schema:json!({"type":"object","properties":{"deviceId":{"type":"string","minLength":1},"x":{"type":"number"},"y":{"type":"number"},"deltaX":{"type":"number","minimum":-10000,"maximum":10000},"deltaY":{"type":"number","minimum":-10000,"maximum":10000},"webContext":{"type":"object"}},"required":["deviceId","x","y","deltaX","deltaY"],"additionalProperties":false}) },
@@ -73,6 +81,17 @@ pub(super) fn definitions() -> [ToolDefinition; 5] {
             }),
         },
     ]
+}
+
+pub(super) async fn viewport(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResult {
+    let id = match required_string(arguments, "deviceId") {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match robot.web_viewport(&id).await {
+        Ok(viewport) => ToolResult::structured(json!(viewport)),
+        Err(error) => ToolResult::execution_error(error.to_string()),
+    }
 }
 
 pub(super) async fn screenshot(robot: &Arc<dyn Robot>, arguments: &Value) -> ToolResult {

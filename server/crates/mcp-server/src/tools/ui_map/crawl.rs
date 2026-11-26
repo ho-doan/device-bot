@@ -3,7 +3,10 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     hash::{Hash, Hasher},
     path::Path,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -14,7 +17,7 @@ use serde::Deserialize;
 use tokio::time::Instant;
 use url::Url;
 
-use super::{Control, Screen, Transition, UiMap, save_map};
+use super::{Control, Screen, Transition, UiMap, replay, save_map};
 
 pub(super) const MAX_SCREENS: usize = 250;
 pub(super) const MAX_ACTIONS: usize = 600;
@@ -30,8 +33,11 @@ pub struct Options {
     #[serde(default)]
     pub allowed_taps: Vec<String>,
     #[serde(default)]
+    pub fixture_controls: Vec<String>,
+    #[serde(default)]
     pub inputs: BTreeMap<String, String>,
     pub back_control: Option<String>,
+    pub reset_app_id: Option<String>,
     pub max_screens: Option<usize>,
     pub max_actions: Option<usize>,
     pub max_depth: Option<usize>,
@@ -46,11 +52,19 @@ impl Options {
             || self.device_id.len() > 270
             || self.allowed_taps.len() > 150
             || !self.allowed_taps.iter().all(|s| key_ok(s))
+            || self.fixture_controls.len() > 30
+            || !self.fixture_controls.iter().all(|s| key_ok(s))
             || self.inputs.len() > 30
             || self.inputs.iter().any(|(k, v)| {
                 !key_ok(k) || v.is_empty() || v.len() > 300 || v.chars().any(char::is_control)
             })
             || self.back_control.as_ref().is_some_and(|s| !key_ok(s))
+            || self.reset_app_id.as_ref().is_some_and(|id| {
+                !key_ok(id)
+                    || !id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+            })
             || !(1..=MAX_SCREENS).contains(&self.screens())
             || !(1..=MAX_ACTIONS).contains(&self.actions())
             || !(1..=MAX_DEPTH).contains(&self.depth())
@@ -97,21 +111,91 @@ struct Observation {
     root_only: bool,
 }
 
+impl LiveControl {
+    fn center(&self) -> Point {
+        let bounds = &self.element.bounds;
+        Point {
+            x: (f64::from(bounds.left) + f64::from(bounds.right)) / 2.0,
+            y: (f64::from(bounds.top) + f64::from(bounds.bottom)) / 2.0,
+        }
+    }
+
+    fn replay_action<'a>(
+        &'a self,
+        options: &'a Options,
+        initially_offscreen: Option<bool>,
+    ) -> replay::Action<'a> {
+        let input = if self.action == Some("input") {
+            self.lookup
+                .iter()
+                .find_map(|key| options.inputs.get(key))
+                .map(String::as_str)
+        } else {
+            None
+        };
+        replay::Action {
+            element: &self.element,
+            label: &self.control.label,
+            resource_id: self.control.resource_id.as_deref(),
+            input,
+            initially_offscreen,
+        }
+    }
+}
+
 struct PathStep {
     key: String,
     action: &'static str,
     before: u64,
     after: u64,
+    initially_offscreen: Option<bool>,
 }
 
-enum Scope {
+#[derive(Clone)]
+pub(super) enum Scope {
     Web { start: Url },
-    Android { app: String },
+    Mobile { app: String, platform: Platform },
     Native,
 }
 
+impl Scope {
+    pub(super) async fn location(
+        &self,
+        robot: &dyn Robot,
+        device: &str,
+    ) -> Result<Option<String>, String> {
+        match self {
+            Self::Native => Ok(None),
+            Self::Mobile { app, platform } => {
+                let context = robot
+                    .stream_context(device)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if context["appId"].as_str() != Some(app) {
+                    return Err(format!(
+                        "Scan stopped because the foreground {platform:?} app changed."
+                    ));
+                }
+                Ok(Some(app.clone()))
+            }
+            Self::Web { start } => {
+                let ctx = robot
+                    .stream_context(device)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let here = parse_web(ctx["url"].as_str().unwrap_or_default())?;
+                if here.origin() != start.origin() {
+                    return Err("Scan stopped because the tab left the starting origin.".into());
+                }
+                Ok(Some(web_location(&here)))
+            }
+        }
+    }
+}
+
 struct Engine<'a> {
-    robot: &'a dyn Robot,
+    robot: &'a Arc<dyn Robot>,
+    dir: &'a Path,
     options: &'a Options,
     scope: Scope,
     stop: &'a AtomicBool,
@@ -132,32 +216,9 @@ impl Engine<'_> {
 
     async fn context(&self) -> Result<Option<String>, String> {
         self.check()?;
-        match &self.scope {
-            Scope::Native => Ok(None),
-            Scope::Android { app } => {
-                let context = self
-                    .robot
-                    .stream_context(&self.options.device_id)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if context["appId"].as_str() != Some(app) {
-                    return Err("Scan stopped because the foreground Android app changed.".into());
-                }
-                Ok(Some(app.clone()))
-            }
-            Scope::Web { start } => {
-                let ctx = self
-                    .robot
-                    .stream_context(&self.options.device_id)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let here = parse_web(ctx["url"].as_str().unwrap_or_default())?;
-                if here.origin() != start.origin() {
-                    return Err("Scan stopped because the tab left the starting origin.".into());
-                }
-                Ok(Some(web_location(&here)))
-            }
-        }
+        self.scope
+            .location(&**self.robot, &self.options.device_id)
+            .await
     }
 
     async fn observe(&self) -> Result<Observation, String> {
@@ -194,6 +255,12 @@ impl Engine<'_> {
                 )
             })
             .and_then(|e| candidate(&e.content_description).or_else(|| candidate(&e.text)));
+        let mut dialogs: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e.class_name.as_str(), "dialog" | "alertdialog"))
+            .map(|e| candidate(&e.content_description).or_else(|| candidate(&e.text)))
+            .collect();
+        dialogs.sort_unstable();
         let mut controls: Vec<_> = elements
             .iter()
             .filter_map(|e| live_control(e, self.options))
@@ -230,9 +297,17 @@ impl Engine<'_> {
             .map(|c| {
                 (
                     &c.key,
+                    (c.control.kind != "input").then_some(&c.control.label),
                     c.element.enabled,
                     c.element.selected,
                     c.element.checked,
+                    c.control.kind == "input"
+                        && c.lookup.iter().any(|key| {
+                            self.options.inputs.get(key).is_some_and(|expected| {
+                                c.element.value.as_ref().or(c.element.text.as_ref())
+                                    == Some(expected)
+                            })
+                        }),
                 )
             })
             .collect();
@@ -241,6 +316,7 @@ impl Engine<'_> {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         location.hash(&mut hasher);
         title.hash(&mut hasher);
+        dialogs.hash(&mut hasher);
         identities.hash(&mut hasher);
         let fingerprint = hasher.finish();
         controls.truncate(160);
@@ -281,13 +357,8 @@ impl Engine<'_> {
         self.check()?;
         self.input_budget -= 1;
         let device = &self.options.device_id;
-        let b = &row.element.bounds;
-        let point = Point {
-            x: (f64::from(b.left) + f64::from(b.right)) / 2.,
-            y: (f64::from(b.top) + f64::from(b.bottom)) / 2.,
-        };
         self.robot
-            .tap_in_context(device, point, row.element.web_context.as_ref())
+            .tap_in_context(device, row.center(), row.element.web_context.as_ref())
             .await
             .map_err(|_| "Driver could not tap the inspected control.".to_string())?;
         if action == "input" {
@@ -334,10 +405,32 @@ impl Engine<'_> {
             };
             self.check()?;
             self.input_budget -= 1;
-            self.robot
-                .open_url(&self.options.device_id, start.as_str(), None)
+            let device = &self.options.device_id;
+            if self
+                .robot
+                .reset_web_document(device, start.as_str())
                 .await
-                .map_err(|_| "Could not reopen the entry URL.".to_owned())?;
+                .is_err()
+            {
+                self.context().await?;
+                self.robot
+                    .reset_web_document(device, start.as_str())
+                    .await
+                    .map_err(|error| format!("Could not reset the entry document: {error}"))?;
+            }
+            here = self.settled().await?;
+        } else if let Some(app) = &self.options.reset_app_id {
+            self.check()?;
+            self.input_budget -= 1;
+            let device = &self.options.device_id;
+            self.robot
+                .terminate_app(device, app)
+                .await
+                .map_err(|error| format!("Could not stop the fixture app: {error}"))?;
+            self.robot
+                .launch_app(device, app)
+                .await
+                .map_err(|error| format!("Could not relaunch the fixture app: {error}"))?;
             here = self.settled().await?;
         } else {
             let mut visited = HashSet::new();
@@ -392,7 +485,21 @@ impl Engine<'_> {
                 .iter()
                 .find(|c| c.key == step.key && c.action == Some(step.action))
                 .ok_or("A control on the recorded route is no longer uniquely available.")?;
-            self.perform(row, step.action).await?;
+            if step.initially_offscreen == Some(true) {
+                self.check()?;
+                self.input_budget -= 1;
+                replay::restore(
+                    self.robot,
+                    &self.scope,
+                    &self.options.device_id,
+                    self.dir,
+                    row.replay_action(self.options, step.initially_offscreen),
+                    self.options.delay(),
+                )
+                .await?;
+            } else {
+                self.perform(row, step.action).await?;
+            }
             here = self.settled().await?;
             if here.fingerprint != step.after {
                 return Err("The recorded route no longer reproduces the observed screen.".into());
@@ -428,7 +535,8 @@ fn live_control(element: &UiElement, opt: &Options) -> Option<LiveControl> {
     if b.right <= b.left || b.bottom <= b.top {
         return None;
     }
-    let resource_id = candidate(&element.resource_id);
+    let resource_id =
+        candidate(&element.resource_id).filter(|id| !id.starts_with("flt-semantic-node-"));
     // The text of a native editor may be its value. Never use it as a label.
     let exposed_label = candidate(&element.content_description).or_else(|| {
         (kind != "input")
@@ -460,6 +568,8 @@ fn live_control(element: &UiElement, opt: &Options) -> Option<LiveControl> {
             kind: kind.into(),
             status: "skipped".into(),
             note: None,
+            evidence: None,
+            initially_offscreen: None,
         },
         key,
         lookup,
@@ -470,7 +580,12 @@ fn live_control(element: &UiElement, opt: &Options) -> Option<LiveControl> {
         "Disabled"
     } else if row.lookup.is_empty() {
         "No stable label or resource ID"
-    } else if blocked(&row) {
+    } else if blocked(&row)
+        && !row
+            .lookup
+            .iter()
+            .any(|key| opt.fixture_controls.contains(key))
+    {
         "Sensitive or state-changing control"
     } else if kind == "input" {
         if row.lookup.iter().any(|key| opt.inputs.contains_key(key)) {
@@ -480,7 +595,11 @@ fn live_control(element: &UiElement, opt: &Options) -> Option<LiveControl> {
             "No synthetic input configured"
         }
     } else if element.clickable
-        && (opt.all_buttons || row.lookup.iter().any(|key| opt.allowed_taps.contains(key)))
+        && (opt.all_buttons
+            || row
+                .lookup
+                .iter()
+                .any(|key| opt.allowed_taps.contains(key) || opt.fixture_controls.contains(key)))
     {
         row.action = Some("tap");
         ""
@@ -554,6 +673,11 @@ fn web_location(url: &Url) -> String {
 async fn classify_scope(robot: &dyn Robot, opt: &Options) -> Result<Scope, String> {
     let device = &opt.device_id;
     if device.starts_with("chrome:") {
+        if opt.reset_app_id.is_some() {
+            return Err(
+                "Chrome restores the entry URL. resetAppId is only for mobile fixtures.".into(),
+            );
+        }
         let context = robot
             .stream_context(device)
             .await
@@ -566,6 +690,9 @@ async fn classify_scope(robot: &dyn Robot, opt: &Options) -> Result<Scope, Strin
         .iter()
         .any(|prefix| device.starts_with(prefix))
     {
+        if opt.reset_app_id.is_some() {
+            return Err("resetAppId is only for mobile fixtures.".into());
+        }
         if device.split(':').count() != 3 {
             return Err("Select a desktop process and window before collecting a map.".into());
         }
@@ -576,17 +703,28 @@ async fn classify_scope(robot: &dyn Robot, opt: &Options) -> Result<Scope, Strin
         .iter()
         .find(|d| d.id == *device && d.state == DeviceState::Available)
         .ok_or("Selected device is unavailable.")?;
-    match target.platform {
-        Platform::Android => {
+    match &target.platform {
+        platform @ (Platform::Android | Platform::Ios)
+            if *platform == Platform::Android || opt.reset_app_id.is_some() =>
+        {
             let context = robot
                 .stream_context(device)
                 .await
                 .map_err(|e| e.to_string())?;
             let app = context["appId"]
                 .as_str()
-                .ok_or("Open the Android app before mapping.")?;
-            Ok(Scope::Android {
+                .filter(|app| !app.is_empty())
+                .ok_or("Open the mobile app before mapping.")?;
+            if opt
+                .reset_app_id
+                .as_deref()
+                .is_some_and(|reset| reset != app)
+            {
+                return Err("resetAppId must match the currently open app.".into());
+            }
+            Ok(Scope::Mobile {
                 app: app.to_owned(),
+                platform: platform.clone(),
             })
         }
         Platform::Ios => Ok(Scope::Native),
@@ -594,8 +732,34 @@ async fn classify_scope(robot: &dyn Robot, opt: &Options) -> Result<Scope, Strin
     }
 }
 
-async fn record(engine: &Engine<'_>, map: &mut UiMap, dir: &Path, obs: &Observation) -> String {
+async fn record(engine: &Engine<'_>, map: &mut UiMap, dir: &Path, obs: &mut Observation) -> String {
     let id = format!("s{}", map.screens.len() + 1);
+    let viewport = if matches!(engine.scope, Scope::Web { .. }) {
+        engine
+            .robot
+            .web_viewport(&engine.options.device_id)
+            .await
+            .ok()
+            .map(|mut viewport| {
+                for row in obs.controls.iter_mut().filter(|row| {
+                    row.element
+                        .web_context
+                        .as_ref()
+                        .is_none_or(|ctx| ctx.frame_path.is_empty())
+                }) {
+                    row.control.initially_offscreen = Some(!viewport.contains(row.center()));
+                    viewport.content_width = viewport
+                        .content_width
+                        .max(f64::from(row.element.bounds.right));
+                    viewport.content_height = viewport
+                        .content_height
+                        .max(f64::from(row.element.bounds.bottom));
+                }
+                viewport
+            })
+    } else {
+        None
+    };
     let screenshot = match tokio::time::timeout(
         Duration::from_secs(10),
         engine.robot.take_screenshot(&engine.options.device_id),
@@ -629,6 +793,7 @@ async fn record(engine: &Engine<'_>, map: &mut UiMap, dir: &Path, obs: &Observat
         title: obs.title.clone(),
         location: obs.location.clone(),
         screenshot,
+        viewport,
         controls: obs.controls.iter().map(|c| c.control.clone()).collect(),
     });
     id
@@ -647,23 +812,24 @@ fn mark(map: &mut UiMap, screen: &str, control: &str, status: &str, note: Option
 }
 
 pub(super) async fn scan(
-    robot: &dyn Robot,
+    robot: &Arc<dyn Robot>,
     opt: &Options,
     stop: &AtomicBool,
     map: &mut UiMap,
     dir: &Path,
 ) -> Result<(), String> {
-    let scope = classify_scope(robot, opt).await?;
+    let scope = classify_scope(&**robot, opt).await?;
     let mut engine = Engine {
         robot,
+        dir,
         options: opt,
         scope,
         stop,
         deadline: Instant::now() + Duration::from_secs(opt.time_seconds()),
-        input_budget: opt.actions() * 8 + 20,
+        input_budget: opt.actions() * (opt.depth() + 2) + 20,
     };
-    let root = engine.settled().await?;
-    let root_id = record(&engine, map, dir, &root).await;
+    let mut root = engine.settled().await?;
+    let root_id = record(&engine, map, dir, &mut root).await;
     let mut seen = HashMap::from([(root.fingerprint, root_id.clone())]);
     let mut queue = VecDeque::from([(
         root.fingerprint,
@@ -708,12 +874,33 @@ pub(super) async fn scan(
                 continue;
             };
             map.attempted += 1;
-            if let Err(err) = engine.perform(row, action).await {
+            engine.input_budget -= 1;
+            let name = format!("{from}-{}", original.control.id);
+            let (evidence, error) = replay::run(
+                robot,
+                &engine.scope,
+                &opt.device_id,
+                dir,
+                &name,
+                row.replay_action(opt, original.control.initially_offscreen),
+                opt.delay(),
+            )
+            .await?;
+            if let Some(control) = map
+                .screens
+                .iter_mut()
+                .find(|s| s.id == from)
+                .and_then(|s| s.controls.iter_mut().find(|c| c.id == original.control.id))
+            {
+                control.evidence = Some(evidence);
+            }
+            if let Some(err) = error {
                 mark(map, &from, &original.control.id, "failed", Some(err));
                 save_map(dir, map).await?;
+                engine.context().await?;
                 continue;
             }
-            let next = match engine.settled().await {
+            let mut next = match engine.settled().await {
                 Ok(next) => next,
                 Err(error) => {
                     mark(
@@ -738,7 +925,7 @@ pub(super) async fn scan(
                 let to = if let Some(to) = seen.get(&next.fingerprint) {
                     to.clone()
                 } else if map.screens.len() < opt.screens() {
-                    let to = record(&engine, map, dir, &next).await;
+                    let to = record(&engine, map, dir, &mut next).await;
                     seen.insert(next.fingerprint, to.clone());
                     let mut child_path = path.clone();
                     child_path.push(std::sync::Arc::new(PathStep {
@@ -746,6 +933,7 @@ pub(super) async fn scan(
                         action,
                         before: fingerprint,
                         after: next.fingerprint,
+                        initially_offscreen: original.control.initially_offscreen,
                     }));
                     queue.push_back((next.fingerprint, to.clone(), child_path, next.controls));
                     to

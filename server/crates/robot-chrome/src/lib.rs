@@ -1521,6 +1521,49 @@ impl Robot for ChromeRobot {
             .map(|_| ())
     }
 
+    async fn reset_web_document(&self, device_id: &str, url: &str) -> Result<(), RobotError> {
+        let target = self.page(device_id).await?;
+        let navigation = self
+            .cdp(&target, "Page.navigate", json!({"url":url}))
+            .await?;
+        if let Some(error) = navigation["errorText"].as_str() {
+            return Err(RobotError::CommandFailed(format!(
+                "Could not navigate to entry: {error}"
+            )));
+        }
+        if !navigation["loaderId"].is_string() {
+            // Chromium keeps the current JS realm for same-document hash changes.
+            self.cdp(&target, "Page.reload", json!({})).await?;
+        }
+        Ok(())
+    }
+
+    async fn web_viewport(&self, device_id: &str) -> Result<robot_core::WebViewport, RobotError> {
+        let target = self.page(device_id).await?;
+        let metrics = self
+            .cdp(&target, "Page.getLayoutMetrics", json!({}))
+            .await?;
+        let dimension = |field: &str| {
+            metrics
+                .pointer(field)
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .ok_or_else(|| {
+                    RobotError::CommandFailed(format!(
+                        "Chrome did not expose viewport metric {field}"
+                    ))
+                })
+        };
+        let width = dimension("/cssVisualViewport/clientWidth")?;
+        let height = dimension("/cssVisualViewport/clientHeight")?;
+        Ok(robot_core::WebViewport {
+            width,
+            height,
+            content_width: dimension("/cssContentSize/width")?.max(width),
+            content_height: dimension("/cssContentSize/height")?.max(height),
+        })
+    }
+
     async fn type_text(&self, device_id: &str, text: &str) -> Result<(), RobotError> {
         let target = self.page(device_id).await?;
         self.cdp(&target, "Input.insertText", json!({ "text": text }))

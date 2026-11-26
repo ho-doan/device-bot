@@ -3,7 +3,7 @@
 use crate::{
     AppWindow, DesktopDisplay, ElementQuery, ImeAction, NativeVideoStream, Platform, Point, Robot,
     RobotDevice, RobotError, RunningApp, ScreenshotOptions, UiAction, UiElement, UiRunnerStatus,
-    UiTarget, VideoStream, WebContext,
+    UiTarget, VideoStream, WebContext, WebViewport,
 };
 use async_trait::async_trait;
 use serde_json::Value;
@@ -282,6 +282,14 @@ impl Robot for RobotRegistry {
     }
     async fn open_url(&self, id: &str, url: &str, app: Option<&str>) -> Result<(), RobotError> {
         self.driver_for(id).await?.open_url(id, url, app).await
+    }
+
+    async fn reset_web_document(&self, id: &str, url: &str) -> Result<(), RobotError> {
+        self.driver_for(id).await?.reset_web_document(id, url).await
+    }
+
+    async fn web_viewport(&self, id: &str) -> Result<WebViewport, RobotError> {
+        self.driver_for(id).await?.web_viewport(id).await
     }
     async fn clear_text(&self, id: &str) -> Result<(), RobotError> {
         self.driver_for(id).await?.clear_text(id).await

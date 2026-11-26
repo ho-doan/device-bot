@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+serde_yaml.workspace = true
 robot-flow = { path = "../robot-flow" }
 robot-project = { path = "../robot-project" }
 robot-stream = { path = "../robot-stream" }

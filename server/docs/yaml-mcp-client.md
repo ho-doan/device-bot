@@ -217,7 +217,7 @@ not establish native device parity; see the recorded verification results.
 | `select_device` | Exactly one available device matching ID/name/platform/state |
 | `launch_app` | Shared launch: HTTP/HTTPS `app_id` uses `mobile_open_url`; native app IDs/paths use `mobile_launch_app`. Launch is not cold-reset |
 | `tap`, `type_text`, `swipe` | Existing coordinate/text MCP calls |
-| `tap_element`, `focus_field` | Fresh unique actionable match; optional native tap/focus proof |
+| `tap_element`, `focus_field` | Fresh unique actionable match, with optional native tap, focus proof, or Chrome auto-scroll |
 | `long_press_element`, `double_tap_element` | Fresh unique enabled match with screen bounds; send a hold or double-click gesture |
 | `swipe_element` | Fresh unique enabled match; drag left or right across the item |
 | `fill_field` | Focus, type or run explicit replacement recipe, then verify |
@@ -253,6 +253,20 @@ app identifier/executable path or an HTTP/HTTPS URL through `app_id`. The separa
 The MCP navigation tool still requires a Chrome page; the old macOS/Safari
 direct-driver examples are not equivalent MCP flows. Screenshots in v1 retain their explicit path
 semantics; v2 paths stay under the case artifact directory.
+
+### Reveal a Chrome control before acting
+
+```yaml
+- tap_element:
+    resource_id: task-1-checkbox
+    scroll_into_view: true
+    timeout_ms: 8000
+```
+
+`focus_field` and `fill_field` also accept `scroll_into_view`. The runner
+compares the matched control center with the visible CSS viewport and
+requeries after each wheel step. The step fails if the control stays out
+of view within the scroll and timeout limits.
 
 ### Press and hold or double tap an element
 

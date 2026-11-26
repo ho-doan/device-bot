@@ -14,6 +14,9 @@ unlabeled or ambiguous targets, disabled controls, and input fields without
 configured synthetic values. Use a test session and avoid secrets in fixtures
 or captured screens. Values used to fill editors are not stored in the graph.
 A screenshot can still show displayed test data.
+For a disposable fixture, the MCP option `fixtureControls` can explicitly
+include exact labels or resource IDs that the scanner normally considers
+sensitive. An editor still needs a synthetic value in `inputs`.
 
 Nodes are observed screen signatures. A directed edge records the control
 and action that led from one state to another. Select a node to inspect its
@@ -23,15 +26,28 @@ after its current operation and retains the partial map. Reopen saved maps
 from QC or MCP. Artifacts are persisted in `ui-maps/` under Device Bot's
 configured report data directory.
 
+Each attempted action runs through `robot-flow`. Its `evidence` entry links
+to the generated `scenario.yaml` and, when captured, `result.png` under
+`actions/<screen-id>-<control-id>/`. These include actions that kept the
+same screen. Each directory also contains the flow's `report.json`.
+When a Chrome state settles, the scanner records its visible CSS viewport,
+the observed content extent, and which control centers are outside the
+viewport. This happens before generating actions for the screen. Generated
+YAML uses `scroll_into_view: true` so the runner can measure again and find
+the control after scrolling.
+
 ## Exploration behavior and limits
 
 The crawler uses the selected device's accessibility tree and real input
 driver. It visits newly observed states, deduplicates signatures, verifies
 the route back to each branch before continuing, and bounds depth, screens,
 actions and runtime. Web restarts from the initial URL when it needs to
-replay a branch and stops on an origin change. Android stops if the foreground
+replay a branch, including resetting in-memory app state in a fresh document,
+and stops on an origin change. Android stops if the foreground
 app changes. Native navigation can use one unique accessible Back, Close,
-or Cancel control, or an exact configured `backControl`. If a native screen
+or Cancel control, or an exact configured `backControl`. For a mobile
+fixture that supports relaunch, `resetAppId` must match the open app and
+lets the scanner restart it before replaying a branch. If a native screen
 cannot be restored, the scan reports partial coverage rather than sending
 input to an unverified screen. Desktop maps use an explicitly selected
 process/window, just like desktop Live.
@@ -39,12 +55,15 @@ The default scan budget is 24 screens, 45 actions, 5 levels and 8 minutes.
 Use **Scan limits** to change it for larger test targets.
 
 This is an inventory of reachable and observable UI states, not proof of
-exhaustive app coverage or a test verdict. Off-screen items, permissions,
-external origins, controls hidden from accessibility, conditional data and
+exhaustive app coverage or a test verdict. Items that are only created
+on scroll, permissions, external origins, controls hidden from
+accessibility, conditional data and
 states not exposed without a fixture may need a separate scan or flow.
-Fingerprinting ignores field values, focus and geometry that may vary without
-a navigation change. Similar-looking screens can be grouped if no distinguishing
-accessible heading, location or control is exposed.
+Fingerprinting uses accessible control state, headings, dialogs and location.
+For configured editors it tracks whether the exposed value matches the
+synthetic input, which lets a filled form lead to new actions. Actual field
+values, focus and geometry are excluded. Similar-looking screens can be
+grouped if they expose the same signature.
 
 ## MCP operations
 
@@ -56,6 +75,7 @@ argument objects for `tools/call`:
 {"action":"status","mapId":"<map-id>"}
 {"action":"route","mapId":"<map-id>","from":"s1","to":"s4"}
 {"action":"screenshot","mapId":"<map-id>","screenId":"s4"}
+{"action":"action_evidence","mapId":"<map-id>","screenId":"s4","controlId":"c2"}
 {"action":"stop","mapId":"<map-id>"}
 {"action":"list"}
 ```
@@ -64,6 +84,16 @@ Status returns screen IDs, controls, observations, source-only routes and
 coverage notes. Copy an observed screen ID to query a shortest path. An exact
 screen title or a saved source-route name/path also works. Always distinguish
 `observed`, `no_observed_route`, and `source_only`.
+
+To replay a saved action, first open the target screen shown by the graph.
+Set `DEVICE_BOT_MAP_DEVICE` to the current device ID. For a fill action, set
+`DEVICE_BOT_MAP_INPUT` to the synthetic value for that control. The generated
+YAML stores only the variable name.
+
+```sh
+device-bot run --dry-run path/to/scenario.yaml
+device-bot run path/to/scenario.yaml
+```
 
 ## Give an agent the target source when it exists
 

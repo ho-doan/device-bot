@@ -522,52 +522,49 @@ impl Robot for Fixture {
             2 => vec![node("Back", "back", 10, ElementType::Button)],
             _ => panic!("must stop before inspecting outside origin"),
         };
-        if s.macos_flutter || s.android || s.ios {
-            if s.viewport_fixture {
-                let mut viewport = node("", "fixture-viewport", 150, ElementType::StaticText);
-                viewport.class_name = if s.android {
-                    "android.widget.ScrollView".into()
-                } else if s.ios {
-                    viewport.resource_id =
-                        Some(format!("ios-{}-5", s.xctest_generation.unwrap_or(0)));
-                    "scrollView".into()
-                } else {
-                    "scrollView Scrollable".into()
-                };
-                viewport.element_type = None;
-                let left = if s.page == 1 {
-                    s.viewport_slide_reads.as_mut().map_or(0, |reads| {
-                        let left = [80, 40, 20, 10, 0].get(*reads).copied().unwrap_or(0);
-                        *reads += 1;
-                        left
-                    })
-                } else {
-                    0
-                };
-                viewport.bounds = Bounds {
-                    left,
-                    top: 0,
-                    right: 300,
-                    bottom: 200,
-                };
-                rows.push(viewport);
-                if s.page == 0 && s.viewport_last_slice.is_some() {
-                    rows.push(node(
-                        &format!("Position {}", s.slice),
-                        "slice-marker",
-                        120,
-                        ElementType::StaticText,
-                    ));
-                }
-                if s.page == 0 && s.slice == s.viewport_last_slice.unwrap_or(1) {
-                    rows.retain(|row| row.resource_id.as_deref() != Some("left"));
-                    rows.push(node("Below fold", "below", 80, ElementType::Button));
-                }
-                if s.viewport_content_shift_on_delete == Some(true) {
-                    for row in rows.iter_mut().filter(|row| row.clickable) {
-                        row.bounds.top += 30;
-                        row.bounds.bottom += 30;
-                    }
+        if (s.macos_flutter || s.android || s.ios) && s.viewport_fixture {
+            let mut viewport = node("", "fixture-viewport", 150, ElementType::StaticText);
+            viewport.class_name = if s.android {
+                "android.widget.ScrollView".into()
+            } else if s.ios {
+                viewport.resource_id = Some(format!("ios-{}-5", s.xctest_generation.unwrap_or(0)));
+                "scrollView".into()
+            } else {
+                "scrollView Scrollable".into()
+            };
+            viewport.element_type = None;
+            let left = if s.page == 1 {
+                s.viewport_slide_reads.as_mut().map_or(0, |reads| {
+                    let left = [80, 40, 20, 10, 0].get(*reads).copied().unwrap_or(0);
+                    *reads += 1;
+                    left
+                })
+            } else {
+                0
+            };
+            viewport.bounds = Bounds {
+                left,
+                top: 0,
+                right: 300,
+                bottom: 200,
+            };
+            rows.push(viewport);
+            if s.page == 0 && s.viewport_last_slice.is_some() {
+                rows.push(node(
+                    &format!("Position {}", s.slice),
+                    "slice-marker",
+                    120,
+                    ElementType::StaticText,
+                ));
+            }
+            if s.page == 0 && s.slice == s.viewport_last_slice.unwrap_or(1) {
+                rows.retain(|row| row.resource_id.as_deref() != Some("left"));
+                rows.push(node("Below fold", "below", 80, ElementType::Button));
+            }
+            if s.viewport_content_shift_on_delete == Some(true) {
+                for row in rows.iter_mut().filter(|row| row.clickable) {
+                    row.bounds.top += 30;
+                    row.bounds.bottom += 30;
                 }
             }
         }

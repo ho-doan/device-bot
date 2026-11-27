@@ -366,10 +366,9 @@ impl Engine<'_> {
                             .flatten()
                             .as_ref()
                             == Some(boot_target)
+                            && recovered.replace(device.id).is_some()
                         {
-                            if recovered.replace(device.id).is_some() {
-                                return Err(format!("More than one device matches {boot_target}."));
-                            }
+                            return Err(format!("More than one device matches {boot_target}."));
                         }
                     }
                     let device =
@@ -1703,7 +1702,7 @@ async fn record(
                     map.notes.push(format!("{id}: Native viewport discovery reached its bounded scroll or inventory limit."));
                 }
                 Some(super::model::NativeViewport {
-                    bounds: obs.native_viewport.as_ref().unwrap().bounds.clone(),
+                    bounds: obs.native_viewport.as_ref().unwrap().bounds,
                     revealed_controls,
                     hit_limit,
                 })

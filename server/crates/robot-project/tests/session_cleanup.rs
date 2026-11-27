@@ -90,8 +90,10 @@ impl SessionFactory for FakeFactory {
     }
 }
 
+type ProjectToolCalls = Arc<Mutex<Vec<(String, Value)>>>;
+
 struct FakeClient {
-    project_calls: Option<Arc<Mutex<Vec<(String, Value)>>>>,
+    project_calls: Option<ProjectToolCalls>,
     unrelated_calls: Option<Arc<Mutex<Vec<String>>>>,
     close_count: Arc<AtomicUsize>,
 }

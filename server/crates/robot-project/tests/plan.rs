@@ -368,10 +368,9 @@ fn rejects_identifiers_that_can_escape_or_collide_on_supported_platforms() {
         ] {
             let field = from.split(':').next().unwrap();
             let manifest = MANIFEST.replacen(from, &format!("{field}: {quoted}"), 1);
-            let error = temp
-                .load(&manifest)
-                .err()
-                .expect("unsafe identifier accepted");
+            let Err(error) = temp.load(&manifest) else {
+                panic!("unsafe identifier accepted");
+            };
             assert!(
                 error.to_string().contains(&format!("{kind} name")),
                 "{value:?}: {error}"

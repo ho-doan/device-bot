@@ -8,7 +8,7 @@ use robot_project::{
 };
 use serde_json::{Value, json};
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -228,7 +228,7 @@ fn event_count(events: &[String], prefix: &str) -> usize {
         .count()
 }
 
-fn assert_finalized(factory: &Factory, output: &PathBuf) {
+fn assert_finalized(factory: &Factory, output: &Path) {
     let events = factory.events.lock().unwrap().clone();
     assert_eq!(
         event_count(

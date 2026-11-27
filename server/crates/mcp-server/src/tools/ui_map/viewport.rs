@@ -243,7 +243,7 @@ fn inspect_kind(elements: &[UiElement], kind: ScrollKind) -> Result<Option<Viewp
             class_name: first.class_name.clone(),
             resource_id: id.cloned(),
         },
-        bounds: b.clone(),
+        bounds: *b,
         slice: hash.finish(),
         anchors,
         kind,

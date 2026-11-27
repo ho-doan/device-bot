@@ -100,7 +100,7 @@ async fn health(device_id: String) -> std::io::Result<()> {
             report.status
         )));
     }
-    return Ok(());
+    Ok(())
 }
 
 fn check_update() -> std::io::Result<()> {
@@ -113,7 +113,7 @@ fn check_update() -> std::io::Result<()> {
         }
         None => println!("device-bot {} is up to date.", env!("CARGO_PKG_VERSION")),
     }
-    return Ok(());
+    Ok(())
 }
 
 fn upgrade() -> std::io::Result<()> {
@@ -133,7 +133,7 @@ fn upgrade() -> std::io::Result<()> {
         }
         None => println!("device-bot {} is up to date.", env!("CARGO_PKG_VERSION")),
     }
-    return Ok(());
+    Ok(())
 }
 
 fn request_screen_recording_permission() -> std::io::Result<()> {
@@ -141,10 +141,10 @@ fn request_screen_recording_permission() -> std::io::Result<()> {
         println!("Screen Recording permission is already granted.");
         return Ok(());
     }
-    return Err(std::io::Error::new(
+    Err(std::io::Error::new(
         std::io::ErrorKind::PermissionDenied,
         "macOS displayed the Screen Recording permission request; approve it, then run this command again",
-    ));
+    ))
 }
 
 async fn development_team() -> std::io::Result<()> {
@@ -153,7 +153,7 @@ async fn development_team() -> std::io::Result<()> {
         .await
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     println!("{team}");
-    return Ok(());
+    Ok(())
 }
 
 async fn configure_signing() -> std::io::Result<()> {
@@ -167,7 +167,7 @@ async fn configure_signing() -> std::io::Result<()> {
         "{}",
         serde_json::json!({"configured": true, "teamId": selected, "project": project})
     );
-    return Ok(());
+    Ok(())
 }
 
 async fn provision_xctest(device_id: String) -> std::io::Result<()> {
@@ -183,7 +183,7 @@ async fn provision_xctest(device_id: String) -> std::io::Result<()> {
     .await
     .map_err(|error| std::io::Error::other(error.to_string()))?;
     println!("iOS XCTest runner provisioned for {device_id}");
-    return Ok(());
+    Ok(())
 }
 
 async fn install_chrome_recording_tools() -> std::io::Result<()> {

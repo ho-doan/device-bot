@@ -27,8 +27,18 @@ pub struct Screen {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewport: Option<robot_core::WebViewport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_viewport: Option<NativeViewport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub same_controls_as: Option<String>,
     pub controls: Vec<Control>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeViewport {
+    pub bounds: robot_core::Bounds,
+    pub revealed_controls: usize,
+    pub hit_limit: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

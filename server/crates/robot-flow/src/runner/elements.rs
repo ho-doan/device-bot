@@ -410,6 +410,27 @@ impl FlowRunner {
         Ok(())
     }
 
+    pub(super) async fn scroll_wheel(&mut self, s: &Selector, dy: f64) -> Result<()> {
+        let found = self.query(s).await?;
+        let [viewport] = found.as_slice() else {
+            return Err("scroll viewport must match exactly one element".into());
+        };
+        if viewport
+            .get("webContext")
+            .is_some_and(|value| !value.is_null())
+        {
+            return Err("wheel_delta requires a native viewport".into());
+        }
+        let device = self.device_id()?;
+        let (left, top, right, bottom) = element_rectangle(viewport, device.starts_with("macos:"))?;
+        self.call(
+            SCROLL,
+            scroll_arguments(device, (left + right) / 2., (top + bottom) / 2., 0., dy),
+        )
+        .await?;
+        Ok(())
+    }
+
     pub(super) async fn scroll(&mut self, s: &Selector, direction: &str) -> Result<()> {
         if !["up", "down"].contains(&direction) {
             return Err("scroll direction must be up or down".into());

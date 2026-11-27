@@ -65,7 +65,11 @@ struct Rect {
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
     fn CGRectMakeWithDictionaryRepresentation(dictionary: CFTypeRef, rect: *mut Rect) -> bool;
+    fn CGWindowLevelForKey(key: i32) -> i32;
 }
+
+#[cfg(target_os = "macos")]
+const CG_CURSOR_WINDOW_LEVEL_KEY: i32 = 19; // kCGCursorWindowLevelKey in CGWindowLevel.h
 
 #[cfg(target_os = "macos")]
 fn windows() -> Result<Vec<(Target, Geometry)>, RobotError> {
@@ -80,9 +84,11 @@ fn windows() -> Result<Vec<(Target, Geometry)>, RobotError> {
             "Could not enumerate visible windows".into(),
         ));
     }
-    let pid_key = native_cf_string("kCGWindowOwnerPID")?;
-    let id_key = native_cf_string("kCGWindowNumber")?;
-    let bounds_key = native_cf_string("kCGWindowBounds")?;
+    let pid_key = CfOwned(native_cf_string("kCGWindowOwnerPID")?);
+    let id_key = CfOwned(native_cf_string("kCGWindowNumber")?);
+    let bounds_key = CfOwned(native_cf_string("kCGWindowBounds")?);
+    let layer_key = CfOwned(native_cf_string("kCGWindowLayer")?);
+    let cursor_level = unsafe { CGWindowLevelForKey(CG_CURSOR_WINDOW_LEVEL_KEY) };
 
     let mut output = Vec::new();
     for i in 0..unsafe { CFArrayGetCount(list.0) } {
@@ -90,13 +96,18 @@ fn windows() -> Result<Vec<(Target, Geometry)>, RobotError> {
         if row.is_null() {
             continue;
         }
+        // WindowServer can list its cursor sprite at the previous wheel point.
+        // It is not a window that can receive input; other layers stay in z-order.
+        if native_i32(unsafe { CFDictionaryGetValue(row, layer_key.0) }) == Some(cursor_level) {
+            continue;
+        }
         let (Some(pid), Some(id)) = (
-            native_i32(unsafe { CFDictionaryGetValue(row, pid_key) }),
-            native_i32(unsafe { CFDictionaryGetValue(row, id_key) }),
+            native_i32(unsafe { CFDictionaryGetValue(row, pid_key.0) }),
+            native_i32(unsafe { CFDictionaryGetValue(row, id_key.0) }),
         ) else {
             continue;
         };
-        let dict = unsafe { CFDictionaryGetValue(row, bounds_key) };
+        let dict = unsafe { CFDictionaryGetValue(row, bounds_key.0) };
         let mut rect = Rect {
             origin: CGPoint { x: 0., y: 0. },
             size: CGSize {

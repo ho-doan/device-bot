@@ -170,13 +170,17 @@ impl FlowRunner {
             }
             "scroll" => {
                 let selector = schema::selector(args, &self.profile)?;
-                self.scroll(
-                    &selector,
-                    args.get("direction")
-                        .and_then(Value::as_str)
-                        .unwrap_or("down"),
-                )
-                .await?;
+                if let Some(dy) = schema::scroll_wheel_delta(args)? {
+                    self.scroll_wheel(&selector, dy).await?;
+                } else {
+                    self.scroll(
+                        &selector,
+                        args.get("direction")
+                            .and_then(Value::as_str)
+                            .unwrap_or("down"),
+                    )
+                    .await?;
+                }
             }
             "gesture" => {
                 let element = self.find(args, false).await?;

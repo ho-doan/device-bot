@@ -210,15 +210,19 @@ impl FlowRunner {
                             )?,
                         ));
                     }
-                    if action == "scroll"
-                        && args
-                            .get("direction")
-                            .and_then(Value::as_str)
-                            .is_some_and(|s| !["up", "down"].contains(&s))
-                    {
-                        return Err("scroll direction must be up or down".into());
-                    }
-                    if action == "gesture" || action == "scroll" || self.profile.viewport.is_some()
+                    let wheel = if action == "scroll" {
+                        schema::scroll_wheel_delta(args)?
+                    } else {
+                        None
+                    };
+                    if let Some(dy) = wheel {
+                        if s.web_context.is_some() {
+                            return Err("wheel_delta requires a native viewport".into());
+                        }
+                        calls.push((SCROLL, scroll_arguments("<selected>", 0., 0., 0., dy)));
+                    } else if action == "gesture"
+                        || action == "scroll"
+                        || self.profile.viewport.is_some()
                     {
                         calls.push((SWIPE,json!({"deviceId":"<selected>","startX":0,"startY":1,"endX":0,"endY":0,"durationMs":350})));
                     }

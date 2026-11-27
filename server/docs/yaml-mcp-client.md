@@ -226,7 +226,7 @@ not establish native device parity; see the recorded verification results.
 | `swipe_element` | Fresh unique enabled match; drag left or right across the item |
 | `fill_field` | Focus, type or run explicit replacement recipe, then verify |
 | `gesture` | `from`/`to` fractions in target bounds, optional `duration_ms` |
-| `scroll` | Measured viewport, `direction: up/down` |
+| `scroll` | Measured viewport, `direction: up/down`; optional `wheel_delta` (1–2000 native units) sends a wheel event instead of a swipe |
 | `assert_element` | At least one matching visible native node, bounded wait |
 | `assert_absent` | No match in the current native tree; not proof about offscreen content |
 | `assert_count` | Exact `count` after filtering; a capped query is an error |

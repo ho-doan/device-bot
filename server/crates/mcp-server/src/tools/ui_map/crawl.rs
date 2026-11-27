@@ -17,7 +17,11 @@ use serde::Deserialize;
 use tokio::time::Instant;
 use url::Url;
 
-use super::{Control, Screen, Transition, UiMap, replay, save_map, timing::TimingLog};
+use super::{
+    Control, Screen, Transition, UiMap, replay, save_map,
+    timing::TimingLog,
+    viewport::{self, MAX_STEPS_PER_DIRECTION, Reveal, SCROLL_SETTLE_MS, Viewport},
+};
 
 pub(super) const MAX_SCREENS: usize = 250;
 pub(super) const MAX_ACTIONS: usize = 600;
@@ -102,6 +106,7 @@ struct LiveControl {
     lookup: Vec<String>,
     element: UiElement,
     action: Option<&'static str>,
+    reveal: Option<Reveal>,
 }
 
 struct Observation {
@@ -112,6 +117,8 @@ struct Observation {
     controls: Vec<LiveControl>,
     limited: bool,
     root_only: bool,
+    native_viewport: Option<Viewport>,
+    ambiguous_viewport: bool,
 }
 
 impl LiveControl {
@@ -144,6 +151,7 @@ impl LiveControl {
             input,
             initially_offscreen,
             flutter,
+            reveal: self.reveal.as_ref(),
         }
     }
 }
@@ -154,6 +162,7 @@ struct PathStep {
     before: u64,
     after: u64,
     initially_offscreen: Option<bool>,
+    revealed_control: Option<LiveControl>,
 }
 
 type Navigation = HashMap<u64, Vec<Arc<PathStep>>>;
@@ -342,6 +351,11 @@ impl Engine<'_> {
             (elements, root_only)
         };
         prepare_elements(&mut elements);
+        let viewport = if self.options.device_id.starts_with("macos:") {
+            viewport::inspect(&elements, self.flutter.get() == Some(&true))
+        } else {
+            Ok(None)
+        };
         let title = elements
             .iter()
             .find(|e| {
@@ -453,7 +467,199 @@ impl Engine<'_> {
             controls,
             limited,
             root_only,
+            ambiguous_viewport: viewport.is_err(),
+            native_viewport: viewport.ok().flatten(),
         })
+    }
+
+    async fn scroll_slice(&self, viewport: &Viewport, dy: i32) -> Result<Observation, String> {
+        self.check()?;
+        self.timing
+            .measure(
+                "viewport_scroll",
+                self.robot.scroll(
+                    &self.options.device_id,
+                    viewport.center(),
+                    0.,
+                    f64::from(dy),
+                ),
+            )
+            .await
+            .map_err(|error| format!("Could not scroll the selected viewport: {error}"))?;
+        tokio::time::sleep(Duration::from_millis(SCROLL_SETTLE_MS)).await;
+        let mut previous = None::<Observation>;
+        for _ in 0..4 {
+            let next = self.observe().await?;
+            if next
+                .native_viewport
+                .as_ref()
+                .is_some_and(|current| viewport.same_container(current))
+            {
+                if previous
+                    .as_ref()
+                    .is_some_and(|last| same_slice(last, &next))
+                {
+                    return Ok(next);
+                }
+                previous = Some(next);
+            } else {
+                previous = None;
+            }
+            // Wait for the current wheel frame to finish without sending more input.
+            tokio::time::sleep(Duration::from_millis(140)).await;
+        }
+        Err("The selected scroll viewport did not stabilize after scrolling.".into())
+    }
+
+    async fn restore_slice(
+        &self,
+        anchor: &Observation,
+        mut current: Observation,
+        reverse: i32,
+    ) -> Result<(), String> {
+        let viewport = anchor.native_viewport.as_ref().expect("viewport anchor");
+        for _ in 0..MAX_STEPS_PER_DIRECTION {
+            if same_slice(anchor, &current) {
+                return Ok(());
+            }
+            let previous = current
+                .native_viewport
+                .as_ref()
+                .filter(|v| viewport.same_container(v))
+                .ok_or("The scroll viewport is no longer available.")?
+                .clone();
+            current = self.scroll_slice(viewport, reverse).await?;
+            if current
+                .native_viewport
+                .as_ref()
+                .is_some_and(|v| v.same_layout(&previous))
+            {
+                break;
+            }
+        }
+        if same_slice(anchor, &current) {
+            Ok(())
+        } else {
+            Err("Could not restore the original viewport safely.".into())
+        }
+    }
+
+    async fn probe_viewport(&self, anchor: &mut Observation) -> Result<ViewportProbe, String> {
+        let viewport = anchor.native_viewport.as_ref().expect("viewport anchor");
+        let mut inventory = anchor.controls.clone();
+        let mut hit_limit = false;
+        let mut stopped = None;
+        'directions: for delta in [viewport.step(), -viewport.step()] {
+            let mut previous = viewport.clone();
+            let mut slices: Vec<(u64, Viewport)> = Vec::new();
+            let mut last = None;
+            for _ in 0..MAX_STEPS_PER_DIRECTION {
+                let current = match self.scroll_slice(viewport, delta).await {
+                    Ok(current) => current,
+                    Err(error) => {
+                        let latest = self.observe().await.map_err(|_| error.clone())?;
+                        if !same_slice(anchor, &latest) {
+                            if !latest.native_viewport.as_ref().is_some_and(|viewport| {
+                                slices.iter().any(|(fingerprint, known)| {
+                                    *fingerprint == latest.fingerprint
+                                        && known.same_position(viewport)
+                                })
+                            }) {
+                                return Err(error);
+                            }
+                            self.restore_slice(anchor, latest, -delta).await?;
+                        }
+                        stopped = Some(error);
+                        break 'directions;
+                    }
+                };
+                let slice = current
+                    .native_viewport
+                    .as_ref()
+                    .expect("validated viewport");
+                if slice.same_layout(&previous)
+                    && last
+                        .as_ref()
+                        .map_or(anchor.fingerprint, |previous: &Observation| {
+                            previous.fingerprint
+                        })
+                        == current.fingerprint
+                {
+                    if last.is_some() {
+                        last = Some(current);
+                    }
+                    break;
+                }
+                previous = slice.clone();
+                slices.push((current.fingerprint, slice.clone()));
+                let plan = Reveal {
+                    anchor: viewport.clone(),
+                    delta,
+                    slices: slices.clone(),
+                };
+                for row in current
+                    .controls
+                    .iter()
+                    .filter(|row| !row.lookup.is_empty() && viewport.contains(row.center()))
+                {
+                    let known = inventory
+                        .iter()
+                        .position(|existing| existing.key == row.key);
+                    if let Some(index) = known {
+                        let existing = &mut inventory[index];
+                        if existing.control.label != row.control.label
+                            || row.control.note.as_deref()
+                                == Some("Selector is ambiguous in this screen.")
+                        {
+                            existing.action = None;
+                            existing.control.status = "skipped".into();
+                            existing.control.note =
+                                Some("Selector is ambiguous across viewport slices.".into());
+                        }
+                        continue;
+                    }
+                    if inventory.len() >= 160 {
+                        hit_limit = true;
+                        break;
+                    }
+                    let mut row = row.clone();
+                    row.control.id = format!("c{}", inventory.len() + 1);
+                    row.control.initially_offscreen = Some(true);
+                    row.reveal = Some(plan.clone());
+                    inventory.push(row);
+                }
+                last = Some(current);
+            }
+            hit_limit |= slices.len() == usize::from(MAX_STEPS_PER_DIRECTION);
+            if let Some(last) = last {
+                self.restore_slice(anchor, last, -delta).await?;
+            }
+        }
+        let revealed = inventory.len() - anchor.controls.len();
+        anchor.controls = inventory;
+        Ok(ViewportProbe {
+            revealed,
+            hit_limit,
+            stopped,
+        })
+    }
+
+    async fn reset_after_reveal(
+        &self,
+        row: &LiveControl,
+        anchor: &Observation,
+        current: Observation,
+    ) -> Result<Observation, String> {
+        if let Some(plan) = &row.reveal
+            && let Some(viewport) = &current.native_viewport
+            && plan.slices.iter().any(|(fingerprint, known)| {
+                *fingerprint == current.fingerprint && known.same_position(viewport)
+            })
+        {
+            self.restore_slice(anchor, current, -plan.delta).await?;
+            return self.observe().await;
+        }
+        Ok(current)
     }
 
     async fn settled(&self) -> Result<Observation, String> {
@@ -463,10 +669,31 @@ impl Engine<'_> {
 
     async fn settled_after_wait(&self) -> Result<Observation, String> {
         let mut last = self.observe().await?;
-        for _ in 0..3 {
+        // Desktop route transitions can keep the same control signature while
+        // animating the clipped viewport into place.
+        let retries = if self.options.device_id.starts_with("macos:") {
+            7
+        } else {
+            3
+        };
+        for attempt in 0..retries {
             tokio::time::sleep(Duration::from_millis(140)).await;
             let next = self.observe().await?;
-            if last.fingerprint == next.fingerprint {
+            if last.fingerprint == next.fingerprint
+                && match (&last.native_viewport, &next.native_viewport) {
+                    (None, None) => {
+                        // An outgoing Flutter route can briefly expose a second
+                        // scroll container. A genuinely ambiguous screen still
+                        // gets its visible controls and a coverage note.
+                        !last.ambiguous_viewport && !next.ambiguous_viewport
+                            || (last.ambiguous_viewport
+                                && next.ambiguous_viewport
+                                && attempt + 1 == retries)
+                    }
+                    (Some(last), Some(next)) => last.same_container(next),
+                    _ => false,
+                }
+            {
                 return Ok(next);
             }
             last = next;
@@ -673,11 +900,14 @@ impl Engine<'_> {
             if here.fingerprint != step.before {
                 return Err("The recorded route now leads to a different screen.".into());
             }
-            let row = here
-                .controls
-                .iter()
-                .find(|c| c.key == step.key && c.action == Some(step.action))
-                .ok_or("A control on the recorded route is no longer uniquely available.")?;
+            let row = if let Some(row) = &step.revealed_control {
+                at_scroll_anchor(row, &here).then_some(row)
+            } else {
+                here.controls
+                    .iter()
+                    .find(|c| c.key == step.key && c.action == Some(step.action))
+            }
+            .ok_or("A control on the recorded route is no longer uniquely available.")?;
             if step.initially_offscreen == Some(true) {
                 self.check()?;
                 self.input_budget -= 1;
@@ -708,6 +938,29 @@ impl Engine<'_> {
 
 fn clipped(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
+}
+
+struct ViewportProbe {
+    revealed: usize,
+    hit_limit: bool,
+    stopped: Option<String>,
+}
+
+fn same_slice(anchor: &Observation, current: &Observation) -> bool {
+    anchor.fingerprint == current.fingerprint
+        && anchor
+            .native_viewport
+            .as_ref()
+            .zip(current.native_viewport.as_ref())
+            .is_some_and(|(old, new)| old.same_position(new))
+}
+
+fn at_scroll_anchor(row: &LiveControl, here: &Observation) -> bool {
+    row.reveal.as_ref().is_some_and(|plan| {
+        here.native_viewport
+            .as_ref()
+            .is_some_and(|viewport| plan.anchor.same_position(viewport))
+    })
 }
 
 fn candidate(value: &Option<String>) -> Option<String> {
@@ -783,6 +1036,7 @@ fn live_control(element: &UiElement, opt: &Options) -> Option<LiveControl> {
         lookup,
         element: element.clone(),
         action: None,
+        reveal: None,
     };
     let note = if !element.enabled {
         "Disabled"
@@ -1021,6 +1275,52 @@ async fn record(
         }
         _ => false,
     };
+    if obs.ambiguous_viewport {
+        map.notes.push(format!("{id}: Could not identify a unique macOS scroll viewport. Only visible controls were inventoried."));
+    }
+    let native_viewport = if same_controls_as.is_none() {
+        if let Some(bounds) = obs.native_viewport.as_ref().map(|v| v.bounds.clone()) {
+            match engine
+                .timing
+                .measure("viewport_discovery", engine.probe_viewport(obs))
+                .await
+            {
+                Ok(ViewportProbe {
+                    revealed: revealed_controls,
+                    hit_limit,
+                    stopped,
+                }) => {
+                    if let Some(reason) = stopped {
+                        map.notes.push(format!(
+                            "{id}: Native viewport discovery stopped early. {reason}"
+                        ));
+                    }
+                    if hit_limit {
+                        map.notes.push(format!("{id}: Native viewport discovery reached its bounded scroll or inventory limit."));
+                    }
+                    Some(super::model::NativeViewport {
+                        bounds,
+                        revealed_controls,
+                        hit_limit,
+                    })
+                }
+                Err(error) => {
+                    map.notes.push(format!("{id}: {error}"));
+                    for row in obs.controls.iter_mut().filter(|row| row.action.is_some()) {
+                        row.action = None;
+                        row.control.status = "skipped".into();
+                        row.control.note =
+                            Some("Viewport discovery could not verify the entry position.".into());
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     if obs.limited && !map.notes.iter().any(|n| n.starts_with("Control inventory")) {
         map.notes
             .push("Control inventory was capped on at least one screen.".into());
@@ -1036,6 +1336,7 @@ async fn record(
         location: obs.location.clone(),
         screenshot,
         viewport,
+        native_viewport,
         same_controls_as: same_controls_as.map(str::to_owned),
         controls: obs
             .controls
@@ -1159,11 +1460,14 @@ pub(super) async fn scan(
                 Err(error) => return Err(error),
             };
             let action = original.action.unwrap();
-            let Some(row) = here
-                .controls
-                .iter()
-                .find(|c| c.key == original.key && c.action == Some(action))
-            else {
+            let row = if original.reveal.is_some() {
+                at_scroll_anchor(original, &here).then_some(original)
+            } else {
+                here.controls
+                    .iter()
+                    .find(|c| c.key == original.key && c.action == Some(action))
+            };
+            let Some(row) = row else {
                 mark(
                     map,
                     &from,
@@ -1206,6 +1510,10 @@ pub(super) async fn scan(
                 mark(map, &from, &original.control.id, "failed", Some(err));
                 save_map(dir, map).await?;
                 engine.context().await?;
+                if row.reveal.is_some() {
+                    let current = engine.observe().await?;
+                    engine.reset_after_reveal(row, &here, current).await?;
+                }
                 continue;
             }
             let mut next = match timing
@@ -1225,6 +1533,9 @@ pub(super) async fn scan(
                     return Err(error);
                 }
             };
+            if row.reveal.is_some() {
+                next = engine.reset_after_reveal(row, &here, next).await?;
+            }
             if next.fingerprint == fingerprint {
                 mark(
                     map,
@@ -1240,17 +1551,19 @@ pub(super) async fn scan(
                     before: fingerprint,
                     after: next.fingerprint,
                     initially_offscreen: original.control.initially_offscreen,
+                    revealed_control: row.reveal.as_ref().map(|_| row.clone()),
                 });
                 let to = if let Some(to) = seen.get(&next.fingerprint) {
                     to.clone()
                 } else if map.screens.len() < opt.screens() {
-                    let representative = if opt.expand_selection_states {
-                        None
-                    } else {
-                        control_signatures
-                            .get(&next.control_signature)
-                            .map(String::as_str)
-                    };
+                    let representative =
+                        if opt.expand_selection_states || next.native_viewport.is_some() {
+                            None
+                        } else {
+                            control_signatures
+                                .get(&next.control_signature)
+                                .map(String::as_str)
+                        };
                     let to = record(&engine, map, dir, &mut next, representative).await;
                     seen.insert(next.fingerprint, to.clone());
                     if representative.is_none() {

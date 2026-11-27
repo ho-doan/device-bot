@@ -566,6 +566,7 @@ pub fn selector(args: &Value, profile: &Profile) -> Result<Selector> {
             "from",
             "to",
             "duration_ms",
+            "wheel_delta",
         ] {
             map.remove(key);
         }
@@ -871,10 +872,28 @@ fn validate_action_keys(action: &str, args: &Value) -> Result<()> {
         }
         "gesture" => return check_keys(args, &format!("{selector} from to duration_ms")),
         "swipe_element" => return check_keys(args, &format!("{selector} direction duration_ms")),
-        "scroll" => return check_keys(args, &format!("{selector} direction")),
+        "scroll" => return check_keys(args, &format!("{selector} direction wheel_delta")),
         _ => return Err(format!("unknown action {action}").into()),
     };
     check_keys(args, extra)
+}
+
+pub(crate) fn scroll_wheel_delta(args: &Value) -> Result<Option<f64>> {
+    let direction = match args.get("direction") {
+        None => 1.,
+        Some(value) if value == "down" => 1.,
+        Some(value) if value == "up" => -1.,
+        _ => return Err("scroll direction must be up or down".into()),
+    };
+    args.get("wheel_delta")
+        .map(|value| {
+            let distance = value
+                .as_u64()
+                .filter(|distance| (1..=2000).contains(distance))
+                .ok_or("scroll wheel_delta must be an integer in 1..2000")?;
+            Ok(distance as f64 * direction)
+        })
+        .transpose()
 }
 
 pub(crate) fn pointer_gesture_step(

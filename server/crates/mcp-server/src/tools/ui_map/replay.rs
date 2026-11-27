@@ -8,7 +8,12 @@ use robot_flow::{
 };
 use serde_json::{Value, json};
 
-use super::{MAX_IMAGE_BYTES, crawl::Scope, model::ActionEvidence};
+use super::{
+    MAX_IMAGE_BYTES,
+    crawl::Scope,
+    model::ActionEvidence,
+    viewport::{Reveal, SCROLL_SETTLE_MS},
+};
 use crate::tools::flow::CaseMcp;
 
 const DEVICE: &str = "DEVICE_BOT_MAP_DEVICE";
@@ -21,6 +26,7 @@ pub(super) struct Action<'a> {
     pub input: Option<&'a str>,
     pub initially_offscreen: Option<bool>,
     pub flutter: bool,
+    pub reveal: Option<&'a Reveal>,
 }
 
 fn stable_context(context: &WebContext) -> Value {
@@ -56,7 +62,12 @@ impl Action<'_> {
         if self.flutter {
             selector["source"] = json!("flutter");
         }
-        if self.initially_offscreen.is_some() {
+        if self.reveal.is_some() {
+            // Native wheel events can still be moving the target after the
+            // first observation. Require stable geometry before the click.
+            selector["stable_samples"] = json!(2);
+        }
+        if matches!(scope, Scope::Web { .. }) && self.initially_offscreen.is_some() {
             selector["scroll_into_view"] = json!(true);
             selector["timeout_ms"] = json!(8000);
         } else if matches!(scope, Scope::Mobile { .. } | Scope::IosNative) {
@@ -81,6 +92,22 @@ impl Action<'_> {
         }
         escape_templates(&mut selector);
         let mut steps = vec![json!({"select_device":{"id":format!("${{env:{DEVICE}}}")}})];
+        if let Some(plan) = self.reveal {
+            let mut scroll = json!({
+                "class_contains": plan.anchor.locator.class_name,
+                "source": if self.flutter { "flutter" } else { "native" },
+                "direction": if plan.delta > 0 { "down" } else { "up" },
+                "wheel_delta": plan.delta.unsigned_abs(),
+            });
+            if let Some(id) = &plan.anchor.locator.resource_id {
+                scroll["resource_id"] = json!(id);
+            }
+            escape_templates(&mut scroll);
+            for _ in &plan.slices {
+                steps.push(json!({"scroll":scroll}));
+                steps.push(json!({"wait":{"ms":SCROLL_SETTLE_MS}}));
+            }
+        }
         let note = self
             .initially_offscreen
             .filter(|outside| *outside)

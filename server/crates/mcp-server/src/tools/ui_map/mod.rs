@@ -3,6 +3,7 @@ mod crawl;
 mod model;
 mod replay;
 mod timing;
+mod viewport;
 
 #[cfg(test)]
 mod tests;

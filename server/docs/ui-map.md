@@ -44,6 +44,16 @@ viewport. This happens before generating actions for the screen. Generated
 YAML uses `scroll_into_view: true` so the runner can measure again and find
 the control after scrolling.
 
+On macOS, the crawler checks for a unique, visible vertical scroll container
+in the selected window, using native AX first or the same Flutter tree already
+selected for the scan. It probes up to four observed positions per direction,
+reads the tree after each scroll, and verifies the original viewport before
+trying controls. Controls first seen elsewhere in that viewport are kept on
+the original screen and marked `initiallyOffscreen`. Their action YAML wheels
+inside the measured container before resolving and tapping the control.
+`nativeViewport` records the visible desktop bounds and number of newly
+revealed controls. It does not estimate the full content height.
+
 ## Exploration behavior and limits
 
 The crawler uses the selected device's accessibility tree and real input
@@ -73,10 +83,11 @@ The default scan budget is 24 screens, 45 actions, 5 levels and 8 minutes.
 Use **Scan limits** to change it for larger test targets.
 
 This is an inventory of reachable and observable UI states, not proof of
-exhaustive app coverage or a test verdict. Items that are only created
-on scroll, permissions, external origins, controls hidden from
-accessibility, conditional data and
-states not exposed without a fixture may need a separate scan or flow.
+exhaustive app coverage or a test verdict. Beyond the bounded macOS viewport
+probe, lazy content, independent scroll panes, items hidden from accessibility,
+permissions, external origins and conditional data may need a separate scan or
+flow. If a visible scroll container is ambiguous or the scroll cap is reached,
+the map reports that limitation.
 Fingerprinting uses accessible control state, headings, dialogs and location.
 For configured editors it tracks whether the exposed value matches the
 synthetic input, which lets a filled form lead to new actions. Actual field
@@ -110,6 +121,8 @@ screen title or a saved source-route name/path also works. Always distinguish
 `observed`, `no_observed_route`, and `source_only`.
 
 To replay a saved action, first open the target screen shown by the graph.
+For an action discovered by a native scroll, start at the viewport position
+shown in that screen's entry screenshot.
 Set `DEVICE_BOT_MAP_DEVICE` to the current device ID. For a fill action, set
 `DEVICE_BOT_MAP_INPUT` to the synthetic value for that control. The generated
 YAML stores only the variable name.

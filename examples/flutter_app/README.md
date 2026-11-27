@@ -24,7 +24,10 @@ Other credentials show an authentication error.
 Build Orbit from this directory with `flutter build macos --debug` and open
 `build/macos/Build/Products/Debug/flutter_app.app`. The example targets macOS
 12 or newer. In QC, open **UI map** for the Mac and select the Orbit window.
-Enlarge the window before scanning if **Try demo workspace** is below the fold.
+At the default window size, **Try demo workspace** may start below the fold.
+The macOS crawler probes Orbit's scroll viewport and records a wheel step
+before tapping the discovered control, so this path can be replayed without
+enlarging the window.
 
 If native Accessibility only exposes the window chrome, the UI map can use
 Orbit's existing Flutter bridge. Because this app is sandboxed, configure its

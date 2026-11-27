@@ -43,6 +43,11 @@ struct Fixture(Mutex<FixtureState>);
 struct FixtureState {
     page: usize,
     macos_flutter: bool,
+    viewport_fixture: bool,
+    no_scroll_restore: bool,
+    viewport_slide_reads: Option<usize>,
+    slice: i32,
+    scrolls: Vec<i32>,
     native_window_reads: usize,
     flutter_reads: usize,
     android: bool,
@@ -184,6 +189,11 @@ impl Robot for Fixture {
                 state.checked = !state.checked;
                 "toggle"
             }
+            (0, 80) if state.viewport_fixture && state.slice == 1 => {
+                state.page = 1;
+                state.slice = 0;
+                "below"
+            }
             (1 | 2, 10) => {
                 state.page = 0;
                 "back"
@@ -223,6 +233,18 @@ impl Robot for Fixture {
         let mut s = self.0.lock().unwrap();
         assert!(s.focus);
         s.entered = true;
+        Ok(())
+    }
+
+    async fn scroll(&self, id: &str, at: Point, dx: f64, dy: f64) -> Result<(), RobotError> {
+        let mut state = self.0.lock().unwrap();
+        assert!(state.viewport_fixture);
+        assert_eq!(id, "macos:41:42");
+        assert_eq!((at.x, at.y, dx), (-850., 100., 0.));
+        state.scrolls.push(dy as i32);
+        if state.page == 0 && !(state.no_scroll_restore && dy < 0.) {
+            state.slice = (state.slice + dy.signum() as i32).clamp(0, 1);
+        }
         Ok(())
     }
 
@@ -316,6 +338,31 @@ impl Robot for Fixture {
             _ => panic!("must stop before inspecting outside origin"),
         };
         if s.macos_flutter {
+            if s.viewport_fixture {
+                let mut viewport = node("", "fixture-viewport", 150, ElementType::StaticText);
+                viewport.class_name = "scrollView Scrollable".into();
+                viewport.element_type = None;
+                let left = if s.page == 1 {
+                    s.viewport_slide_reads.as_mut().map_or(0, |reads| {
+                        let left = [80, 40, 20, 10, 0].get(*reads).copied().unwrap_or(0);
+                        *reads += 1;
+                        left
+                    })
+                } else {
+                    0
+                };
+                viewport.bounds = Bounds {
+                    left,
+                    top: 0,
+                    right: 300,
+                    bottom: 200,
+                };
+                rows.push(viewport);
+                if s.page == 0 && s.slice == 1 {
+                    rows.retain(|row| row.resource_id.as_deref() != Some("left"));
+                    rows.push(node("Below fold", "below", 80, ElementType::Button));
+                }
+            }
             for row in &mut rows {
                 row.bounds.left -= 1000;
                 row.bounds.right -= 1000;
@@ -351,6 +398,94 @@ fn graph() -> UiMap {
         source_routes: vec![],
         notes: vec![],
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn macos_viewport_reveals_controls_and_exports_scroll_before_tap() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        macos_flutter: true,
+        viewport_fixture: true,
+        viewport_slide_reads: Some(0),
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId": "macos:41:42", "allowedTaps": ["below"]
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    let root = &map.screens[0];
+    assert_eq!(root.native_viewport.as_ref().unwrap().revealed_controls, 1);
+    let target = root
+        .controls
+        .iter()
+        .find(|row| row.label == "Below fold")
+        .unwrap();
+    assert_eq!(target.initially_offscreen, Some(true));
+    assert_eq!(target.status, "observed", "{:?}", target.note);
+    let evidence = target.evidence.as_ref().unwrap();
+    let yaml = std::fs::read_to_string(dir.0.join(&evidence.yaml)).unwrap();
+    assert!(yaml.find("scroll:").unwrap() < yaml.find("tap_element:").unwrap());
+    assert!(yaml.contains("wheel_delta: 140"));
+    assert!(yaml.contains("resource_id: fixture-viewport"));
+    assert!(yaml.contains("stable_samples: 2"));
+    assert_eq!(map.transitions.len(), 1);
+    assert_eq!(map.transitions[0].label, "Below fold");
+    assert_eq!(
+        map.screens[1].native_viewport.as_ref().unwrap().bounds.left,
+        -1000
+    );
+    assert_eq!(fixture.0.lock().unwrap().taps, ["below"]);
+}
+
+#[test]
+fn native_viewport_recognizes_ax_scroll_area_but_not_two_independent_panes() {
+    let mut left = node("", "", -850, ElementType::StaticText);
+    left.resource_id = None;
+    left.class_name = "AXScrollArea".into();
+    left.bounds = Bounds {
+        left: -1000,
+        top: 0,
+        right: -700,
+        bottom: 200,
+    };
+    let found = viewport::inspect(&[left.clone()], false).unwrap().unwrap();
+    assert_eq!(found.center(), Point { x: -850., y: 100. });
+    let mut right = left.clone();
+    right.bounds.left = -600;
+    right.bounds.right = -300;
+    assert!(viewport::inspect(&[left, right], false).is_err());
+}
+
+#[tokio::test(start_paused = true)]
+async fn macos_viewport_does_not_tap_if_the_entry_slice_cannot_be_restored() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        macos_flutter: true,
+        viewport_fixture: true,
+        no_scroll_restore: true,
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId": "macos:41:42", "allowedTaps": ["left", "below"]
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    assert!(
+        map.notes
+            .iter()
+            .any(|note| note.contains("Could not restore the original viewport"))
+    );
+    assert!(fixture.0.lock().unwrap().taps.is_empty());
+    assert!(map.transitions.is_empty());
 }
 
 #[tokio::test(start_paused = true)]

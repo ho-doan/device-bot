@@ -31,6 +31,7 @@ def wait_for(check, message):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', action='store_true')
+    parser.add_argument('--query-only', action='store_true', help='Check AX queries without sending input')
     parser.add_argument('--server-binary', type=Path,
                         default=Path(__file__).resolve().parents[1] / 'server/target/debug/device-bot')
     args = parser.parse_args()
@@ -94,21 +95,39 @@ def main():
                 wait_for(initialize, 'Backend did not start')
                 rpc('notifications/initialized')
 
-                def tool(name, arguments, expect_error=False):
+                def tool(name, arguments, expect_error=None):
                     result = rpc('tools/call', {'name': name, 'arguments': arguments})
-                    if expect_error:
-                        assert result.get('isError'), 'Expected a rejected input operation'
+                    if expect_error is not None:
+                        assert result.get('isError') and expect_error in str(result.get('content')), result
                     else:
                         assert not result.get('isError'), result
                     return result.get('structuredContent', {})
 
-                def launch(name):
+                def launch(name, *arguments):
                     path = root / (name + '.json')
-                    process = subprocess.Popen([str(fixture), str(path)], stdout=log, stderr=log,
-                                               stdin=subprocess.DEVNULL)
+                    process = subprocess.Popen([str(fixture), str(path), *arguments],
+                                               stdout=log, stderr=log, stdin=subprocess.DEVNULL)
                     children.append(process)
                     wait_for(path.exists, 'AppKit fixture did not start')
                     return process, path
+
+                def query_value(device, text):
+                    elements = tool('mobile_list_elements_on_screen', dict(
+                        device, source='native', filter=text.upper(), elementType='textField', maxResults=1,
+                    ))['elements']
+                    assert len(elements) == 1, elements
+                    editor = elements[0]
+                    assert editor['contentDescription'] == 'Notes input' and editor['value'] == text, editor
+                    return editor
+
+                if args.query_only:
+                    text = 'Device Bot AX query fixture'
+                    first, state_path = launch('query', text)
+                    state = json.loads(state_path.read_text())
+                    query_value({'deviceId': 'macos-host', 'processId': first.pid}, text)
+                    query_value({'deviceId': f"macos:{first.pid}:{state['windowId']}"}, text)
+                    print('PASS: native AX host/window queries match case, value, and type before the result limit')
+                    return
 
                 first, state_path = launch('first')
                 second, other_state = launch('second')
@@ -116,9 +135,12 @@ def main():
                 tool('mobile_activate_app', dict(device, processId=second.pid))
                 elements = tool('mobile_list_elements_on_screen',
                                 dict(device, processId=first.pid, source='native'))['elements']
-                tool('mobile_type_keys', dict(device, text='must not reach either app'), expect_error=True)
-                assert json.loads(state_path.read_text())['text'] == ''
-                assert json.loads(other_state.read_text())['text'] == ''
+                for path in (state_path, other_state):
+                    assert json.loads(path.read_text())['text'] == '', f'{path.stem} input was already populated'
+                tool('mobile_type_keys', dict(device, text='must not reach either app'),
+                     expect_error='Activate the selected macOS app')
+                for path in (state_path, other_state):
+                    assert json.loads(path.read_text())['text'] == '', f'{path.stem} input received blocked typing'
                 tool('mobile_activate_app', dict(device, processId=first.pid))
                 field = next(e for e in elements if e.get('contentDescription') == 'Notes input')
                 disabled = next(e for e in elements if e.get('contentDescription') == 'Disabled input')
@@ -135,9 +157,8 @@ def main():
                 tool('mobile_type_keys', dict(device, text=text))
                 wait_for(lambda: json.loads(state_path.read_text())['text'] == text,
                          'Real keyboard input did not reach the app delegate')
-                current = tool('mobile_list_elements_on_screen',
-                               dict(device, processId=first.pid, source='native', filter='Notes input'))['elements'][0]
-                assert current['value'] == text and current['focused']
+                current = query_value(dict(device, processId=first.pid), text)
+                assert current['focused'], current
                 tap(next(e for e in elements if e.get('text') == 'Commit fixture'))
                 wait_for(lambda: json.loads(state_path.read_text())['committed'], 'AXPress did not invoke button action')
                 area = next(e for e in elements if e.get('contentDescription') == 'Drag test area')['bounds']
@@ -148,7 +169,8 @@ def main():
                 assert state['dragMoves'] > 0, state
                 for actual, expected in [(state['dragStart'], [100, 60]), (state['dragEnd'], [400, 170])]:
                     assert all(abs(a - e) <= 1 for a, e in zip(actual, expected)), state
-                print('PASS: native AX focus/value/enabled; real keyboard delegate; button; drag endpoints; PID guard')
+                print('PASS: native AX focus/value/enabled and typed query; '
+                      'real keyboard delegate; button; drag endpoints; PID guard')
             finally:
                 for process in reversed(children):
                     if process.poll() is None:

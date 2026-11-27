@@ -38,6 +38,8 @@ class Delegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
       styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
     window.title = "Device Bot Input Fixture"
     let input = NSTextField(frame: NSRect(x: 20, y: 320, width: 400, height: 30))
+    input.stringValue = CommandLine.arguments.dropFirst(2).first ?? ""
+    state["text"] = input.stringValue
     input.placeholderString = "Notes input"
     input.setAccessibilityLabel("Notes input")
     input.delegate = self

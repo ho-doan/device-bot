@@ -22,7 +22,7 @@ app. See [capability preflight](architecture.md#device-capability-preflight).
 | Chrome | DOM via CDP | Page and frame selectors | Unsupported | CDP screenshots encoded by ffmpeg |
 
 Android and iOS Simulator support installing and uninstalling apps. Physical
-iOS uses `go-ios` for install and `xcrun devicectl` for uninstall. Desktop
+iOS uses `xcrun devicectl` for both operations. Desktop
 and Chrome app install/uninstall return `Unsupported`. macOS and Windows
 implement native drag through the swipe tool. Browser runtime and network
 observation are Chrome-only and scoped to the attached page.
@@ -64,3 +64,8 @@ The [automation workflow](../../.github/workflows/automation-tests.yml) runs
 web scenarios on Linux and Windows and provides a manually triggered iOS
 Simulator job. Use the [automation guide](../automation_test/README.md) for
 the runtime prerequisites and replay procedure.
+
+On macOS, run `python3 scripts/test_macos_native_input.py --run --query-only`
+from the repository root with a built server and Accessibility permission.
+The smoke test checks the same typed value query through a host target and an
+explicit window target.

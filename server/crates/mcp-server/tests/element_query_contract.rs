@@ -1,7 +1,7 @@
-use robot_core::{ElementQuery, Robot, RobotError};
+use robot_core::{ElementQuery, Robot, RobotError, WebContext};
 
 #[tokio::test]
-async fn adapters_reject_unsupported_keyboard_exclusion_before_native_io() {
+async fn adapters_reject_unsupported_query_options_before_native_io() {
     let adapters: [(&str, &str, Box<dyn Robot>); 5] = [
         (
             "Android",
@@ -43,5 +43,20 @@ async fn adapters_reject_unsupported_keyboard_exclusion_before_native_io() {
             matches!(&result, Err(RobotError::Unsupported(message)) if message.contains("keyboard exclusion")),
             "{name} must report unsupported keyboard exclusion, got {result:?}"
         );
+
+        if matches!(name, "Android" | "macOS" | "Windows") {
+            let scoped = ElementQuery {
+                web_context: Some(WebContext {
+                    app_id: Some("fixture.app".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let result = robot.list_elements_query(device, scoped).await;
+            assert!(
+                matches!(&result, Err(RobotError::Unsupported(message)) if message.contains("web context")),
+                "{name} must report unsupported document scope, got {result:?}"
+            );
+        }
     }
 }

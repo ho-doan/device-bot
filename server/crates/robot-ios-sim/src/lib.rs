@@ -670,6 +670,7 @@ impl IosSimulatorRobot {
                 "DEVICE_BOT_TEXT" => Some(("text", json!(value))),
                 "DEVICE_BOT_ELEMENT_FILTER" => Some(("filter", json!(value))),
                 "DEVICE_BOT_ELEMENT_TYPE" => Some(("elementType", json!(value))),
+                "DEVICE_BOT_EXCLUDE_KEYBOARD" => Some(("excludeKeyboard", json!(true))),
                 "DEVICE_BOT_IME_ACTION" => Some(("action", json!(value))),
                 "DEVICE_BOT_MAX_RESULTS" => {
                     Some(("maxResults", json!(value.parse::<usize>().ok()?)))
@@ -685,7 +686,7 @@ impl IosSimulatorRobot {
                     .dispatch_for(device_id, "screen-geometry", Value::Object(params), timeout)
                     .await
             }
-            "tap" | "long_press" | "double_tap" => {
+            "tap" | "long_press" | "double_tap" | "clear-text" => {
                 agent
                     .dispatch_for(device_id, action, Value::Object(params), timeout)
                     .await
@@ -1268,6 +1269,13 @@ impl Robot for IosSimulatorRobot {
         .map(|_| ())
     }
 
+    async fn clear_text(&self, device_id: &str) -> Result<(), RobotError> {
+        let app_id = self.active_app(device_id).await?;
+        self.run_xctest(device_id, &app_id, "clear-text", &[], None)
+            .await
+            .map(|_| ())
+    }
+
     async fn swipe(
         &self,
         device_id: &str,
@@ -1547,13 +1555,19 @@ impl Robot for IosSimulatorRobot {
         {
             return self.webview_elements(device_id, &context, &query).await;
         }
-        let Some(element_type) = query.element_type else {
+        if query.element_type.is_none() && !query.exclude_system_keyboard {
             return self
                 .list_elements_filtered(device_id, query.filter.as_deref(), query.max_results)
                 .await;
-        };
+        }
         let app_id = self.active_app(device_id).await?;
-        let mut values = vec![("DEVICE_BOT_ELEMENT_TYPE", element_type.as_str().to_owned())];
+        let mut values = Vec::new();
+        if let Some(element_type) = query.element_type {
+            values.push(("DEVICE_BOT_ELEMENT_TYPE", element_type.as_str().to_owned()));
+        }
+        if query.exclude_system_keyboard {
+            values.push(("DEVICE_BOT_EXCLUDE_KEYBOARD", "1".into()));
+        }
         if let Some(filter) = query.filter.as_deref() {
             values.push(("DEVICE_BOT_ELEMENT_FILTER", filter.to_owned()));
         }
@@ -1563,9 +1577,17 @@ impl Robot for IosSimulatorRobot {
         let result = self
             .run_xctest(device_id, &app_id, "list-elements", &values, None)
             .await?;
-        if result.get("appliedElementType").and_then(Value::as_str) != Some(element_type.as_str()) {
+        if let Some(element_type) = query.element_type
+            && result.get("appliedElementType").and_then(Value::as_str)
+                != Some(element_type.as_str())
+        {
             return Err(RobotError::Unsupported(
                 "iOS Simulator XCTest agent did not apply elementType; rebuild and reinstall the runner before querying by type".into(),
+            ));
+        }
+        if query.exclude_system_keyboard && result["excludedKeyboard"] != true {
+            return Err(RobotError::Unsupported(
+                "The simulator helper did not filter the system keyboard".into(),
             ));
         }
         let elements = decode_agent_elements(&result)?;

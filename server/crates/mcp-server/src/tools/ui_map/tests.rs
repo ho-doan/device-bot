@@ -44,6 +44,7 @@ struct FixtureState {
     page: usize,
     macos_flutter: bool,
     viewport_fixture: bool,
+    viewport_last_slice: Option<i32>,
     no_scroll_restore: bool,
     viewport_slide_reads: Option<usize>,
     viewport_content_shift_on_delete: Option<bool>,
@@ -63,6 +64,8 @@ struct FixtureState {
     xctest_generation: Option<usize>,
     xctest_uuid: bool,
     tree_delay_ms: u64,
+    focused_tree_delay_ms: u64,
+    duplicate_editor_after_focus: bool,
     tap_delay_ms: u64,
     focus: bool,
     entered: bool,
@@ -284,7 +287,10 @@ impl Robot for Fixture {
                 state.checked = !state.checked;
                 "toggle"
             }
-            (0, 80) if state.viewport_fixture && state.slice == 1 => {
+            (0, 80)
+                if state.viewport_fixture
+                    && state.slice == state.viewport_last_slice.unwrap_or(1) =>
+            {
                 state.page = 1;
                 state.slice = 0;
                 "below"
@@ -371,7 +377,8 @@ impl Robot for Fixture {
         }
         state.scrolls.push(dy as i32);
         if state.page == 0 && !(state.no_scroll_restore && dy < 0.) {
-            state.slice = (state.slice + dy.signum() as i32).clamp(0, 1);
+            state.slice =
+                (state.slice + dy.signum() as i32).clamp(0, state.viewport_last_slice.unwrap_or(1));
         }
         Ok(())
     }
@@ -391,7 +398,8 @@ impl Robot for Fixture {
         let delta = (from.y - to.y) as i32;
         state.scrolls.push(delta);
         if state.page == 0 {
-            state.slice = (state.slice + delta.signum()).clamp(0, 1);
+            state.slice =
+                (state.slice + delta.signum()).clamp(0, state.viewport_last_slice.unwrap_or(1));
         }
         Ok(())
     }
@@ -421,7 +429,14 @@ impl Robot for Fixture {
     }
 
     async fn list_elements(&self, device: &str) -> Result<Vec<UiElement>, RobotError> {
-        let delay = self.0.lock().unwrap().tree_delay_ms;
+        let delay = {
+            let state = self.0.lock().unwrap();
+            if state.focus && state.focused_tree_delay_ms != 0 {
+                state.focused_tree_delay_ms
+            } else {
+                state.tree_delay_ms
+            }
+        };
         if delay != 0 {
             tokio::time::sleep(Duration::from_millis(delay)).await;
         }
@@ -455,6 +470,9 @@ impl Robot for Fixture {
                     node("External help", "external", 50, ElementType::Link),
                     toggle,
                 ];
+                if s.focus && s.duplicate_editor_after_focus {
+                    rows.push(node("Search", "search", 100, ElementType::TextField));
+                }
                 if let Some(generation) = xctest_generation {
                     let snapshot_id = |slot| {
                         if s.xctest_uuid {
@@ -523,7 +541,15 @@ impl Robot for Fixture {
                     bottom: 200,
                 };
                 rows.push(viewport);
-                if s.page == 0 && s.slice == 1 {
+                if s.page == 0 && s.viewport_last_slice.is_some() {
+                    rows.push(node(
+                        &format!("Position {}", s.slice),
+                        "slice-marker",
+                        120,
+                        ElementType::StaticText,
+                    ));
+                }
+                if s.page == 0 && s.slice == s.viewport_last_slice.unwrap_or(1) {
                     rows.retain(|row| row.resource_id.as_deref() != Some("left"));
                     rows.push(node("Below fold", "below", 80, ElementType::Button));
                 }
@@ -617,9 +643,9 @@ async fn macos_viewport_reveals_controls_and_exports_scroll_before_tap() {
 
 #[tokio::test(start_paused = true)]
 async fn mobile_native_viewports_reveal_and_tap_controls_outside_entry_tree() {
-    for (device_id, class_name) in [
-        ("ios-fixture", "scrollView"),
-        ("android-fixture", "android.widget.ScrollView"),
+    for (device_id, class_name, last_slice) in [
+        ("ios-fixture", "scrollView", None),
+        ("android-fixture", "android.widget.ScrollView", Some(6)),
     ] {
         let dir = Temp::new();
         let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
@@ -627,6 +653,7 @@ async fn mobile_native_viewports_reveal_and_tap_controls_outside_entry_tree() {
             android: device_id == "android-fixture",
             xctest_generation: (device_id == "ios-fixture").then_some(0),
             viewport_fixture: true,
+            viewport_last_slice: last_slice,
             ..Default::default()
         })));
         let robot: Arc<dyn Robot> = fixture.clone();
@@ -654,8 +681,40 @@ async fn mobile_native_viewports_reveal_and_tap_controls_outside_entry_tree() {
         };
         assert!(yaml.find(reveal).unwrap() < yaml.find("tap_element:").unwrap());
         assert!(yaml.contains(class_name));
+        assert_eq!(
+            yaml.matches(reveal).count(),
+            last_slice.unwrap_or(1) as usize
+        );
+        assert!(!map.screens[0].native_viewport.as_ref().unwrap().hit_limit);
         assert_eq!(fixture.0.lock().unwrap().taps, ["below"]);
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn scoped_mobile_relaunches_to_verify_a_control_after_a_probe_cannot_rewind() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        ios: true,
+        viewport_fixture: true,
+        no_scroll_restore: true,
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId":"ios-fixture", "resetAppId":"fixture.app", "allowedTaps":["below"]
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    assert!(
+        map.notes
+            .iter()
+            .any(|note| note.contains("Could not restore the original viewport"))
+    );
+    assert_eq!(fixture.0.lock().unwrap().taps, ["below"]);
+    assert_eq!(map.transitions.len(), 1);
 }
 
 #[test]
@@ -1098,6 +1157,49 @@ async fn a_slow_map_action_is_not_cut_off_by_a_second_case_deadline() {
     assert_eq!(fixture.0.lock().unwrap().taps, ["left"]);
     assert_eq!(map.transitions.len(), 1);
     assert_eq!(map.screens[0].controls[0].status, "observed");
+}
+
+#[tokio::test(start_paused = true)]
+async fn mobile_map_accepts_focus_confirmed_by_a_slow_native_observation() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        android: true,
+        focused_tree_delay_ms: 31_000,
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId":"android-fixture", "resetAppId":"fixture.app",
+        "inputs":{"search":"synthetic-QC-value"}
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    assert!(fixture.0.lock().unwrap().entered);
+    assert_eq!(map.transitions.len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn mobile_input_confirms_the_unique_focused_copy_of_an_editor() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        ios: true,
+        duplicate_editor_after_focus: true,
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId":"ios-fixture", "resetAppId":"fixture.app",
+        "inputs":{"search":"synthetic-QC-value"}
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    assert!(fixture.0.lock().unwrap().entered);
 }
 
 #[tokio::test(start_paused = true)]

@@ -51,14 +51,17 @@ final class DeviceKitXCTestHostAgent {
     case "dump":
       ensureApp()
       let elementType = string(command.params["elementType"])
+      let excludeKeyboard = command.params["excludeKeyboard"] as? Bool ?? false
       do {
         let elements = try driver.dumpUi(
           filter: string(command.params["filter"]),
           elementType: elementType,
-          maxResults: integer(command.params["maxResults"])
+          maxResults: integer(command.params["maxResults"]),
+          excludeKeyboard: excludeKeyboard
         ).map(elementJson)
         var body: [String: Any] = ["ok": true, "elements": elements]
         if let elementType { body["appliedElementType"] = elementType }
+        if excludeKeyboard { body["excludedKeyboard"] = true }
         return body
       } catch let error as DumpError {
         return ["ok": false, "message": error.description]
@@ -101,6 +104,11 @@ final class DeviceKitXCTestHostAgent {
       // Text is payload, not an identifier: preserve spaces and IME newlines.
       let ok = driver.typeText(text)
       return ["ok": ok, "message": ok ? "text" : "text_failed"]
+    case "clear-text":
+      guard let error = driver.clearFocusedText() else {
+        return ["ok": true, "message": "clear_text"]
+      }
+      return ["ok": false, "message": error]
     case "ime-action":
       ensureApp()
       let action = string(command.params["action"]) ?? ""

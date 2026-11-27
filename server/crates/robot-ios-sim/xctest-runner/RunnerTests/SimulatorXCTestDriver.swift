@@ -14,6 +14,27 @@ enum DumpError: Error, CustomStringConvertible {
 }
 
 final class DeviceKitXCTestDriver {
+  private struct SnapshotKey: Hashable {
+    let type: XCUIElement.ElementType
+    let identifier: String
+    let label: String
+    let x: CGFloat
+    let y: CGFloat
+    let width: CGFloat
+    let height: CGFloat
+
+    init(_ node: XCUIElementSnapshot) {
+      type = node.elementType
+      identifier = node.identifier
+      label = node.label
+      let frame = node.frame
+      x = frame.minX
+      y = frame.minY
+      width = frame.width
+      height = frame.height
+    }
+  }
+
   struct UiElement {
     let nodeId: String
     let automationId: String?
@@ -47,7 +68,10 @@ final class DeviceKitXCTestDriver {
     return frame.width > 0 && frame.height > 0 ? frame : nil
   }
 
-  func dumpUi(filter: String? = nil, elementType: String? = nil, maxResults: Int? = nil) throws -> [UiElement] {
+  func dumpUi(
+    filter: String? = nil, elementType: String? = nil, maxResults: Int? = nil,
+    excludeKeyboard: Bool = false
+  ) throws -> [UiElement] {
     guard let app else { return [] }
     generation += 1
     let normalizedFilter = filter.flatMap { nonEmpty($0) }?.lowercased()
@@ -60,7 +84,18 @@ final class DeviceKitXCTestDriver {
       ? [app.descendants(matching: .any)] : typedQueries
     var elements: [UiElement] = []
     let keyboard = app.keyboards.firstMatch
-    let keyboardFrame = keyboard.exists ? keyboard.frame : .zero
+    let keyboardExists = keyboard.exists
+    let keyboardFrame = keyboardExists ? keyboard.frame : .zero
+    // Query the entire keyboard subtree once. Querying it again for each
+    // element makes the Emoji keyboard large enough to stall the bridge.
+    var keyboardNodes = Set<SnapshotKey>()
+    if excludeKeyboard && keyboardExists {
+      var pending = try app.keyboards.allElementsBoundByIndex.map { try $0.snapshot() }
+      while let node = pending.popLast() {
+        keyboardNodes.insert(SnapshotKey(node))
+        pending.append(contentsOf: node.children)
+      }
+    }
     let predicate = normalizedFilter.map {
       NSPredicate(
         format: "identifier CONTAINS[c] %@ OR label CONTAINS[c] %@ OR value CONTAINS[c] %@",
@@ -83,7 +118,8 @@ final class DeviceKitXCTestDriver {
         let label = nonEmpty(snapshot.label)
         let value = stringValue(snapshot.value)
         let coveredByKeyboard = keyboardFrame.contains(CGPoint(x: frame.midX, y: frame.midY))
-        let keyboardMatch = coveredByKeyboard
+        if excludeKeyboard && keyboardNodes.contains(SnapshotKey(snapshot)) { continue }
+        let keyboardMatch = coveredByKeyboard && !excludeKeyboard
           ? keyboard.descendants(matching: snapshot.elementType).matching(
             NSPredicate(format: "label == %@ AND identifier == %@", snapshot.label, snapshot.identifier)
           ).firstMatch : nil
@@ -228,6 +264,46 @@ final class DeviceKitXCTestDriver {
       .replacingOccurrences(of: "\n", with: "")
     if !text.isEmpty { app.typeText(text) }
     return !submits || pressSubmitKey(in: app)
+  }
+
+  /// Clear only the current keyboard responder. Do not retap or pick an editor
+  /// by its order, since a screen can expose both an email and a password field.
+  func clearFocusedText() -> String? {
+    guard let app, app.state == .runningForeground else {
+      return "Open the selected app before clearing text"
+    }
+    let types: [XCUIElement.ElementType] = [.textField, .secureTextField, .textView, .searchField]
+    let focused = types.flatMap { app.descendants(matching: $0).allElementsBoundByIndex }
+      .filter { element in
+        guard let snapshot = try? element.snapshot() else { return false }
+        return snapshot.isEnabled && optionalFocus(snapshot as? NSObject) == true
+      }
+    guard focused.count == 1, let field = focused.first else {
+      return "Expected exactly one focused editable field before clearing text"
+    }
+    func isEmpty() -> Bool {
+      let remaining = field.value as? String
+      return remaining == nil || remaining == "" || remaining == field.placeholderValue
+    }
+    if isEmpty() { return nil }
+    let delete = XCUIKeyboardKey.delete.rawValue
+    app.typeKey("a", modifierFlags: .command)
+    app.typeText(delete)
+    if isEmpty() { return nil }
+
+    // Some editors handle their own hardware shortcuts. Use the edit menu to
+    // select the remainder rather than assuming the caret is at the end.
+    field.press(forDuration: 1)
+    let selectAll = app.menuItems["Select All"].firstMatch
+    guard selectAll.exists, selectAll.isHittable else {
+      return "Could not select the remaining contents of the focused field"
+    }
+    selectAll.tap()
+    guard let snapshot = try? field.snapshot(), optionalFocus(snapshot as? NSObject) == true else {
+      return "The focused field changed while clearing text"
+    }
+    app.typeText(delete)
+    return isEmpty() ? nil : "The focused field was not empty after clearing text"
   }
 
   func terminate() {

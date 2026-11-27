@@ -171,6 +171,7 @@ async fn element_type_and_text_filter_run_before_max_results() {
                 max_results: Some(1),
                 web_context: None,
                 include_frames: false,
+                exclude_system_keyboard: false,
             },
         )
         .await
@@ -191,6 +192,7 @@ async fn element_type_and_text_filter_run_before_max_results() {
                 max_results: Some(2),
                 web_context: None,
                 include_frames: false,
+                exclude_system_keyboard: false,
             },
         )
         .await

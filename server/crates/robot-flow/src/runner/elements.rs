@@ -93,13 +93,13 @@ impl FlowRunner {
         tap: bool,
         unique: bool,
     ) -> Result<Value> {
-        self.find_matching(args, tap, tap, unique).await
+        self.find_matching(args, tap, tap, unique, false).await
     }
 
     pub(super) async fn find_gesture_target(&mut self, args: &Value) -> Result<Value> {
         // Some platforms expose long-only or double-click targets without a
         // single-click semantic action. Still require a unique enabled node.
-        self.find_matching(args, false, true, true).await
+        self.find_matching(args, false, true, true, false).await
     }
 
     async fn find_matching(
@@ -108,6 +108,7 @@ impl FlowRunner {
         clickable: bool,
         enabled: bool,
         unique: bool,
+        focused: bool,
     ) -> Result<Value> {
         let s = schema::selector(args, &self.profile)?;
         let desktop_points = self.device_id()?.starts_with("macos:");
@@ -117,14 +118,28 @@ impl FlowRunner {
                     .and_then(Value::as_u64)
                     .unwrap_or(30_000),
             );
-        tokio::time::timeout_at(deadline, async {
+        const SELECTOR_NOT_READY: &str =
+            "element missing, disabled, or unstable before bounded wait expired";
+        let complete_observations = self.complete_selector_observations;
+        let samples = s
+            .stable_samples
+            .or(self.profile.stable_samples)
+            .unwrap_or(1);
+        let find = async {
             let mut previous = Value::Null;
             let mut stable = 0;
             let mut attempts = 0;
+            let mut late_samples = 0;
             let mut viewport = None;
             let mut reveal_attempts = 0;
             loop {
                 let mut found = self.query(&s).await?;
+                // A focused copy can disambiguate the post-tap tree. If no
+                // copy is focused yet, keep the existing retry or ambiguity.
+                if focused && found.iter().any(|element| element["focused"] == true) {
+                    found.retain(|element| element["focused"] == true);
+                }
+                let mut eligible = false;
                 if clickable {
                     let controls = found
                         .iter()
@@ -152,17 +167,24 @@ impl FlowRunner {
                     let bounds = element_rectangle(e, desktop_points)?;
                     if (!enabled || e["enabled"] == true) && (!clickable || e["clickable"] == true)
                     {
-                        let root_document = e.pointer("/webContext/framePath")
-                            .and_then(Value::as_array).is_none_or(Vec::is_empty);
+                        eligible = true;
+                        let root_document = e
+                            .pointer("/webContext/framePath")
+                            .and_then(Value::as_array)
+                            .is_none_or(Vec::is_empty);
                         if clickable && s.scroll_into_view && root_document {
                             let device = self.device_id()?.to_owned();
                             let (width, height) = match viewport {
                                 Some(size) => size,
                                 None => {
-                                    let result = self.call(VIEWPORT, json!({"deviceId":device})).await?;
-                                    let metric = |key| result["structuredContent"][key].as_f64()
-                                        .filter(|size| size.is_finite() && *size > 0.0)
-                                        .ok_or("invalid browser viewport dimensions");
+                                    let result =
+                                        self.call(VIEWPORT, json!({"deviceId":device})).await?;
+                                    let metric = |key| {
+                                        result["structuredContent"][key]
+                                            .as_f64()
+                                            .filter(|size| size.is_finite() && *size > 0.0)
+                                            .ok_or("invalid browser viewport dimensions")
+                                    };
                                     let size = (metric("width")?, metric("height")?);
                                     viewport = Some(size);
                                     size
@@ -179,7 +201,11 @@ impl FlowRunner {
                                 reveal_attempts += 1;
                                 let scroll_x = center_x.clamp(width * 0.1, width * 0.9);
                                 let scroll_y = center_y.clamp(height * 0.1, height * 0.9);
-                                self.call(SCROLL, scroll_arguments(&device, scroll_x, scroll_y, dx, dy)).await?;
+                                self.call(
+                                    SCROLL,
+                                    scroll_arguments(&device, scroll_x, scroll_y, dx, dy),
+                                )
+                                .await?;
                                 stable = 0;
                                 previous = Value::Null;
                                 sleep(Duration::from_millis(160)).await;
@@ -209,11 +235,7 @@ impl FlowRunner {
                             stable = 1;
                             previous = identity;
                         }
-                        if stable
-                            >= s.stable_samples
-                                .or(self.profile.stable_samples)
-                                .unwrap_or(1)
-                        {
+                        if stable >= samples {
                             return Ok(e.clone());
                         }
                     }
@@ -236,14 +258,23 @@ impl FlowRunner {
                         }
                     }
                 }
+                if complete_observations && Instant::now() >= deadline {
+                    late_samples += 1;
+                    if !eligible || late_samples >= samples {
+                        return Err(FlowError::new(ErrorKind::Timeout, SELECTOR_NOT_READY));
+                    }
+                }
                 attempts += 1;
                 sleep(Duration::from_millis(250)).await;
             }
-        })
-        .await
-        .map_err(|_| {
-            "element missing, disabled, or unstable before bounded wait expired".to_owned()
-        })?
+        };
+        if complete_observations {
+            find.await
+        } else {
+            tokio::time::timeout_at(deadline, find)
+                .await
+                .map_err(|_| SELECTOR_NOT_READY.to_owned())?
+        }
     }
 
     pub(super) fn query<'a>(
@@ -342,13 +373,19 @@ impl FlowRunner {
     pub(super) async fn focus(&mut self, args: &Value) -> Result<Value> {
         let s = schema::selector(args, &self.profile)?;
         for _ in 0..3 {
-            let e = self.find(args, true).await?;
+            let e = self
+                .find(args, true)
+                .await
+                .map_err(|error| error.context("locate control before tapping"))?;
             self.tap_element(&s, &e).await?;
             if !s.require_focus {
                 self.remember_web_focus(&e)?;
                 return Ok(e);
             }
-            let focused = self.find(args, false).await?;
+            let focused = self
+                .find_matching(args, false, true, true, true)
+                .await
+                .map_err(|error| error.context("observe field after tapping"))?;
             if focused.get("focused").and_then(Value::as_bool) == Some(true) {
                 self.remember_web_focus(&focused)?;
                 return Ok(focused);

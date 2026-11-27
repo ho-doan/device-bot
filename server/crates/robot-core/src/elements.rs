@@ -69,6 +69,8 @@ pub struct ElementQuery {
     pub web_context: Option<WebContext>,
     /// Live inspection opts into descendant frames. Unscoped queries stay on the root document.
     pub include_frames: bool,
+    /// Omit nodes owned by the system keyboard in drivers that expose them.
+    pub exclude_system_keyboard: bool,
 }
 
 /// A normalized accessibility node from the platform UI tree.

@@ -1436,6 +1436,7 @@ mod tests {
                 max_results: Some(1),
                 web_context: None,
                 include_frames: false,
+                exclude_system_keyboard: false,
             },
         );
         assert_eq!(found.len(), 1);
@@ -1458,6 +1459,7 @@ mod tests {
                 max_results: Some(2),
                         web_context: None,
             include_frames: false,
+            exclude_system_keyboard: false,
 },
         );
         assert_eq!(email.len(), 1);

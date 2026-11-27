@@ -111,6 +111,7 @@ pub(super) fn definition() -> ToolDefinition {
                 "from":{"type":"string","pattern":"^s[0-9]+$"},
                 "to":{"type":"string","description":"Screen ID, exact screen title, or exact source route"},
                 "allButtons":{"type":"boolean"},
+                "excludeSystemKeyboard":{"type":"boolean","description":"On iOS Simulator, do not inventory or tap nodes owned by the system keyboard. App inputs still use the focused editor."},
                 "allowedTaps":{"type":"array","maxItems":150,"items":{"type":"string"}},
                 "fixtureControls":{"type":"array","maxItems":30,"items":{"type":"string"},"description":"Legacy additional exact tap selectors; new callers can use allowedTaps."},
                 "expandSelectionStates":{"type":"boolean","description":"Explore every checked or selected variant even if it exposes the same actionable controls"},

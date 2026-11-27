@@ -1408,6 +1408,7 @@ mod tests {
             max_results: Some(1),
             web_context: None,
             include_frames: false,
+            exclude_system_keyboard: false,
         };
         let elements = robot_core::apply_element_query(
             robot.list_flutter_elements(DEVICE_ID).await.unwrap(),

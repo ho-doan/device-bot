@@ -124,6 +124,10 @@ impl Viewport {
     pub fn same_layout(&self, other: &Self) -> bool {
         self.same_container(other) && self.slice == other.slice
     }
+
+    pub fn layout_signature(&self) -> u64 {
+        self.slice
+    }
 }
 
 pub(super) fn inspect(elements: &[UiElement], flutter: bool) -> Result<Option<Viewport>, ()> {

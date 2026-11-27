@@ -35,6 +35,8 @@ pub struct Options {
     #[serde(default)]
     pub all_buttons: bool,
     #[serde(default)]
+    pub exclude_system_keyboard: bool,
+    #[serde(default)]
     pub allowed_taps: Vec<String>,
     #[serde(default)]
     pub fixture_controls: Vec<String>,
@@ -456,6 +458,7 @@ impl Engine<'_> {
     async fn native_tree(&self) -> Result<(Vec<UiElement>, bool), String> {
         let mut query = ElementQuery {
             include_frames: matches!(self.scope, Scope::Web { .. }),
+            exclude_system_keyboard: self.options.exclude_system_keyboard,
             max_results: Some(450),
             ..Default::default()
         };
@@ -708,9 +711,14 @@ impl Engine<'_> {
         reverse: i32,
     ) -> Result<(), String> {
         let viewport = anchor.native_viewport.as_ref().expect("viewport anchor");
-        for _ in 0..MAX_STEPS_PER_DIRECTION {
+        let mobile = self.scope.is_mobile() || matches!(self.scope, Scope::IosNative);
+        let mut visited = HashSet::new();
+        for step in 0usize.. {
             if same_slice(anchor, &current) {
                 return Ok(());
+            }
+            if !mobile && step >= usize::from(MAX_STEPS_PER_DIRECTION) {
+                break;
             }
             let previous = current
                 .native_viewport
@@ -718,6 +726,9 @@ impl Engine<'_> {
                 .filter(|v| viewport.same_container(v))
                 .ok_or("The scroll viewport is no longer available.")?
                 .clone();
+            if !visited.insert((current.fingerprint, previous.layout_signature())) {
+                break;
+            }
             current = self.scroll_slice(viewport, reverse).await?;
             if current
                 .native_viewport
@@ -739,11 +750,17 @@ impl Engine<'_> {
         let mut inventory = anchor.controls.clone();
         let mut hit_limit = false;
         let mut stopped = None;
+        let mobile = self.scope.is_mobile() || matches!(self.scope, Scope::IosNative);
         'directions: for delta in [viewport.step(), -viewport.step()] {
             let mut previous = viewport.clone();
             let mut slices: Vec<(u64, Viewport)> = Vec::new();
+            let mut visited = HashSet::from([(anchor.fingerprint, viewport.layout_signature())]);
             let mut last = None;
-            for _ in 0..MAX_STEPS_PER_DIRECTION {
+            for step in 0usize.. {
+                if !mobile && step >= usize::from(MAX_STEPS_PER_DIRECTION) {
+                    hit_limit = true;
+                    break;
+                }
                 let current = match self.scroll_slice(viewport, delta).await {
                     Ok(current) => current,
                     Err(error) => {
@@ -778,6 +795,12 @@ impl Engine<'_> {
                     if last.is_some() {
                         last = Some(current);
                     }
+                    break;
+                }
+                if !visited.insert((current.fingerprint, slice.layout_signature())) {
+                    last = Some(current);
+                    stopped =
+                        Some("Viewport discovery returned to an already observed position.".into());
                     break;
                 }
                 previous = slice.clone();
@@ -819,10 +842,26 @@ impl Engine<'_> {
                     inventory.push(row);
                 }
                 last = Some(current);
+                if hit_limit && mobile {
+                    break;
+                }
             }
-            hit_limit |= slices.len() == usize::from(MAX_STEPS_PER_DIRECTION);
-            if let Some(last) = last {
-                self.restore_slice(anchor, last, -delta).await?;
+            if let Some(last) = last
+                && let Err(error) = self.restore_slice(anchor, last, -delta).await
+            {
+                if mobile
+                    && self.options.reset_app_id.is_some()
+                    && error == "Could not restore the original viewport safely."
+                {
+                    // Retain what was actually observed. Each recorded action
+                    // must still verify its original branch/anchor separately.
+                    stopped = Some(error);
+                    break;
+                }
+                return Err(error);
+            }
+            if hit_limit && mobile {
+                break;
             }
         }
         let revealed = inventory.len() - anchor.controls.len();

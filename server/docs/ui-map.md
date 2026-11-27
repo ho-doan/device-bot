@@ -46,8 +46,10 @@ the control after scrolling.
 On macOS, Android and iOS, the crawler checks for a unique, visible vertical
 scroll container. It uses AX or the scan's Flutter tree on macOS, native
 ScrollView/ListView nodes on Android, and XCTest scroll-view roles on iOS.
-It probes up to four observed positions per direction,
-reads the tree after each scroll, and verifies the original viewport before
+On mobile it follows new viewport positions until the view stops advancing,
+repeats a position, or reaches the reported control inventory limit. macOS
+probes up to four observed positions per direction. The crawler reads the
+tree after each scroll and verifies the original viewport before
 trying controls. Controls first seen elsewhere in that viewport are kept on
 the original screen and marked `initiallyOffscreen`. Their action YAML scrolls
 inside the measured container before resolving and tapping the control. On
@@ -56,8 +58,14 @@ It starts below the center for a downward scroll so an editor there cannot
 consume the gesture. iOS uses a swipe from the viewport center. Scoped scans
 verify that the selected app is still in the foreground.
 iOS does not use generated XCTest node IDs as replay selectors or scroll anchors.
+On Simulator, the explicit option `excludeSystemKeyboard: true` omits nodes
+belonging to XCTest's system keyboard subtree. App text fields are still
+available for configured inputs. The default inventory is unchanged.
 `nativeViewport` records the visible bounds and number of newly
 revealed controls. It does not estimate the full content height.
+An opted-in mobile fixture retains its observed controls if the probe cannot
+rewind. Its next action first restores and verifies the recorded branch and
+scroll anchor, relaunching the exact fixture if necessary.
 
 ## Exploration behavior and limits
 
@@ -121,8 +129,10 @@ sandboxed apps may need a configured endpoint. See the
 The default scan budget is 24 screens, 45 actions and 5 levels. There is no
 total elapsed-time limit unless `maxTimeSeconds` or **Scan limits → Time
 limit in seconds** is set. UI Map also does not impose a separate wall-clock
-deadline on its generated action YAML. Driver and selector timeouts still
-report stalled operations.
+deadline on its generated action YAML. Driver and step timeouts still report
+stalled operations. During the scan the selector wait is checked after a
+native observation completes, so a slow query that finds the requested item
+is not reported as a missing control.
 
 This is an inventory of reachable and observable UI states, not proof of
 exhaustive app coverage or a test verdict. Beyond the bounded native viewport

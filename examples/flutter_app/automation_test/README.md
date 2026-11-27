@@ -6,6 +6,24 @@ deadlines and reports. The duplicate `it-*.sh` and shared `support/mcp.sh` have
 been removed. Build/install and per-case fixture preparation remain outside the
 flow, in [the CI wrapper](../ci/README.md).
 
+### UI Map action coverage
+
+Run a UI Map with `allButtons`, the exact fixture `resetAppId`, and synthetic
+`inputs` for `email-field` and `password-field`. On Simulator, pass
+`excludeSystemKeyboard: true` to scope the inventory to app controls.
+Score the evidence directory from that one map:
+
+```sh
+python3 examples/flutter_app/automation_test/ui_map_coverage.py path/to/ui-maps/map-id
+```
+
+The read-only gate fails below 95%. The denominator is 14 unique app buttons
+and three input targets (login email, login password, reset email). The two
+email targets share an ID but are scored on different screens. Repeated taps,
+assertions, IME actions and scroll steps do not count. A listed control without
+a successful action report does not pass. Do not combine results from
+different maps or platforms.
+
 `targets-semantics.yaml` is the default CI profile for this rebuilt fixture. It
 uses shared Semantics identifiers for fields, buttons, task controls and
 viewport, with native editing and IME recipes. `targets.yaml` retains the prior

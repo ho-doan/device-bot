@@ -142,6 +142,7 @@ pub struct FlowRunner {
     step_event_sink: Option<FlowStepEventSink>,
     owned_faults: BTreeSet<String>,
     run_started: Instant,
+    complete_selector_observations: bool,
 }
 
 impl FlowRunner {
@@ -171,6 +172,7 @@ impl FlowRunner {
             step_event_sink: None,
             owned_faults: BTreeSet::new(),
             run_started: Instant::now(),
+            complete_selector_observations: false,
         }
     }
 
@@ -233,6 +235,7 @@ impl FlowRunner {
 
     /// Run an embedded case without a second wall-clock deadline. Individual
     /// steps and driver operations retain their own timeout and error reports.
+    /// The selector wait does not cancel an in-flight native observation.
     pub async fn run_without_case_timeout(
         &mut self,
         flow: &FlowDocument,
@@ -250,6 +253,7 @@ impl FlowRunner {
         case_timeout: Option<Duration>,
     ) -> FlowReport {
         self.profile = profile.clone();
+        self.complete_selector_observations = case_timeout.is_none();
         self.run_started = Instant::now();
         self.version = flow.version;
         let dry_run = self.client.is_none();

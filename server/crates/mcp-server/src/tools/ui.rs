@@ -140,6 +140,7 @@ pub(super) async fn list_elements(robot: &Arc<dyn Robot>, arguments: &Value) -> 
         },
         web_context,
         include_frames,
+        exclude_system_keyboard: false,
     };
     let list = async {
         if source != "flutter" {

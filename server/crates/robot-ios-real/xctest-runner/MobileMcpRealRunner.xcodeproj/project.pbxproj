@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		B20000000000000000000001 /* RunnerHostApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000011 /* RunnerHostApp.swift */; };
 		B20000000000000000000002 /* MobileMcpRealRunnerUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000012 /* MobileMcpRealRunnerUITests.swift */; };
+		B20000000000000000000027 /* MobileMcpRealHostAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000017 /* MobileMcpRealHostAgent.swift */; };
 		B20000000000000000000003 /* device-kit-lib-xctest in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000090 /* device-kit-lib-xctest */; };
 /* End PBXBuildFile section */
 
@@ -26,6 +27,7 @@
 		B20000000000000000000010 /* MobileMcpRealRunnerHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MobileMcpRealRunnerHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20000000000000000000011 /* RunnerHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerHostApp.swift; sourceTree = "<group>"; };
 		B20000000000000000000012 /* MobileMcpRealRunnerUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileMcpRealRunnerUITests.swift; sourceTree = "<group>"; };
+		B20000000000000000000017 /* MobileMcpRealHostAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileMcpRealHostAgent.swift; sourceTree = "<group>"; };
 		B20000000000000000000013 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B20000000000000000000014 /* MobileMcpRealRunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MobileMcpRealRunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -71,6 +73,7 @@
 			isa = PBXGroup;
 			children = (
 				B20000000000000000000012 /* MobileMcpRealRunnerUITests.swift */,
+				B20000000000000000000017 /* MobileMcpRealHostAgent.swift */,
 			);
 			path = RunnerTests;
 			sourceTree = "<group>";
@@ -174,6 +177,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B20000000000000000000002 /* MobileMcpRealRunnerUITests.swift in Sources */,
+				B20000000000000000000027 /* MobileMcpRealHostAgent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

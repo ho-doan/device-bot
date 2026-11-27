@@ -587,6 +587,7 @@ dependencies = [
  "robot-chrome",
  "robot-core",
  "robot-flow",
+ "robot-flutter-bridge",
  "robot-ios-real",
  "robot-ios-sim",
  "robot-macos",

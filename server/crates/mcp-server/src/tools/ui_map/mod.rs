@@ -112,6 +112,7 @@ pub(super) fn definition() -> ToolDefinition {
                 "to":{"type":"string","description":"Screen ID, exact screen title, or exact source route"},
                 "allButtons":{"type":"boolean"},
                 "excludeSystemKeyboard":{"type":"boolean","description":"On iOS Simulator, do not inventory or tap nodes owned by the system keyboard. App inputs still use the focused editor."},
+                "dismissKeyboardAfterInput":{"type":"boolean","description":"After verified synthetic input, ask an opted-in Flutter mobile app to hide the keyboard before scanning. Requires resetAppId and a configured device/app bridge endpoint."},
                 "allowedTaps":{"type":"array","maxItems":150,"items":{"type":"string"}},
                 "fixtureControls":{"type":"array","maxItems":30,"items":{"type":"string"},"description":"Legacy additional exact tap selectors; new callers can use allowedTaps."},
                 "expandSelectionStates":{"type":"boolean","description":"Explore every checked or selected variant even if it exposes the same actionable controls"},

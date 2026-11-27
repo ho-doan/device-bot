@@ -25,6 +25,7 @@ BridgeRequest _$BridgeRequestFromJson(Map<String, dynamic> json) =>
       endX: (json['endX'] as num?)?.toDouble(),
       endY: (json['endY'] as num?)?.toDouble(),
       durationMs: (json['durationMs'] as num?)?.toInt(),
+      expectedText: json['expectedText'] as String?,
     );
 
 Map<String, dynamic> _$BridgeRequestToJson(BridgeRequest instance) =>
@@ -38,11 +39,13 @@ Map<String, dynamic> _$BridgeRequestToJson(BridgeRequest instance) =>
       'endX': ?instance.endX,
       'endY': ?instance.endY,
       'durationMs': ?instance.durationMs,
+      'expectedText': ?instance.expectedText,
     };
 
 const _$BridgeCommandEnumMap = {
   BridgeCommand.imeAction: 'imeAction',
   BridgeCommand.swipe: 'swipe',
+  BridgeCommand.dismissKeyboard: 'dismissKeyboard',
   BridgeCommand.unknown: 'unknown',
 };
 

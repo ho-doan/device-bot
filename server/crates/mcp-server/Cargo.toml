@@ -19,6 +19,7 @@ device-admin-api = { path = "../admin-api" }
 robot-android = { path = "../robot-android" }
 robot-chrome = { path = "../robot-chrome" }
 robot-core = { path = "../robot-core" }
+robot-flutter-bridge = { path = "../robot-flutter-bridge" }
 robot-ios-real = { path = "../robot-ios-real" }
 robot-ios-sim = { path = "../robot-ios-sim" }
 robot-macos = { path = "../robot-macos" }

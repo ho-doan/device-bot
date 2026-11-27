@@ -3,7 +3,7 @@ import 'package:json_annotation/json_annotation.dart';
 
 part 'bridge_protocol.g.dart';
 
-enum BridgeCommand { imeAction, swipe, unknown }
+enum BridgeCommand { imeAction, swipe, dismissKeyboard, unknown }
 
 enum BridgeImeAction { next, done, go, search, send, unknown }
 
@@ -28,6 +28,7 @@ class BridgeRequest {
     this.endX,
     this.endY,
     this.durationMs,
+    this.expectedText,
   });
   factory BridgeRequest.fromJson(Map<String, dynamic> json) =>
       _$BridgeRequestFromJson(json);
@@ -42,6 +43,7 @@ class BridgeRequest {
   final BridgeImeAction? action;
   final double? startX, startY, endX, endY;
   final int? durationMs;
+  final String? expectedText;
   bool isAuthorized(String? expectedToken) =>
       expectedToken != null && version == 1 && token == expectedToken;
 }

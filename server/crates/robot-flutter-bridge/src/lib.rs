@@ -1,7 +1,7 @@
-//! Optional, authenticated discovery transport shared by native drivers.
+//! Optional, authenticated Flutter transport shared by native drivers.
 //! Device endpoints are explicit and keyed by the full device ID. Desktop
 //! discovery can also read a manifest for an already identified process.
-use robot_core::{Bounds, UiElement};
+use robot_core::{Bounds, RobotError, UiElement};
 use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
@@ -25,10 +25,55 @@ pub async fn configured_for_process(
     device_id: &str,
     process_id: Option<u32>,
 ) -> Option<Vec<UiElement>> {
+    elements(&configured_endpoint(device_id)?, process_id).await
+}
+
+fn configured_endpoint(device_id: &str) -> Option<Value> {
     let config: Value =
         serde_json::from_str(&std::env::var("DEVICE_BOT_FLUTTER_ENDPOINTS").ok()?).ok()?;
-    let endpoint = config.get(device_id)?;
-    elements(endpoint, process_id).await
+    config.get(device_id).cloned()
+}
+
+pub async fn dismiss_keyboard(
+    device_id: &str,
+    app_id: &str,
+    expected_text: &str,
+) -> Result<(), RobotError> {
+    let endpoint = configured_endpoint(device_id)
+        .filter(|endpoint| endpoint["appId"].as_str() == Some(app_id))
+        .ok_or_else(|| {
+            RobotError::Unsupported(
+                "Keyboard dismissal requires a Flutter bridge endpoint for this device and app."
+                    .into(),
+            )
+        })?;
+    dismiss_at_endpoint(&endpoint, expected_text).await
+}
+
+async fn dismiss_at_endpoint(endpoint: &Value, expected_text: &str) -> Result<(), RobotError> {
+    let response = exchange(
+        endpoint,
+        None,
+        json!({"command": "dismissKeyboard", "expectedText": expected_text}),
+        Duration::from_secs(4),
+    )
+    .await
+    .ok_or_else(|| {
+        RobotError::CommandFailed("Flutter keyboard dismissal did not respond.".into())
+    })?;
+    if response["ok"].as_bool() == Some(true) && response.get("error").is_none() {
+        return Ok(());
+    }
+    let error = response["error"].as_str().unwrap_or_default();
+    if error.contains("Keyboard dismissal is disabled") || error.contains("Unknown bridge command")
+    {
+        return Err(RobotError::Unsupported(
+            "The target Flutter app must enable keyboard dismissal in its bridge.".into(),
+        ));
+    }
+    Err(RobotError::CommandFailed(
+        "The Flutter app could not verify the focused editor, text, and hidden keyboard.".into(),
+    ))
 }
 
 pub async fn for_process(process_id: u32) -> Option<Vec<UiElement>> {
@@ -52,7 +97,20 @@ pub async fn for_process_in(directory: &Path, process_id: u32) -> Option<Vec<UiE
 }
 
 pub async fn elements(endpoint: &Value, process_id: Option<u32>) -> Option<Vec<UiElement>> {
-    tokio::time::timeout(Duration::from_secs(1), async {
+    let response = exchange(endpoint, process_id, json!({}), Duration::from_secs(1)).await?;
+    if response.get("error").is_some() {
+        return None;
+    }
+    parse_elements(response.get("elements")?)
+}
+
+async fn exchange(
+    endpoint: &Value,
+    process_id: Option<u32>,
+    mut request: Value,
+    timeout: Duration,
+) -> Option<Value> {
+    tokio::time::timeout(timeout, async {
         if endpoint.get("version")?.as_u64()? != 1 {
             return None;
         }
@@ -70,8 +128,10 @@ pub async fn elements(endpoint: &Value, process_id: Option<u32>) -> Option<Vec<U
         let mut socket = TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
             .await
             .ok()?;
+        request["version"] = json!(1);
+        request["token"] = json!(token);
         socket
-            .write_all(format!("{}\n", json!({"version":1,"token":token})).as_bytes())
+            .write_all(format!("{request}\n").as_bytes())
             .await
             .ok()?;
         let mut bytes = vec![];
@@ -83,7 +143,7 @@ pub async fn elements(endpoint: &Value, process_id: Option<u32>) -> Option<Vec<U
             return None;
         }
         let response: Value = serde_json::from_slice(&bytes).ok()?;
-        if response.get("version")?.as_u64()? != 1 || response.get("error").is_some() {
+        if response.get("version")?.as_u64()? != 1 {
             return None;
         }
         if let Some(id) = process_id {
@@ -91,7 +151,7 @@ pub async fn elements(endpoint: &Value, process_id: Option<u32>) -> Option<Vec<U
                 return None;
             }
         }
-        parse_elements(response.get("elements")?)
+        Some(response)
     })
     .await
     .ok()
@@ -156,7 +216,7 @@ mod tests {
             "left":-20,"top":30,"right":200,"bottom":80,"clickable":true,"enabled":true})
     }
 
-    async fn serve(response: Value) -> (Value, tokio::task::JoinHandle<()>) {
+    async fn serve(expected: Value, response: Value) -> (Value, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = json!({"version":1,"processId":1234,"port":listener.local_addr().unwrap().port(),"token":TOKEN});
         let task = tokio::spawn(async move {
@@ -165,7 +225,7 @@ mod tests {
             let mut line = String::new();
             socket.read_line(&mut line).await.unwrap();
             let request: Value = serde_json::from_str(&line).unwrap();
-            assert_eq!(request, json!({"version":1,"token":TOKEN}));
+            assert_eq!(request, expected);
             socket
                 .get_mut()
                 .write_all(format!("{response}\n").as_bytes())
@@ -178,8 +238,11 @@ mod tests {
     #[tokio::test]
     async fn authenticated_mobile_or_desktop_snapshot_preserves_keys_empty_values_and_bounds() {
         for scope in [None, Some(1234)] {
-            let (endpoint, server) =
-                serve(json!({"version":1,"processId":1234,"elements":[node()]})).await;
+            let (endpoint, server) = serve(
+                json!({"version":1,"token":TOKEN}),
+                json!({"version":1,"processId":1234,"elements":[node()]}),
+            )
+            .await;
             let nodes = elements(&endpoint, scope).await.unwrap();
             assert_eq!(nodes[0].value.as_deref(), Some(""));
             assert_eq!(nodes[0].resource_id.as_deref(), Some("search"));
@@ -196,7 +259,7 @@ mod tests {
             json!({"version":1,"processId":1234,"elements":[{}]}),
             json!({"version":1,"processId":1234,"error":"unauthorized","elements":[]}),
         ] {
-            let (endpoint, server) = serve(response).await;
+            let (endpoint, server) = serve(json!({"version":1,"token":TOKEN}), response).await;
             assert!(elements(&endpoint, Some(1234)).await.is_none());
             server.await.unwrap();
         }
@@ -213,6 +276,29 @@ mod tests {
             .await
             .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn keyboard_dismissal_requires_an_explicit_bridge_acknowledgment() {
+        for (response, supported) in [
+            (json!({"version":1,"ok":true}), true),
+            (
+                json!({"version":1,"error":"Unsupported operation: Keyboard dismissal is disabled"}),
+                false,
+            ),
+        ] {
+            let request = json!({
+                "version":1,"token":TOKEN,"command":"dismissKeyboard","expectedText":"fixture input"
+            });
+            let (endpoint, server) = serve(request, response).await;
+            let result = dismiss_at_endpoint(&endpoint, "fixture input").await;
+            if supported {
+                result.unwrap();
+            } else {
+                assert!(matches!(result, Err(RobotError::Unsupported(_))));
+            }
+            server.await.unwrap();
+        }
     }
 
     #[test]

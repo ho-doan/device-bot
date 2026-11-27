@@ -37,6 +37,8 @@ pub struct Options {
     #[serde(default)]
     pub exclude_system_keyboard: bool,
     #[serde(default)]
+    pub dismiss_keyboard_after_input: bool,
+    #[serde(default)]
     pub allowed_taps: Vec<String>,
     #[serde(default)]
     pub fixture_controls: Vec<String>,
@@ -55,6 +57,9 @@ pub struct Options {
 
 impl Options {
     pub fn validate(&self) -> Result<(), String> {
+        if self.dismiss_keyboard_after_input && self.reset_app_id.is_none() {
+            return Err("dismissKeyboardAfterInput requires resetAppId.".into());
+        }
         let key_ok = |key: &str| !key.trim().is_empty() && key.len() <= 180;
         if self.device_id.is_empty()
             || self.device_id.len() > 270
@@ -138,10 +143,7 @@ impl LiveControl {
         flutter: bool,
     ) -> replay::Action<'a> {
         let input = if self.action == Some("input") {
-            self.lookup
-                .iter()
-                .find_map(|key| options.inputs.get(key))
-                .map(String::as_str)
+            self.input_value(options)
         } else {
             None
         };
@@ -154,6 +156,13 @@ impl LiveControl {
             flutter,
             reveal: self.reveal.as_ref(),
         }
+    }
+
+    fn input_value<'a>(&self, options: &'a Options) -> Option<&'a str> {
+        self.lookup
+            .iter()
+            .find_map(|key| options.inputs.get(key))
+            .map(String::as_str)
     }
 }
 
@@ -1076,9 +1085,7 @@ impl Engine<'_> {
                 .ok_or("The configured editor did not report focus. No text was sent.")?;
             let context = editor.element.web_context.as_ref();
             let text = row
-                .lookup
-                .iter()
-                .find_map(|key| self.options.inputs.get(key))
+                .input_value(self.options)
                 .ok_or("No synthetic input is configured for this editor.")?;
             self.check()?;
             self.robot
@@ -1090,7 +1097,28 @@ impl Engine<'_> {
                 .type_text_in_context(device, text, context)
                 .await
                 .map_err(|_| "Driver could not enter the configured text.".to_owned())?;
+            self.dismiss_keyboard_after_input(row).await?;
         }
+        Ok(())
+    }
+
+    async fn dismiss_keyboard_after_input(&self, row: &LiveControl) -> Result<(), String> {
+        if !self.options.dismiss_keyboard_after_input || row.action != Some("input") {
+            return Ok(());
+        }
+        let app_id = self
+            .options
+            .reset_app_id
+            .as_deref()
+            .ok_or("dismissKeyboardAfterInput requires resetAppId.")?;
+        let value = row
+            .input_value(self.options)
+            .ok_or("No synthetic input is configured for this editor.")?;
+        self.context().await?;
+        robot_flutter_bridge::dismiss_keyboard(&self.device, app_id, value)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.context().await?;
         Ok(())
     }
 
@@ -1284,6 +1312,7 @@ impl Engine<'_> {
                     self.options.delay(),
                 )
                 .await?;
+                self.dismiss_keyboard_after_input(row).await?;
             } else {
                 self.perform(row, step.action).await?;
             }
@@ -1751,6 +1780,9 @@ pub(super) async fn scan(
     let scope = timing
         .measure("scope_setup", classify_scope(&**robot, opt))
         .await?;
+    if opt.dismiss_keyboard_after_input && !scope.is_mobile() {
+        return Err("dismissKeyboardAfterInput requires a scoped native mobile app.".into());
+    }
     let recovery_boot_target = if scope.is_android() && opt.reset_app_id.is_some() {
         robot
             .recovery_boot_target(&opt.device_id)
@@ -1979,7 +2011,10 @@ pub(super) async fn scan(
             }
             let mut next = match timing
                 // Successful action YAML has already waited before capturing evidence.
-                .measure("settle_after_action", engine.settled_after_wait())
+                .measure("settle_after_action", async {
+                    engine.dismiss_keyboard_after_input(row).await?;
+                    engine.settled_after_wait().await
+                })
                 .await
             {
                 Ok(next) => next,

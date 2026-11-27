@@ -16,12 +16,24 @@ class DeviceBotFlutter {
   static WidgetTreeBridge? _bridge;
   static Future<void>? _starting;
 
-  static Future<void> start({int? port, String? token}) {
+  static Future<void> start({
+    int? port,
+    String? token,
+    bool allowKeyboardDismissal = false,
+  }) {
     WidgetsFlutterBinding.ensureInitialized();
-    return _starting ??= _start(port: port, token: token);
+    return _starting ??= _start(
+      port: port,
+      token: token,
+      allowKeyboardDismissal: allowKeyboardDismissal,
+    );
   }
 
-  static Future<void> _start({int? port, String? token}) async {
+  static Future<void> _start({
+    int? port,
+    String? token,
+    required bool allowKeyboardDismissal,
+  }) async {
     final mobile = Platform.isAndroid || Platform.isIOS;
     const configuredToken = String.fromEnvironment('DEVICE_BOT_FLUTTER_TOKEN');
     final bridgeToken =
@@ -44,6 +56,16 @@ class DeviceBotFlutter {
       port: port ?? (mobile ? 39787 : 0),
       token: bridgeToken,
       action: (request) async {
+        if (request.command == BridgeCommand.dismissKeyboard) {
+          if (!mobile || !allowKeyboardDismissal) {
+            throw UnsupportedError('Keyboard dismissal is disabled');
+          }
+          await WidgetTreeActions.dismissKeyboard(
+            request.expectedText ??
+                (throw ArgumentError('Missing expected editor text')),
+          );
+          return;
+        }
         if (!Platform.isWindows) {
           throw UnsupportedError(
             'Widget actions are Windows-only; use native input',

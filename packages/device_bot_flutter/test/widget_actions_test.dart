@@ -44,6 +44,50 @@ void main() {
     },
   );
 
+  testWidgets('dismissal verifies the text and preserves the route', (
+    tester,
+  ) async {
+    final editor = FocusNode();
+    final controller = TextEditingController(text: 'synthetic input');
+    var submitted = false;
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    addTearDown(tester.view.resetViewInsets);
+    addTearDown(editor.dispose);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TextField(
+            focusNode: editor,
+            controller: controller,
+            onSubmitted: (_) => submitted = true,
+          ),
+        ),
+      ),
+    );
+    await tester.showKeyboard(find.byType(TextField));
+    await expectLater(
+      WidgetTreeActions.dismissKeyboard('different text'),
+      throwsStateError,
+    );
+    expect(editor.hasFocus, isTrue);
+
+    var dismissed = false;
+    final action = WidgetTreeActions.dismissKeyboard(
+      'synthetic input',
+    ).then((_) => dismissed = true);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(dismissed, isFalse);
+    tester.view.resetViewInsets();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    await action;
+    expect(editor.hasFocus, isFalse);
+    expect(controller.text, 'synthetic input');
+    expect(submitted, isFalse);
+    expect(find.byType(TextField), findsOneWidget);
+  });
+
   testWidgets(
     'desktop swipe uses Flutter gesture physics and current view DPI',
     (tester) async {

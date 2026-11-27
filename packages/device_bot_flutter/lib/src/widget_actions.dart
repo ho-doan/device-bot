@@ -2,7 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
-/// Widget-backed actions that Windows cannot obtain from Flutter's native UIA.
+/// Widget-backed actions for opted-in Flutter targets.
 class WidgetTreeActions {
   static void pressImeAction(String name) {
     final action = switch (name) {
@@ -13,23 +13,62 @@ class WidgetTreeActions {
       'send' => TextInputAction.send,
       _ => throw ArgumentError('Unsupported IME action: $name'),
     };
-    EditableTextState? editor;
+    final target = _focusedEditors().lastOrNull;
+    if (target == null) throw StateError('No focused Flutter editor');
+    if (target.widget.textInputAction != action) {
+      throw StateError('Focused editor is not configured for IME $name');
+    }
+    target.performAction(action);
+  }
+
+  static Future<void> dismissKeyboard(String expectedText) async {
+    final editors = _focusedEditors();
+    if (editors.length != 1) {
+      throw StateError(
+        'Keyboard dismissal requires one focused Flutter editor',
+      );
+    }
+    final editor = editors.single;
+    final focus = editor.widget.focusNode;
+    final controller = editor.widget.controller;
+    final route = ModalRoute.of(editor.context);
+    final view = View.of(editor.context);
+    if (controller.text != expectedText || route?.isCurrent == false) {
+      throw StateError('The focused editor does not match the completed input');
+    }
+
+    focus.unfocus();
+    var hiddenSamples = 0;
+    for (var sample = 0; sample < 20; sample++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      if (!editor.mounted ||
+          route?.isCurrent == false ||
+          controller.text != expectedText) {
+        throw StateError(
+          'The editor or route changed during keyboard dismissal',
+        );
+      }
+      hiddenSamples = view.viewInsets.bottom == 0 && _focusedEditors().isEmpty
+          ? hiddenSamples + 1
+          : 0;
+      if (hiddenSamples == 2) return;
+    }
+    throw StateError('Could not verify that the system keyboard was hidden');
+  }
+
+  static List<EditableTextState> _focusedEditors() {
+    final editors = <EditableTextState>[];
     void visit(Element element) {
       if (element is StatefulElement && element.state is EditableTextState) {
         final state = element.state as EditableTextState;
-        if (state.widget.focusNode.hasFocus) editor = state;
+        if (state.widget.focusNode.hasFocus) editors.add(state);
       }
       element.visitChildren(visit);
     }
 
     final root = WidgetsBinding.instance.rootElement;
     if (root != null) visit(root);
-    final target = editor;
-    if (target == null) throw StateError('No focused Flutter editor');
-    if (target.widget.textInputAction != action) {
-      throw StateError('Focused editor is not configured for IME $name');
-    }
-    target.performAction(action);
+    return editors;
   }
 
   /// Dispatch a touch drag through Flutter's normal gesture arena. Desktop

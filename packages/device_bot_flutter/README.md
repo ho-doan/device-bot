@@ -88,6 +88,20 @@ under that iPhone's exact Device Bot ID. The bridge does not create or own USB
 tunnels. Never map a device to another application's endpoint.
 Android bounds use physical pixels; iOS bounds use UIKit points.
 
+### Dismiss the mobile keyboard in UI Map
+
+For a Flutter test target, enable `allowKeyboardDismissal: true` when calling
+`DeviceBotFlutter.start`. Add the target's Android package or iOS bundle ID
+as `appId` in its entry in `DEVICE_BOT_FLUTTER_ENDPOINTS`. Use the authorized
+app's listening port or loopback tunnel and its bridge token.
+
+Start `mobile_ui_map` with `dismissKeyboardAfterInput: true`, the matching
+`resetAppId` and synthetic `inputs`. After a successful entry, the bridge checks
+the focused Flutter editor's value before unfocusing it. UI Map waits for
+confirmation that the keyboard is hidden and checks the foreground app before
+reading the next screen. YAML IME actions continue to follow the steps in each
+flow.
+
 ## Query behavior
 
 `mobile_list_elements_on_screen` accepts `source: auto|native|flutter` and returns

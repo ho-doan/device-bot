@@ -820,7 +820,7 @@ fn expand(
             network_fault_step(&args)?;
         }
         if matches!(action.as_str(), "long_press_element" | "double_tap_element") {
-            pointer_gesture_step(&action, &args)?;
+            pointer_gesture_step(action, &args)?;
         }
         if action == "swipe_element" {
             swipe_element_step(&args)?;

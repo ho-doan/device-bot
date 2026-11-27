@@ -168,10 +168,8 @@ async fn selector_pointer_gestures_send_one_typed_call_per_fresh_match() {
     let inputs: Vec<_> = state
         .calls
         .iter()
-        .filter_map(|call| {
-            (call["params"]["name"] == "mobile_click_on_screen_at_coordinates")
-                .then(|| call["params"]["arguments"].clone())
-        })
+        .filter(|call| call["params"]["name"] == "mobile_click_on_screen_at_coordinates")
+        .map(|call| call["params"]["arguments"].clone())
         .collect();
     assert_eq!(
         inputs,

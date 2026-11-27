@@ -1,8 +1,9 @@
 //! Explicit MSAA mode keeps UIA/MSAA comparisons reproducible without merging
 //! duplicate representations of the same control or hiding UIA failures.
-use super::*;
+use crate::{MAX_UI_DEPTH, MAX_UI_NODES, UIA_QUERY_TIMEOUT, WindowsRobot, parse_uia_elements};
+use robot_core::{RobotError, UiElement};
 
-pub(super) fn use_msaa(value: Option<&str>) -> Result<bool, RobotError> {
+pub(crate) fn use_msaa(value: Option<&str>) -> Result<bool, RobotError> {
     match value {
         None | Some("uia") => Ok(false),
         Some("msaa") => Ok(true),
@@ -12,7 +13,7 @@ pub(super) fn use_msaa(value: Option<&str>) -> Result<bool, RobotError> {
     }
 }
 
-pub(super) fn script(pid: Option<u32>, hwnd: Option<i64>, max: Option<usize>) -> String {
+fn script(pid: Option<u32>, hwnd: Option<i64>, max: Option<usize>) -> String {
     format!(
         r#"$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName Accessibility
@@ -32,7 +33,7 @@ ConvertTo-Json -InputObject $rows -Depth 4 -Compress
 }
 
 impl WindowsRobot {
-    pub(super) async fn msaa_elements(
+    pub(crate) async fn msaa_elements(
         &self,
         pid: Option<u32>,
         hwnd: Option<i64>,
@@ -85,7 +86,7 @@ mod tests {
     #[tokio::test]
     async fn managed_msaa_provider_contract() {
         let helper = include_str!("msaa_helper.cs");
-        let fixture = include_str!("../tests/msaa_provider.cs");
+        let fixture = include_str!("../../tests/msaa_provider.cs");
         let script = format!(
             r#"$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName Accessibility

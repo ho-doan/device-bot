@@ -25,6 +25,8 @@ use tokio::{process::Command, sync::Mutex};
 mod accessibility;
 #[cfg(target_os = "macos")]
 mod ffi;
+#[cfg(target_os = "macos")]
+mod fixture;
 #[cfg(any(target_os = "macos", test))]
 mod windows;
 
@@ -200,6 +202,8 @@ pub struct MacosRobot {
     live_geometry: Arc<Mutex<std::collections::HashMap<String, live::Geometry>>>,
     #[cfg(target_os = "macos")]
     flutter_windows: Arc<Mutex<std::collections::HashSet<String>>>,
+    #[cfg(target_os = "macos")]
+    fixture: Arc<Mutex<Option<fixture::Binding>>>,
 }
 
 impl MacosRobot {
@@ -218,6 +222,8 @@ impl MacosRobot {
             live_geometry: Arc::default(),
             #[cfg(target_os = "macos")]
             flutter_windows: Arc::default(),
+            #[cfg(target_os = "macos")]
+            fixture: Arc::default(),
         }
     }
 
@@ -600,6 +606,7 @@ impl Robot for MacosRobot {
         #[cfg(target_os = "macos")]
         {
             session.flutter_windows = Arc::default();
+            session.fixture = Arc::default();
         }
         session.recording = Arc::default();
         Some(Arc::new(session))
@@ -1025,6 +1032,16 @@ impl Robot for MacosRobot {
         }
         #[cfg(not(target_os = "macos"))]
         Ok(vec![])
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn bind_window_fixture(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
+        self.bind_fixture(device_id, app_id).await
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn restart_window_fixture(&self, device_id: &str) -> Result<String, RobotError> {
+        self.restart_fixture(device_id).await
     }
 
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {

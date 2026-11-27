@@ -3,7 +3,10 @@
 //! discovery can also read a manifest for an already identified process.
 use robot_core::{Bounds, UiElement};
 use serde_json::{Value, json};
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
@@ -29,8 +32,13 @@ pub async fn configured_for_process(
 }
 
 pub async fn for_process(process_id: u32) -> Option<Vec<UiElement>> {
+    for_process_in(&directory(), process_id).await
+}
+
+/// Read a PID-scoped registration from a directory chosen by the native driver.
+pub async fn for_process_in(directory: &Path, process_id: u32) -> Option<Vec<UiElement>> {
     tokio::time::timeout(Duration::from_secs(1), async {
-        let file = tokio::fs::File::open(directory().join(format!("{process_id}.json")))
+        let file = tokio::fs::File::open(directory.join(format!("{process_id}.json")))
             .await
             .ok()?;
         let mut bytes = vec![];

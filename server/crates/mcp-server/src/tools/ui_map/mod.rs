@@ -97,7 +97,7 @@ pub(super) fn definition() -> ToolDefinition {
                 "expandSelectionStates":{"type":"boolean","description":"Explore every checked or selected variant even if it exposes the same actionable controls"},
                 "inputs":{"type":"object","maxProperties":30,"additionalProperties":{"type":"string"}},
                 "backControl":{"type":"string"},
-                "resetAppId":{"type":"string","description":"Relaunch this exact foreground mobile fixture to restore the entry screen"},
+                "resetAppId":{"type":"string","description":"Opt in to relaunching the foreground mobile fixture or selected single-window macOS fixture. Must match its app or bundle ID."},
                 "maxScreens":{"type":"integer","minimum":1,"maximum":crawl::MAX_SCREENS},
                 "maxActions":{"type":"integer","minimum":1,"maximum":crawl::MAX_ACTIONS},
                 "maxDepth":{"type":"integer","minimum":1,"maximum":crawl::MAX_DEPTH},

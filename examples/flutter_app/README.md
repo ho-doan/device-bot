@@ -29,9 +29,17 @@ The macOS crawler probes Orbit's scroll viewport and records a wheel step
 before tapping the discovered control, so this path can be replayed without
 enlarging the window.
 
-If native Accessibility only exposes the window chrome, the UI map can use
-Orbit's existing Flutter bridge. Because this app is sandboxed, configure its
-endpoint on the MCP server. Get the Orbit PID and window ID with the
+To explore without a manual Back control, enable **Try all eligible buttons**
+and enter `com.example.flutterApp` in **Fixture bundle ID**. For MCP pass
+`allButtons: true` and `resetAppId: com.example.flutterApp` with the selected
+`macos:<pid>:<windowId>`. The crawler can reopen Orbit and replay known routes
+when it gets stuck. Orbit must have one window and open to the entry screen
+again on relaunch. The scanner can locate Orbit's sandboxed Flutter bridge for
+each new process without an environment override.
+
+Without fixture mode, if native Accessibility only exposes the window chrome,
+configure the sandboxed Flutter endpoint on the MCP server manually.
+Get the Orbit PID and window ID with the
 `mobile_list_running_apps` and `mobile_list_windows` tools, then start the server
 with these values:
 
@@ -43,7 +51,7 @@ export DEVICE_BOT_FLUTTER_ENDPOINTS="$(jq -c --arg id "macos:$orbit_pid:$orbit_w
 device-bot mcp --listen 127.0.0.1:3337
 ```
 
-Reconnect QC to this server and regenerate the endpoint if you relaunch Orbit.
+Reconnect QC to this server and regenerate a manually configured endpoint if you relaunch Orbit.
 The bridge only exposes visible controls and requires Orbit to have one window.
 For a small MCP smoke scan, allow `forgot-password-button` and
 `back-to-sign-in-button`. Include `forgot-password-button` in `fixtureControls`

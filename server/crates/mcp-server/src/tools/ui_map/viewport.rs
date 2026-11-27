@@ -17,7 +17,7 @@ pub(super) struct Viewport {
     pub locator: Locator,
     pub bounds: Bounds,
     slice: u64,
-    anchors: Vec<(String, [i32; 4])>,
+    anchors: Vec<(String, [i64; 4])>,
 }
 
 #[derive(Clone)]
@@ -58,7 +58,16 @@ impl Viewport {
     }
 
     pub fn same_position(&self, other: &Self) -> bool {
-        self.same_container(other)
+        self.same_container(other) && self.same_replay_anchor(other)
+    }
+
+    /// A relaunched window can be on another display. Verify the same slice
+    /// by its content and viewport-local positions, not global screen pixels.
+    pub fn same_replay_anchor(&self, other: &Self) -> bool {
+        let (a, b) = (&self.bounds, &other.bounds);
+        self.locator == other.locator
+            && a.right.abs_diff(a.left).abs_diff(b.right.abs_diff(b.left)) <= 1
+            && a.bottom.abs_diff(a.top).abs_diff(b.bottom.abs_diff(b.top)) <= 1
             && (self.slice == other.slice
                 || !self.anchors.is_empty()
                     && self.anchors.len() == other.anchors.len()
@@ -126,6 +135,14 @@ pub(super) fn inspect(elements: &[UiElement], flutter: bool) -> Result<Option<Vi
         let r = &e.bounds;
         r.right > b.left && r.left < b.right && r.bottom > b.top && r.top < b.bottom
     };
+    let relative = |r: &Bounds| {
+        [
+            i64::from(r.left) - i64::from(b.left),
+            i64::from(r.top) - i64::from(b.top),
+            i64::from(r.right) - i64::from(b.left),
+            i64::from(r.bottom) - i64::from(b.top),
+        ]
+    };
     let mut anchors = elements
         .iter()
         .filter(intersects)
@@ -134,8 +151,7 @@ pub(super) fn inspect(elements: &[UiElement], flutter: bool) -> Result<Option<Vi
                 .resource_id
                 .as_ref()
                 .filter(|id| e.clickable && !id.is_empty())?;
-            let r = &e.bounds;
-            Some((id.clone(), [r.left, r.top, r.right, r.bottom]))
+            Some((id.clone(), relative(&e.bounds)))
         })
         .collect::<Vec<_>>();
     anchors.sort_unstable();
@@ -143,14 +159,13 @@ pub(super) fn inspect(elements: &[UiElement], flutter: bool) -> Result<Option<Vi
         .iter()
         .filter(intersects)
         .map(|e| {
-            let r = &e.bounds;
             (
                 &e.class_name,
                 &e.resource_id,
                 e.text
                     .as_deref()
                     .filter(|_| e.element_type == Some(robot_core::ElementType::StaticText)),
-                (r.left, r.top, r.right, r.bottom),
+                relative(&e.bounds),
             )
         })
         .collect::<Vec<_>>();

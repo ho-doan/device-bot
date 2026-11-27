@@ -2014,6 +2014,7 @@ dependencies = [
  "libc",
  "robot-core",
  "robot-flutter-bridge",
+ "serde",
  "serde_json",
  "tokio",
 ]

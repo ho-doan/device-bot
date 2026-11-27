@@ -275,6 +275,20 @@ pub trait Robot: Send + Sync {
         self.open_url(device_id, url, None).await
     }
 
+    /// Bind an explicitly opted-in desktop fixture to the selected window.
+    async fn bind_window_fixture(&self, _device_id: &str, _app_id: &str) -> Result<(), RobotError> {
+        Err(RobotError::Unsupported(
+            "Window fixture reset is unavailable".into(),
+        ))
+    }
+
+    /// Relaunch the bound fixture and return its new, verified window-scoped ID.
+    async fn restart_window_fixture(&self, _device_id: &str) -> Result<String, RobotError> {
+        Err(RobotError::Unsupported(
+            "Window fixture reset is unavailable".into(),
+        ))
+    }
+
     async fn web_viewport(&self, _device_id: &str) -> Result<WebViewport, RobotError> {
         Err(RobotError::Unsupported(
             "Browser viewport metrics unavailable".into(),

@@ -70,6 +70,8 @@ class UiMapCubit extends Cubit<UiMapState> {
   Timer? _timer;
   int _mapGeneration = 0;
   int _selectionGeneration = 0;
+  String? _startedMapId;
+  String? _relaunchedDeviceId;
 
   Future<void> initialize() async {
     final generation = _mapGeneration;
@@ -95,7 +97,7 @@ class UiMapCubit extends Cubit<UiMapState> {
   }
 
   Future<void> start(Map<String, dynamic> options) async {
-    final target = deviceId;
+    final target = _relaunchedDeviceId ?? deviceId;
     if (target == null || state.busy || state.map?.running == true) return;
     final generation = ++_mapGeneration;
     _timer?.cancel();
@@ -116,6 +118,7 @@ class UiMapCubit extends Cubit<UiMapState> {
   }
 
   Future<void> open(String id, {String? startedOn}) async {
+    if (startedOn != null) _startedMapId = id;
     final generation = ++_mapGeneration;
     _selectionGeneration++;
     _timer?.cancel();
@@ -159,6 +162,12 @@ class UiMapCubit extends Cubit<UiMapState> {
       final result = await _call({'action': 'status', 'mapId': id});
       if (isClosed || generation != _mapGeneration) return;
       final map = UiMapSnapshot.fromJson(result);
+      if (id == _startedMapId &&
+          deviceId?.startsWith('macos:') == true &&
+          map.deviceId.startsWith('macos:') &&
+          map.deviceId != (_relaunchedDeviceId ?? deviceId)) {
+        _relaunchedDeviceId = map.deviceId;
+      }
       emit(
         state.copyWith(
           map: map,

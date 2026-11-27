@@ -61,7 +61,7 @@ driver. It visits newly observed states, deduplicates signatures, verifies
 the route back to each branch before continuing, and bounds depth, screens,
 actions and runtime. On a fresh web entry page, the crawler gives controls
 time to appear and reports partial coverage if the inventory stays empty.
-On web and mobile fixtures with a verified foreground app, it tries short
+On web, scoped mobile and opted-in macOS fixtures, it tries short
 routes through previously observed transitions and verifies each state. When web cannot restore a
 branch, it restarts from the initial URL in a fresh document. It stops on an
 origin change. Scoped mobile scans stop if the foreground app changes. When a
@@ -74,11 +74,23 @@ lets the scanner restart it before replaying a branch. If a native screen
 cannot be restored, the scan reports partial coverage rather than sending
 input to an unverified screen. Desktop maps use an explicitly selected
 process/window, just like desktop Live.
+
+For a disposable macOS fixture with one window, set **Fixture bundle ID** in QC
+or pass `resetAppId` to the MCP tool. It must match the selected window's app.
+If known routes cannot restore a branch, the crawler quits only that process,
+reopens the same app bundle without clearing data, and binds to its new window.
+It verifies the restored screen before continuing and verifies each step when
+replaying the recorded route. Status returns
+the latest window-scoped `deviceId`. Without this option the crawler will not
+quit the desktop app.
+
 On macOS, screenshots are limited to the selected window. If native
 Accessibility exposes no named controls on entry, the job can use the Flutter
 bridge for the same single-window process. It keeps that source for the whole
-scan and records it in the action YAML. Sandboxed apps may need a configured
-endpoint. See the [Orbit macOS example](../../examples/flutter_app/README.md#macos-ui-map).
+scan and records it in the action YAML. For a bound macOS fixture it can
+discover the sandbox's Flutter registration again after reopening. Unbound
+sandboxed apps may need a configured endpoint. See the
+[Orbit macOS example](../../examples/flutter_app/README.md#macos-ui-map).
 The default scan budget is 24 screens, 45 actions, 5 levels and 8 minutes.
 Use **Scan limits** to change it for larger test targets.
 

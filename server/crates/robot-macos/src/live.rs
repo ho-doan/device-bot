@@ -157,6 +157,11 @@ fn ax_window(target: Target, g: Geometry) -> Result<CfOwned, RobotError> {
 }
 
 #[cfg(target_os = "macos")]
+pub(super) fn verify_single_fixture_window(target: Target) -> Result<(), RobotError> {
+    resolve_ax_window(target, geometry(target)?, true).map(|_| ())
+}
+
+#[cfg(target_os = "macos")]
 fn resolve_ax_window(target: Target, g: Geometry, single: bool) -> Result<CfOwned, RobotError> {
     if !request_accessibility_permission() {
         return Err(RobotError::CommandFailed(
@@ -209,12 +214,16 @@ impl MacosRobot {
         {
             let g = geometry(target)?;
             let pid = target.pid as u32;
-            let elements = match robot_flutter_bridge::configured_for_process(id, Some(pid)).await {
-                Some(nodes) => nodes,
-                None => robot_flutter_bridge::for_process(pid)
-                    .await
-                    .unwrap_or_default(),
-            };
+            let mut elements = robot_flutter_bridge::configured_for_process(id, Some(pid)).await;
+            if elements.is_none() {
+                elements = robot_flutter_bridge::for_process(pid).await;
+            }
+            if elements.is_none()
+                && let Some(directory) = self.fixture_bridge_directory(id).await
+            {
+                elements = robot_flutter_bridge::for_process_in(&directory, pid).await;
+            }
+            let elements = elements.unwrap_or_default();
             if elements.is_empty() {
                 return Ok(elements);
             }

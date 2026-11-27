@@ -117,6 +117,7 @@ void main() {
       await tester.tap(find.byKey(const Key('ui-map-start')));
       await tester.pumpAndSettle();
       expect(find.text('Try all eligible buttons'), findsOneWidget);
+      expect(find.text('Fixture bundle ID (optional)'), findsNothing);
       await tester.tap(find.text('Map UI'));
       await tester.pumpAndSettle();
       expect(requests.firstWhere((r) => r['action'] == 'start'), {
@@ -135,4 +136,65 @@ void main() {
       expect(requests.lastWhere((r) => r['action'] == 'route')['to'], 's2');
     },
   );
+
+  testWidgets('opts in and follows the relaunched macOS window', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(900, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final starts = <Map<String, dynamic>>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UiMapPage(
+          deviceId: 'macos:41:42',
+          deviceName: 'Test macOS fixture',
+          call: (args) async {
+            if (args['action'] == 'start') starts.add(args);
+            return switch (args['action']) {
+              'list' => {'maps': []},
+              'start' => {'mapId': 'scan-${starts.length}'},
+              'status' => {
+                ..._map,
+                'id': args['mapId'],
+                'deviceId': 'macos:51:52',
+              },
+              'route' => {'steps': []},
+              _ => throw StateError('Unexpected request'),
+            };
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final start = find.byKey(const Key('ui-map-start'));
+    final bundle = find.widgetWithText(
+      TextFormField,
+      'Fixture bundle ID (optional)',
+    );
+    await tester.tap(start);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(bundle);
+    await tester.enterText(bundle, '../other');
+    await tester.tap(find.text('Map UI'));
+    await tester.pumpAndSettle();
+    expect(starts, isEmpty);
+    expect(find.text('Enter the selected app’s bundle ID.'), findsOneWidget);
+
+    await tester.enterText(bundle, ' com.example.fixture ');
+    await tester.tap(find.text('Map UI'));
+    await tester.pumpAndSettle();
+    expect(starts.single['resetAppId'], 'com.example.fixture');
+    expect(starts.single['deviceId'], 'macos:41:42');
+
+    await tester.tap(start);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Map UI'));
+    await tester.pumpAndSettle();
+    expect(starts.last['deviceId'], 'macos:51:52');
+    expect(starts.last.containsKey('resetAppId'), isFalse);
+  });
 }

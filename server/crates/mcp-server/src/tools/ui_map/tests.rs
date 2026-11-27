@@ -66,6 +66,19 @@ struct FixtureState {
 }
 
 impl Fixture {
+    fn assert_current_macos_device(state: &FixtureState, id: &str) {
+        if state.macos_flutter {
+            assert_eq!(
+                id,
+                if state.resets == 0 {
+                    "macos:41:42"
+                } else {
+                    "macos:51:52"
+                }
+            );
+        }
+    }
+
     fn reset(&self) {
         let mut state = self.0.lock().unwrap();
         state.page = 0;
@@ -152,12 +165,14 @@ impl Robot for Fixture {
         })
     }
 
-    async fn take_screenshot(&self, _: &str) -> Result<Vec<u8>, RobotError> {
+    async fn take_screenshot(&self, id: &str) -> Result<Vec<u8>, RobotError> {
+        Self::assert_current_macos_device(&self.0.lock().unwrap(), id);
         Ok(b"\x89PNG\r\n\x1a\nfixture".to_vec())
     }
 
-    async fn tap(&self, _: &str, point: Point) -> Result<(), RobotError> {
+    async fn tap(&self, id: &str, point: Point) -> Result<(), RobotError> {
         let mut state = self.0.lock().unwrap();
+        Self::assert_current_macos_device(&state, id);
         let x = if state.macos_flutter {
             assert!(point.x < 0., "the fixture is left of the primary display");
             point.x as i32 + 1000
@@ -217,6 +232,22 @@ impl Robot for Fixture {
         Ok(())
     }
 
+    async fn bind_window_fixture(&self, id: &str, app: &str) -> Result<(), RobotError> {
+        Self::assert_current_macos_device(&self.0.lock().unwrap(), id);
+        if app != "fixture.app" {
+            return Err(RobotError::InvalidInput(
+                "Fixture bundle does not match".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn restart_window_fixture(&self, id: &str) -> Result<String, RobotError> {
+        Self::assert_current_macos_device(&self.0.lock().unwrap(), id);
+        self.reset();
+        Ok("macos:51:52".into())
+    }
+
     async fn open_url(&self, _: &str, url: &str, _: Option<&str>) -> Result<(), RobotError> {
         assert_eq!(url, "http://localhost/");
         self.reset();
@@ -260,9 +291,10 @@ impl Robot for Fixture {
 
     async fn list_flutter_elements(&self, device: &str) -> Result<Vec<UiElement>, RobotError> {
         let mut visible = false;
-        if device == "macos:41:42" {
+        if device.starts_with("macos:") {
             let mut state = self.0.lock().unwrap();
             if state.macos_flutter {
+                Self::assert_current_macos_device(&state, device);
                 state.flutter_reads += 1;
                 // The bridge briefly returns no tree while the window settles.
                 visible = state.flutter_reads != 2;
@@ -461,6 +493,42 @@ fn native_viewport_recognizes_ax_scroll_area_but_not_two_independent_panes() {
     assert!(viewport::inspect(&[left, right], false).is_err());
 }
 
+#[test]
+fn recorded_scroll_anchor_survives_a_window_move_but_not_a_different_slice() {
+    let mut viewport_node = node("", "", 0, ElementType::StaticText);
+    viewport_node.class_name = "AXScrollArea".into();
+    viewport_node.bounds = Bounds {
+        left: -1000,
+        top: -20,
+        right: -700,
+        bottom: 180,
+    };
+    let button = node("Button", "stable-anchor", -850, ElementType::Button);
+    let original = viewport::inspect(&[viewport_node.clone(), button.clone()], false)
+        .unwrap()
+        .unwrap();
+    let move_window = |mut element: UiElement| {
+        element.bounds.left += 1100;
+        element.bounds.right += 1100;
+        element.bounds.top += 50;
+        element.bounds.bottom += 50;
+        element
+    };
+    let moved_port = move_window(viewport_node);
+    let mut moved_button = move_window(button);
+    let moved = viewport::inspect(&[moved_port.clone(), moved_button.clone()], false)
+        .unwrap()
+        .unwrap();
+    assert!(original.same_replay_anchor(&moved));
+    assert!(!original.same_position(&moved));
+    moved_button.bounds.top += 30;
+    moved_button.bounds.bottom += 30;
+    let other_slice = viewport::inspect(&[moved_port, moved_button], false)
+        .unwrap()
+        .unwrap();
+    assert!(!original.same_replay_anchor(&other_slice));
+}
+
 #[tokio::test(start_paused = true)]
 async fn macos_viewport_does_not_tap_if_the_entry_slice_cannot_be_restored() {
     let dir = Temp::new();
@@ -486,6 +554,57 @@ async fn macos_viewport_does_not_tap_if_the_entry_slice_cannot_be_restored() {
     );
     assert!(fixture.0.lock().unwrap().taps.is_empty());
     assert!(map.transitions.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn macos_fixture_relaunches_and_uses_the_new_window_to_try_a_sibling() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        macos_flutter: true,
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId": "macos:41:42", "resetAppId":"fixture.app",
+        "allowedTaps": ["left", "right"], "backControl": "not available"
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    assert_eq!(
+        map.transitions
+            .iter()
+            .map(|edge| edge.label.as_str())
+            .collect::<Vec<_>>(),
+        ["Left", "Right"]
+    );
+    assert_eq!(map.device_id, "macos:51:52");
+    assert_eq!(fixture.0.lock().unwrap().resets, 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn macos_fixture_with_mismatched_bundle_stops_before_input() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        macos_flutter: true,
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId": "macos:41:42", "resetAppId": "other.app", "allButtons": true
+    }))
+    .unwrap();
+    let error = scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap_err();
+    assert!(error.contains("Fixture bundle does not match"));
+    assert!(map.screens.is_empty());
+    let state = fixture.0.lock().unwrap();
+    assert_eq!(state.resets, 0);
+    assert!(state.taps.is_empty());
 }
 
 #[tokio::test(start_paused = true)]

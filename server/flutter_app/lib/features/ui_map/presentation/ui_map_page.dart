@@ -22,7 +22,9 @@ class UiMapPage extends StatelessWidget {
   Future<void> _configure(BuildContext context, UiMapCubit cubit) async {
     final options = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => const _ScanOptionsDialog(),
+      builder: (_) => _ScanOptionsDialog(
+        canRelaunchFixture: deviceId?.startsWith('macos:') == true,
+      ),
     );
     if (options != null && !cubit.isClosed) await cubit.start(options);
   }
@@ -396,7 +398,9 @@ class _ControlStatus extends StatelessWidget {
 }
 
 class _ScanOptionsDialog extends StatefulWidget {
-  const _ScanOptionsDialog();
+  const _ScanOptionsDialog({required this.canRelaunchFixture});
+
+  final bool canRelaunchFixture;
 
   @override
   State<_ScanOptionsDialog> createState() => _ScanOptionsDialogState();
@@ -425,6 +429,7 @@ class _ScanOptionsDialogState extends State<_ScanOptionsDialog> {
   final _selected = TextEditingController();
   final _inputs = TextEditingController();
   final _back = TextEditingController();
+  final _fixture = TextEditingController();
   final _limitValues = {
     for (final key in _limits.keys) key: TextEditingController(),
   };
@@ -435,6 +440,7 @@ class _ScanOptionsDialogState extends State<_ScanOptionsDialog> {
     _selected.dispose();
     _inputs.dispose();
     _back.dispose();
+    _fixture.dispose();
     for (final value in _limitValues.values) {
       value.dispose();
     }
@@ -457,6 +463,8 @@ class _ScanOptionsDialogState extends State<_ScanOptionsDialog> {
           .toList(),
       'inputs': _data(),
       if (_back.text.trim().isNotEmpty) 'backControl': _back.text.trim(),
+      if (widget.canRelaunchFixture && _fixture.text.trim().isNotEmpty)
+        'resetAppId': _fixture.text.trim(),
       for (final entry in _limitValues.entries)
         entry.key: ?int.tryParse(entry.value.text.trim()),
     });
@@ -529,6 +537,30 @@ class _ScanOptionsDialogState extends State<_ScanOptionsDialog> {
                   labelText: 'Native Back control (optional)',
                 ),
               ),
+              if (widget.canRelaunchFixture) ...[
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _fixture,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: const InputDecoration(
+                    labelText: 'Fixture bundle ID (optional)',
+                    helperText:
+                        'Reopens the selected test app to resume a scan.',
+                    helperMaxLines: 2,
+                  ),
+                  validator: (value) {
+                    final id = value?.trim() ?? '';
+                    if (id.isEmpty) return null;
+                    if (id == '.' ||
+                        id == '..' ||
+                        !RegExp(r'^[A-Za-z0-9._-]+$').hasMatch(id)) {
+                      return 'Enter the selected app’s bundle ID.';
+                    }
+                    return null;
+                  },
+                ),
+              ],
               ExpansionTile(
                 title: const Text('Scan limits'),
                 tilePadding: EdgeInsets.zero,

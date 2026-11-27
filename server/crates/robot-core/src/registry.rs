@@ -299,6 +299,17 @@ impl Robot for RobotRegistry {
         self.driver_for(id).await?.reset_web_document(id, url).await
     }
 
+    async fn bind_window_fixture(&self, id: &str, app: &str) -> Result<(), RobotError> {
+        self.driver_for(id)
+            .await?
+            .bind_window_fixture(id, app)
+            .await
+    }
+
+    async fn restart_window_fixture(&self, id: &str) -> Result<String, RobotError> {
+        self.driver_for(id).await?.restart_window_fixture(id).await
+    }
+
     async fn web_viewport(&self, id: &str) -> Result<WebViewport, RobotError> {
         self.driver_for(id).await?.web_viewport(id).await
     }

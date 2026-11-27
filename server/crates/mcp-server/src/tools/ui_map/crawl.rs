@@ -196,6 +196,7 @@ fn known_route(navigation: &Navigation, from: u64, to: u64) -> Option<Vec<Arc<Pa
 pub(super) enum Scope {
     Web { start: Url },
     Mobile { app: String, platform: Platform },
+    WindowFixture,
     IosNative,
     Native,
 }
@@ -211,7 +212,7 @@ impl Scope {
         device: &str,
     ) -> Result<Option<String>, String> {
         match self {
-            Self::Native | Self::IosNative => Ok(None),
+            Self::Native | Self::IosNative | Self::WindowFixture => Ok(None),
             Self::Mobile { app, platform } => {
                 let foreground = foreground_app(robot, device, platform).await?;
                 if foreground.as_deref() != Some(app) {
@@ -240,6 +241,8 @@ struct Engine<'a> {
     robot: &'a Arc<dyn Robot>,
     dir: &'a Path,
     options: &'a Options,
+    device: String,
+    window_valid: bool,
     scope: Scope,
     stop: &'a AtomicBool,
     timing: &'a TimingLog,
@@ -267,7 +270,7 @@ impl Engine<'_> {
         self.timing
             .measure(
                 "foreground_check",
-                self.scope.location(&**self.robot, &self.options.device_id),
+                self.scope.location(&**self.robot, &self.device),
             )
             .await
     }
@@ -283,8 +286,7 @@ impl Engine<'_> {
             .timing
             .measure(
                 "ui_tree",
-                self.robot
-                    .list_elements_query(&self.options.device_id, query.clone()),
+                self.robot.list_elements_query(&self.device, query.clone()),
             )
             .await
         {
@@ -295,8 +297,7 @@ impl Engine<'_> {
                 self.timing
                     .measure(
                         "ui_tree",
-                        self.robot
-                            .list_elements_query(&self.options.device_id, query),
+                        self.robot.list_elements_query(&self.device, query),
                     )
                     .await
                     .map_err(|e| e.to_string())?
@@ -308,10 +309,7 @@ impl Engine<'_> {
 
     async fn flutter_tree(&self) -> Result<Vec<UiElement>, String> {
         self.timing
-            .measure(
-                "ui_tree",
-                self.robot.list_flutter_elements(&self.options.device_id),
-            )
+            .measure("ui_tree", self.robot.list_flutter_elements(&self.device))
             .await
             .map_err(|error| error.to_string())
     }
@@ -333,7 +331,7 @@ impl Engine<'_> {
             (elements, false)
         } else {
             let (mut elements, root_only) = self.native_tree().await?;
-            if self.options.device_id.starts_with("macos:") && self.flutter.get().is_none() {
+            if self.device.starts_with("macos:") && self.flutter.get().is_none() {
                 prepare_elements(&mut elements);
                 let native_has_controls = elements.iter().any(|element| {
                     live_control(element, self.options).is_some_and(|row| !row.lookup.is_empty())
@@ -351,7 +349,7 @@ impl Engine<'_> {
             (elements, root_only)
         };
         prepare_elements(&mut elements);
-        let viewport = if self.options.device_id.starts_with("macos:") {
+        let viewport = if self.device.starts_with("macos:") {
             viewport::inspect(&elements, self.flutter.get() == Some(&true))
         } else {
             Ok(None)
@@ -477,12 +475,8 @@ impl Engine<'_> {
         self.timing
             .measure(
                 "viewport_scroll",
-                self.robot.scroll(
-                    &self.options.device_id,
-                    viewport.center(),
-                    0.,
-                    f64::from(dy),
-                ),
+                self.robot
+                    .scroll(&self.device, viewport.center(), 0., f64::from(dy)),
             )
             .await
             .map_err(|error| format!("Could not scroll the selected viewport: {error}"))?;
@@ -653,7 +647,7 @@ impl Engine<'_> {
         if let Some(plan) = &row.reveal
             && let Some(viewport) = &current.native_viewport
             && plan.slices.iter().any(|(fingerprint, known)| {
-                *fingerprint == current.fingerprint && known.same_position(viewport)
+                *fingerprint == current.fingerprint && known.same_replay_anchor(viewport)
             })
         {
             self.restore_slice(anchor, current, -plan.delta).await?;
@@ -671,7 +665,7 @@ impl Engine<'_> {
         let mut last = self.observe().await?;
         // Desktop route transitions can keep the same control signature while
         // animating the clipped viewport into place.
-        let retries = if self.options.device_id.starts_with("macos:") {
+        let retries = if self.device.starts_with("macos:") {
             7
         } else {
             3
@@ -744,10 +738,25 @@ impl Engine<'_> {
         }
     }
 
+    async fn wait_for_window_entry(&self, root: u64, expected: u64) -> Result<Observation, String> {
+        let ready_by = Instant::now() + Duration::from_secs(5);
+        loop {
+            self.check()?;
+            match self.settled().await {
+                Ok(here) if [root, expected].contains(&here.fingerprint) => return Ok(here),
+                Ok(here) if Instant::now() >= ready_by => return Ok(here),
+                Err(error) if Instant::now() >= ready_by => {
+                    return Err(format!("Could not inspect the relaunched fixture: {error}"));
+                }
+                _ => {}
+            }
+        }
+    }
+
     async fn perform(&mut self, row: &LiveControl, action: &str) -> Result<(), String> {
         self.check()?;
         self.input_budget -= 1;
-        let device = &self.options.device_id;
+        let device = &self.device;
         self.robot
             .tap_in_context(device, row.center(), row.element.web_context.as_ref())
             .await
@@ -791,7 +800,7 @@ impl Engine<'_> {
             return Ok(here);
         }
 
-        if (matches!(self.scope, Scope::Web { .. } | Scope::IosNative) || self.scope.is_mobile())
+        if !matches!(self.scope, Scope::Native)
             && let Some(route) = known_route(navigation, here.fingerprint, expected)
                 .filter(|route| route.len() <= path.len() + 1)
         {
@@ -807,7 +816,7 @@ impl Engine<'_> {
         if let Scope::Web { start } = &self.scope {
             self.check()?;
             self.input_budget -= 1;
-            let device = &self.options.device_id;
+            let device = &self.device;
             if self
                 .robot
                 .reset_web_document(device, start.as_str())
@@ -821,10 +830,26 @@ impl Engine<'_> {
                     .map_err(|error| format!("Could not reset the entry document: {error}"))?;
             }
             here = self.settled_entry().await?;
+        } else if matches!(self.scope, Scope::WindowFixture) {
+            self.check()?;
+            self.input_budget -= 1;
+            self.window_valid = false;
+            self.device = self
+                .timing
+                .measure(
+                    "app_relaunch",
+                    self.robot.restart_window_fixture(&self.device),
+                )
+                .await
+                .map_err(|error| {
+                    format!("Could not relaunch the selected macOS fixture: {error}")
+                })?;
+            self.window_valid = true;
+            here = self.wait_for_window_entry(root, expected).await?;
         } else if let Some(app) = &self.options.reset_app_id {
             self.check()?;
             self.input_budget -= 1;
-            let device = &self.options.device_id;
+            let device = &self.device;
             self.timing
                 .measure("app_relaunch", async {
                     self.robot
@@ -914,7 +939,7 @@ impl Engine<'_> {
                 replay::restore(
                     self.robot,
                     &self.scope,
-                    &self.options.device_id,
+                    &self.device,
                     self.dir,
                     row.replay_action(
                         self.options,
@@ -959,7 +984,7 @@ fn at_scroll_anchor(row: &LiveControl, here: &Observation) -> bool {
     row.reveal.as_ref().is_some_and(|plan| {
         here.native_viewport
             .as_ref()
-            .is_some_and(|viewport| plan.anchor.same_position(viewport))
+            .is_some_and(|viewport| plan.anchor.same_replay_anchor(viewport))
     })
 }
 
@@ -1164,9 +1189,7 @@ async fn classify_scope(robot: &dyn Robot, opt: &Options) -> Result<Scope, Strin
     let device = &opt.device_id;
     if device.starts_with("chrome:") {
         if opt.reset_app_id.is_some() {
-            return Err(
-                "Chrome restores the entry URL. resetAppId is only for mobile fixtures.".into(),
-            );
+            return Err("Chrome restores the entry URL and does not use resetAppId.".into());
         }
         let context = robot
             .stream_context(device)
@@ -1180,11 +1203,18 @@ async fn classify_scope(robot: &dyn Robot, opt: &Options) -> Result<Scope, Strin
         .iter()
         .any(|prefix| device.starts_with(prefix))
     {
-        if opt.reset_app_id.is_some() {
-            return Err("resetAppId is only for mobile fixtures.".into());
-        }
         if device.split(':').count() != 3 {
             return Err("Select a desktop process and window before collecting a map.".into());
+        }
+        if let Some(app) = &opt.reset_app_id {
+            if !device.starts_with("macos:") {
+                return Err("resetAppId is only supported for macOS and mobile fixtures.".into());
+            }
+            robot
+                .bind_window_fixture(device, app)
+                .await
+                .map_err(|e| e.to_string())?;
+            return Ok(Scope::WindowFixture);
         }
         return Ok(Scope::Native);
     }
@@ -1228,7 +1258,7 @@ async fn record(
     let viewport = if matches!(engine.scope, Scope::Web { .. }) {
         engine
             .robot
-            .web_viewport(&engine.options.device_id)
+            .web_viewport(&engine.device)
             .await
             .ok()
             .map(|mut viewport| {
@@ -1257,7 +1287,7 @@ async fn record(
             "screen_screenshot",
             tokio::time::timeout(
                 Duration::from_secs(10),
-                engine.robot.take_screenshot(&engine.options.device_id),
+                engine.robot.take_screenshot(&engine.device),
             ),
         )
         .await
@@ -1383,6 +1413,8 @@ pub(super) async fn scan(
         robot,
         dir,
         options: opt,
+        device: opt.device_id.clone(),
+        window_valid: true,
         scope,
         stop,
         timing,
@@ -1435,17 +1467,27 @@ pub(super) async fn scan(
                 break 'crawl;
             }
             engine.check()?;
-            let here = match timing
+            let restored = timing
                 .measure(
                     "restore_branch",
                     engine.restore(fingerprint, root_fp, &path, &navigation),
                 )
-                .await
-            {
+                .await;
+            if map.device_id != engine.device {
+                map.device_id.clone_from(&engine.device);
+                save_map(dir, map).await?;
+            }
+            let here = match restored {
                 Ok(here) => here,
-                Err(error) if engine.scope.is_mobile() => {
+                Err(error)
+                    if engine.scope.is_mobile()
+                        || matches!(engine.scope, Scope::WindowFixture) && engine.window_valid =>
+                {
                     // Preserve the app and scan budget guards when an individual route drifts.
                     engine.context().await?;
+                    if matches!(engine.scope, Scope::WindowFixture) {
+                        engine.observe().await.map_err(|_| error.clone())?;
+                    }
                     map.notes.push(format!("{from}: {error}"));
                     if let Some(screen) = map.screens.iter_mut().find(|screen| screen.id == from) {
                         for control in screen.controls.iter_mut().filter(|c| c.status == "pending")
@@ -1486,7 +1528,7 @@ pub(super) async fn scan(
                     replay::run(
                         robot,
                         &engine.scope,
-                        &opt.device_id,
+                        &engine.device,
                         dir,
                         &name,
                         row.replay_action(

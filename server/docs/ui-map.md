@@ -26,6 +26,11 @@ after its current operation and retains the partial map. Reopen saved maps
 from QC or MCP. Artifacts are persisted in `ui-maps/` under Device Bot's
 configured report data directory.
 
+At the end of a scan, `timing.json` records the elapsed time in milliseconds
+and the count, total, and longest duration for each phase. Tree reads and
+foreground checks can be part of branch restore or settling, so phase totals
+overlap.
+
 Each attempted action runs through `robot-flow`. Its `evidence` entry links
 to the generated `scenario.yaml` and, when captured, `result.png` under
 `actions/<screen-id>-<control-id>/`. These include actions that kept the
@@ -43,10 +48,10 @@ driver. It visits newly observed states, deduplicates signatures, verifies
 the route back to each branch before continuing, and bounds depth, screens,
 actions and runtime. On a fresh web entry page, the crawler gives controls
 time to appear and reports partial coverage if the inventory stays empty.
-On web and Android, it tries short routes through previously observed
-transitions, verifying each state along the way. When web cannot restore a
+On web and mobile fixtures with a verified foreground app, it tries short
+routes through previously observed transitions and verifies each state. When web cannot restore a
 branch, it restarts from the initial URL in a fresh document. It stops on an
-origin change. Android stops if the foreground app changes. When an Android
+origin change. Scoped mobile scans stop if the foreground app changes. When a
 screen cannot be restored and the app is still in scope, the crawler reports
 that screen's untried controls and continues with other branches. Native
 navigation can use one unique accessible Back, Close,

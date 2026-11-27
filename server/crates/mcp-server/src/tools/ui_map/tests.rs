@@ -1,9 +1,40 @@
 use std::{path::PathBuf, sync::Mutex};
 
 use async_trait::async_trait;
-use robot_core::{Bounds, ElementType, Point, RobotDevice, RobotError, UiElement};
+use robot_core::{
+    Bounds, ElementType, Platform, Point, RobotDevice, RobotError, UiElement, UiRunnerStatus,
+};
 
 use super::*;
+
+async fn scan(
+    robot: &Arc<dyn Robot>,
+    opt: &Options,
+    stop: &AtomicBool,
+    map: &mut UiMap,
+    dir: &Path,
+) -> Result<(), String> {
+    crawl::scan(robot, opt, stop, map, dir, &timing::TimingLog::new()).await
+}
+
+#[tokio::test(start_paused = true)]
+async fn timings_include_a_phase_cancelled_by_the_scan_deadline() {
+    let dir = Temp::new();
+    let timing = timing::TimingLog::new();
+    let result = tokio::time::timeout(
+        Duration::from_millis(125),
+        timing.measure("ui_tree", std::future::pending::<()>()),
+    )
+    .await;
+    assert!(result.is_err());
+    timing.save(&dir.0).await.unwrap();
+    let report: Value =
+        serde_json::from_slice(&std::fs::read(dir.0.join("timing.json")).unwrap()).unwrap();
+    assert_eq!(
+        report["phases"]["ui_tree"],
+        json!({"calls":1,"totalMs":125,"maxMs":125})
+    );
+}
 
 #[derive(Default)]
 struct Fixture(Mutex<FixtureState>);
@@ -12,7 +43,11 @@ struct Fixture(Mutex<FixtureState>);
 struct FixtureState {
     page: usize,
     android: bool,
+    ios: bool,
     left_no_longer_reproducible: bool,
+    delay_android_foreground_on_launch: bool,
+    foreground_reads_until_ready: u8,
+    xctest_generation: Option<usize>,
     focus: bool,
     entered: bool,
     checked: bool,
@@ -29,6 +64,9 @@ impl Fixture {
         state.entered = false;
         state.checked = false;
         state.focus = false;
+        if state.delay_android_foreground_on_launch {
+            state.foreground_reads_until_ready = 2;
+        }
         state.resets += 1;
     }
 }
@@ -59,27 +97,30 @@ fn node(label: &str, id: &str, x: i32, kind: ElementType) -> UiElement {
 #[async_trait]
 impl Robot for Fixture {
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
-        let android = self.0.lock().unwrap().android;
+        let state = self.0.lock().unwrap();
+        let (id, platform) = if state.android {
+            ("android-fixture", Platform::Android)
+        } else if state.ios {
+            ("ios-fixture", Platform::Ios)
+        } else {
+            ("chrome:fixture", Platform::Chrome)
+        };
         Ok(vec![RobotDevice {
-            id: if android {
-                "android-fixture"
-            } else {
-                "chrome:fixture"
-            }
-            .into(),
+            id: id.into(),
             name: "Fixture".into(),
-            platform: if android {
-                robot_core::Platform::Android
-            } else {
-                robot_core::Platform::Chrome
-            },
+            platform,
             state: robot_core::DeviceState::Available,
         }])
     }
 
     async fn stream_context(&self, _: &str) -> Result<Value, RobotError> {
-        let state = self.0.lock().unwrap();
+        let mut state = self.0.lock().unwrap();
+        assert!(!state.ios, "iOS scans must not depend on the Live window");
         if state.android {
+            if state.foreground_reads_until_ready > 0 {
+                state.foreground_reads_until_ready -= 1;
+                return Ok(json!({"appId":"launcher.app"}));
+            }
             return Ok(json!({"appId": if state.page == 3 { "other.app" } else { "fixture.app" }}));
         }
         let url = [
@@ -89,6 +130,16 @@ impl Robot for Fixture {
             "http://outside.example/",
         ][state.page];
         Ok(json!({"url": url}))
+    }
+
+    async fn ui_runner_status(&self, _: &str) -> Result<UiRunnerStatus, RobotError> {
+        let state = self.0.lock().unwrap();
+        assert!(state.ios);
+        Ok(UiRunnerStatus {
+            ready: state.page != 3,
+            target_app_id: Some("fixture.app".into()),
+            ..Default::default()
+        })
     }
 
     async fn take_screenshot(&self, _: &str) -> Result<Vec<u8>, RobotError> {
@@ -180,6 +231,10 @@ impl Robot for Fixture {
             s.empty_queries -= 1;
             return Ok(Vec::new());
         }
+        let xctest_generation = s.xctest_generation.as_mut().map(|generation| {
+            *generation += 1;
+            *generation
+        });
         let rows = match s.page {
             0 => {
                 let mut editor = node("Search", "search", 30, ElementType::TextField);
@@ -195,6 +250,17 @@ impl Robot for Fixture {
                     node("External help", "external", 50, ElementType::Link),
                     toggle,
                 ];
+                if let Some(generation) = xctest_generation {
+                    rows[0].resource_id = Some(format!("ios-{generation}-0"));
+                    let mut banner = node(
+                        "Banner",
+                        &format!("ios-{generation}-1"),
+                        90,
+                        ElementType::StaticText,
+                    );
+                    banner.clickable = true;
+                    rows.push(banner);
+                }
                 if s.checked && s.show_extra_control_when_checked {
                     rows.push(node("Extra action", "extra", 80, ElementType::Button));
                 }
@@ -260,7 +326,7 @@ async fn maps_distinct_screens_and_restores_branch_with_test_input_only() {
     }))
     .unwrap();
     let driver: std::sync::Arc<dyn Robot> = robot.clone();
-    crawl::scan(&driver, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+    scan(&driver, &opt, &AtomicBool::new(false), &mut map, &dir.0)
         .await
         .unwrap();
     let state = robot.0.lock().unwrap();
@@ -348,7 +414,7 @@ async fn groups_checked_states_only_when_the_control_inventory_matches() {
             "settleMs":100,
         }))
         .unwrap();
-        crawl::scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
             .await
             .unwrap();
         let grouped = !expand && !show_extra_control_when_checked;
@@ -388,7 +454,7 @@ async fn waits_for_controls_on_a_cold_web_entry_and_reports_empty_inventory() {
                 ..FixtureState::default()
             })));
         let mut map = graph();
-        crawl::scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
             .await
             .unwrap();
         if empty_queries == 4 {
@@ -415,7 +481,7 @@ async fn reuses_observed_web_routes_to_restore_siblings_without_reloading() {
         "settleMs":100,
     }))
     .unwrap();
-    crawl::scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
         .await
         .unwrap();
     assert_eq!(map.attempted, 5);
@@ -429,6 +495,7 @@ async fn android_skips_an_unrestorable_branch_and_reuses_a_known_sibling_route()
     let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
         android: true,
         left_no_longer_reproducible: true,
+        delay_android_foreground_on_launch: true,
         ..Default::default()
     })));
     let robot: Arc<dyn Robot> = fixture.clone();
@@ -440,7 +507,7 @@ async fn android_skips_an_unrestorable_branch_and_reuses_a_known_sibling_route()
         "settleMs":100,
     }))
     .unwrap();
-    crawl::scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
         .await
         .unwrap();
     assert_eq!(map.attempted, 3);
@@ -462,6 +529,73 @@ async fn android_skips_an_unrestorable_branch_and_reuses_a_known_sibling_route()
 }
 
 #[tokio::test(start_paused = true)]
+async fn xctest_snapshot_ids_do_not_prevent_stable_label_replay() {
+    let dir = Temp::new();
+    let robot: Arc<dyn Robot> = Arc::new(Fixture(Mutex::new(FixtureState {
+        xctest_generation: Some(0),
+        ..Default::default()
+    })));
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId":"chrome:fixture", "allowedTaps":["Left"], "settleMs":100,
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    assert_eq!(map.attempted, 1);
+    let controls = &map.screens[0].controls;
+    assert!(
+        controls
+            .iter()
+            .any(|c| c.label == "Left" && c.resource_id.is_none() && c.status == "observed")
+    );
+    assert!(!controls.iter().any(|c| c.label == "Banner"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn ios_can_restore_an_observed_route_without_relaunching_the_app() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        ios: true,
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId":"ios-fixture", "allowedTaps":["left", "back", "same"], "settleMs":100,
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    assert_eq!(map.attempted, 3);
+    assert_eq!(map.transitions.len(), 2);
+    assert_eq!(fixture.0.lock().unwrap().resets, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn ios_uses_runner_foreground_status_and_stops_after_leaving_the_app() {
+    let dir = Temp::new();
+    let robot: Arc<dyn Robot> = Arc::new(Fixture(Mutex::new(FixtureState {
+        ios: true,
+        ..Default::default()
+    })));
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId":"ios-fixture", "resetAppId":"fixture.app",
+        "allowedTaps":["external"], "settleMs":100,
+    }))
+    .unwrap();
+    let error = scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap_err();
+    assert!(error.contains("Could not verify the iOS foreground app"));
+    assert_eq!(map.attempted, 1);
+    assert_eq!(map.screens.len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn never_inspects_or_records_a_tab_outside_starting_origin() {
     let dir = Temp::new();
     let robot = Fixture::default();
@@ -471,7 +605,7 @@ async fn never_inspects_or_records_a_tab_outside_starting_origin() {
     }))
     .unwrap();
     let driver: std::sync::Arc<dyn Robot> = std::sync::Arc::new(robot);
-    let result = crawl::scan(&driver, &opt, &AtomicBool::new(false), &mut map, &dir.0).await;
+    let result = scan(&driver, &opt, &AtomicBool::new(false), &mut map, &dir.0).await;
     assert!(result.unwrap_err().contains("left the starting origin"));
     assert_eq!(map.screens.len(), 1);
     assert!(!dir.0.join("actions/s1-c5/result.png").exists());

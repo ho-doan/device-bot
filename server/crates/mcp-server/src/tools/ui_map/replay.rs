@@ -55,8 +55,8 @@ impl Action<'_> {
         if self.initially_offscreen.is_some() {
             selector["scroll_into_view"] = json!(true);
             selector["timeout_ms"] = json!(8000);
-        } else if scope.is_android() {
-            // Selecting a stable element and verifying editor focus take several UIAutomator dumps.
+        } else if matches!(scope, Scope::Mobile { .. } | Scope::IosNative) {
+            // Selecting a stable element and verifying editor focus can take several native queries.
             selector["timeout_ms"] = json!(15000);
         }
         if let Some(id) = self.resource_id {
@@ -235,6 +235,12 @@ async fn execute(
     }
     let mut runner = FlowRunner::new(Some(Box::new(client)), scratch.to_owned());
     runner.set_environment(env);
-    let timeout = Duration::from_secs(if scope.is_android() { 45 } else { 25 });
+    let timeout = Duration::from_secs(
+        if matches!(scope, Scope::Mobile { .. } | Scope::IosNative) {
+            45
+        } else {
+            25
+        },
+    );
     Ok(runner.run(&flow, &Profile::default(), &[], timeout).await)
 }

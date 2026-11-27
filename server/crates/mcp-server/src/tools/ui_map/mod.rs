@@ -2,6 +2,7 @@
 mod crawl;
 mod model;
 mod replay;
+mod timing;
 
 #[cfg(test)]
 mod tests;
@@ -262,9 +263,10 @@ impl Jobs {
         let cancel = stop.clone();
         let task = tokio::spawn(async move {
             let _lease = lease;
+            let timing = timing::TimingLog::new();
             let outcome = tokio::time::timeout(
                 Duration::from_secs(options.time_seconds() + 30),
-                crawl::scan(&robot, &options, &cancel, &mut map, &dir),
+                crawl::scan(&robot, &options, &cancel, &mut map, &dir, &timing),
             )
             .await;
             match outcome {
@@ -300,6 +302,9 @@ impl Jobs {
                     .into();
                     map.notes.push("Scan time limit reached.".into());
                 }
+            }
+            if let Err(error) = timing.save(&dir).await {
+                eprintln!("Could not save UI map timings: {error}");
             }
             if let Err(error) = save_map(&dir, &map).await {
                 eprintln!("Could not save UI map progress: {error}");

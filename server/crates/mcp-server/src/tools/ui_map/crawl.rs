@@ -17,7 +17,7 @@ use serde::Deserialize;
 use tokio::time::Instant;
 use url::Url;
 
-use super::{Control, Screen, Transition, UiMap, replay, save_map};
+use super::{Control, Screen, Transition, UiMap, replay, save_map, timing::TimingLog};
 
 pub(super) const MAX_SCREENS: usize = 250;
 pub(super) const MAX_ACTIONS: usize = 600;
@@ -185,18 +185,13 @@ fn known_route(navigation: &Navigation, from: u64, to: u64) -> Option<Vec<Arc<Pa
 pub(super) enum Scope {
     Web { start: Url },
     Mobile { app: String, platform: Platform },
+    IosNative,
     Native,
 }
 
 impl Scope {
-    pub(super) fn is_android(&self) -> bool {
-        matches!(
-            self,
-            Self::Mobile {
-                platform: Platform::Android,
-                ..
-            }
-        )
+    fn is_mobile(&self) -> bool {
+        matches!(self, Self::Mobile { .. })
     }
 
     pub(super) async fn location(
@@ -205,13 +200,10 @@ impl Scope {
         device: &str,
     ) -> Result<Option<String>, String> {
         match self {
-            Self::Native => Ok(None),
+            Self::Native | Self::IosNative => Ok(None),
             Self::Mobile { app, platform } => {
-                let context = robot
-                    .stream_context(device)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                if context["appId"].as_str() != Some(app) {
+                let foreground = foreground_app(robot, device, platform).await?;
+                if foreground.as_deref() != Some(app) {
                     return Err(format!(
                         "Scan stopped because the foreground {platform:?} app changed."
                     ));
@@ -239,6 +231,7 @@ struct Engine<'a> {
     options: &'a Options,
     scope: Scope,
     stop: &'a AtomicBool,
+    timing: &'a TimingLog,
     deadline: Instant,
     input_budget: usize,
 }
@@ -259,8 +252,11 @@ impl Engine<'_> {
 
     async fn context(&self) -> Result<Option<String>, String> {
         self.check()?;
-        self.scope
-            .location(&**self.robot, &self.options.device_id)
+        self.timing
+            .measure(
+                "foreground_check",
+                self.scope.location(&**self.robot, &self.options.device_id),
+            )
             .await
     }
 
@@ -273,16 +269,24 @@ impl Engine<'_> {
         };
         let mut root_only = false;
         let mut elements = match self
-            .robot
-            .list_elements_query(&self.options.device_id, query.clone())
+            .timing
+            .measure(
+                "ui_tree",
+                self.robot
+                    .list_elements_query(&self.options.device_id, query.clone()),
+            )
             .await
         {
             Ok(elements) => elements,
             Err(_) if query.include_frames => {
                 query.include_frames = false;
                 root_only = true;
-                self.robot
-                    .list_elements_query(&self.options.device_id, query)
+                self.timing
+                    .measure(
+                        "ui_tree",
+                        self.robot
+                            .list_elements_query(&self.options.device_id, query),
+                    )
                     .await
                     .map_err(|e| e.to_string())?
             }
@@ -431,7 +435,7 @@ impl Engine<'_> {
     }
 
     async fn observe_known(&self, accepted: &[u64]) -> Result<Observation, String> {
-        if !self.scope.is_android() {
+        if !self.scope.is_mobile() {
             return self.settled().await;
         }
         tokio::time::sleep(Duration::from_millis(self.options.delay())).await;
@@ -444,6 +448,20 @@ impl Engine<'_> {
             here = self.observe().await?;
         }
         Ok(here)
+    }
+
+    async fn wait_for_mobile_relaunch(&self) -> Result<(), String> {
+        let ready_by = Instant::now() + Duration::from_secs(10);
+        loop {
+            self.check()?;
+            match self.context().await {
+                Ok(_) => return Ok(()),
+                Err(error) if Instant::now() >= ready_by => {
+                    return Err(format!("Could not verify the relaunched fixture: {error}"));
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(250)).await,
+            }
+        }
     }
 
     async fn perform(&mut self, row: &LiveControl, action: &str) -> Result<(), String> {
@@ -493,7 +511,7 @@ impl Engine<'_> {
             return Ok(here);
         }
 
-        if (matches!(self.scope, Scope::Web { .. }) || self.scope.is_android())
+        if (matches!(self.scope, Scope::Web { .. } | Scope::IosNative) || self.scope.is_mobile())
             && let Some(route) = known_route(navigation, here.fingerprint, expected)
                 .filter(|route| route.len() <= path.len() + 1)
         {
@@ -527,14 +545,20 @@ impl Engine<'_> {
             self.check()?;
             self.input_budget -= 1;
             let device = &self.options.device_id;
-            self.robot
-                .terminate_app(device, app)
-                .await
-                .map_err(|error| format!("Could not stop the fixture app: {error}"))?;
-            self.robot
-                .launch_app(device, app)
-                .await
-                .map_err(|error| format!("Could not relaunch the fixture app: {error}"))?;
+            self.timing
+                .measure("app_relaunch", async {
+                    self.robot
+                        .terminate_app(device, app)
+                        .await
+                        .map_err(|error| format!("Could not stop the fixture app: {error}"))?;
+                    self.robot
+                        .launch_app(device, app)
+                        .await
+                        .map_err(|error| format!("Could not relaunch the fixture app: {error}"))?;
+                    self.wait_for_mobile_relaunch().await?;
+                    Ok::<(), String>(())
+                })
+                .await?;
             here = self.observe_known(&[root, expected]).await?;
         } else {
             let mut visited = HashSet::new();
@@ -636,11 +660,25 @@ fn candidate(value: &Option<String>) -> Option<String> {
         .map(|s| clipped(s, 160))
 }
 
+fn is_xctest_node_id(id: &str) -> bool {
+    id.strip_prefix("ios-")
+        .and_then(|part| part.split_once('-'))
+        .is_some_and(|(generation, index)| {
+            [generation, index]
+                .into_iter()
+                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        })
+}
+
 fn live_control(element: &UiElement, opt: &Options) -> Option<LiveControl> {
+    let resource_id = candidate(&element.resource_id);
+    let xctest_node = resource_id.as_deref().is_some_and(is_xctest_node_id);
     let kind = match element.element_type {
         Some(ElementType::TextField) => "input",
         Some(ElementType::Button) => "button",
         Some(ElementType::Link) => "link",
+        // XCTest reports whether elements can be hit, including static text.
+        Some(ElementType::StaticText | ElementType::Image) if xctest_node => return None,
         _ if element.clickable => "control",
         _ => return None,
     };
@@ -649,7 +687,7 @@ fn live_control(element: &UiElement, opt: &Options) -> Option<LiveControl> {
         return None;
     }
     let resource_id =
-        candidate(&element.resource_id).filter(|id| !id.starts_with("flt-semantic-node-"));
+        resource_id.filter(|id| !xctest_node && !id.starts_with("flt-semantic-node-"));
     // The text of a native editor may be its value. Never use it as a label.
     let exposed_label = candidate(&element.content_description).or_else(|| {
         (kind != "input")
@@ -783,6 +821,34 @@ fn web_location(url: &Url) -> String {
     clipped(&location, 240)
 }
 
+async fn foreground_app(
+    robot: &dyn Robot,
+    device: &str,
+    platform: &Platform,
+) -> Result<Option<String>, String> {
+    if *platform == Platform::Ios {
+        let status = robot
+            .ui_runner_status(device)
+            .await
+            .map_err(|error| error.to_string())?;
+        if !status.ready {
+            return Err(format!(
+                "Could not verify the iOS foreground app: {}",
+                status.detail
+            ));
+        }
+        return Ok(status.target_app_id);
+    }
+    let context = robot
+        .stream_context(device)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(context["appId"]
+        .as_str()
+        .filter(|app| !app.is_empty())
+        .map(str::to_owned))
+}
+
 async fn classify_scope(robot: &dyn Robot, opt: &Options) -> Result<Scope, String> {
     let device = &opt.device_id;
     if device.starts_with("chrome:") {
@@ -820,13 +886,8 @@ async fn classify_scope(robot: &dyn Robot, opt: &Options) -> Result<Scope, Strin
         platform @ (Platform::Android | Platform::Ios)
             if *platform == Platform::Android || opt.reset_app_id.is_some() =>
         {
-            let context = robot
-                .stream_context(device)
-                .await
-                .map_err(|e| e.to_string())?;
-            let app = context["appId"]
-                .as_str()
-                .filter(|app| !app.is_empty())
+            let app = foreground_app(robot, device, platform)
+                .await?
                 .ok_or("Open the mobile app before mapping.")?;
             if opt
                 .reset_app_id
@@ -836,11 +897,11 @@ async fn classify_scope(robot: &dyn Robot, opt: &Options) -> Result<Scope, Strin
                 return Err("resetAppId must match the currently open app.".into());
             }
             Ok(Scope::Mobile {
-                app: app.to_owned(),
+                app,
                 platform: platform.clone(),
             })
         }
-        Platform::Ios => Ok(Scope::Native),
+        Platform::Ios => Ok(Scope::IosNative),
         _ => Err("Select a specific Chrome tab or desktop window.".into()),
     }
 }
@@ -879,11 +940,16 @@ async fn record(
     } else {
         None
     };
-    let screenshot = match tokio::time::timeout(
-        Duration::from_secs(10),
-        engine.robot.take_screenshot(&engine.options.device_id),
-    )
-    .await
+    let screenshot = match engine
+        .timing
+        .measure(
+            "screen_screenshot",
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                engine.robot.take_screenshot(&engine.options.device_id),
+            ),
+        )
+        .await
     {
         Ok(Ok(png))
             if png.len() <= super::MAX_IMAGE_BYTES && png.starts_with(b"\x89PNG\r\n\x1a\n") =>
@@ -950,18 +1016,24 @@ pub(super) async fn scan(
     stop: &AtomicBool,
     map: &mut UiMap,
     dir: &Path,
+    timing: &TimingLog,
 ) -> Result<(), String> {
-    let scope = classify_scope(&**robot, opt).await?;
+    let scope = timing
+        .measure("scope_setup", classify_scope(&**robot, opt))
+        .await?;
     let mut engine = Engine {
         robot,
         dir,
         options: opt,
         scope,
         stop,
+        timing,
         deadline: Instant::now() + Duration::from_secs(opt.time_seconds()),
         input_budget: opt.actions() * (opt.depth() + 2) + 20,
     };
-    let mut root = engine.settled_entry().await?;
+    let mut root = timing
+        .measure("entry_observation", engine.settled_entry())
+        .await?;
     if matches!(engine.scope, Scope::Web { .. }) && root.controls.is_empty() {
         map.notes
             .push("No controls were found on the entry page after waiting for it to load.".into());
@@ -996,12 +1068,15 @@ pub(super) async fn scan(
                 break 'crawl;
             }
             engine.check()?;
-            let here = match engine
-                .restore(fingerprint, root_fp, &path, &navigation)
+            let here = match timing
+                .measure(
+                    "restore_branch",
+                    engine.restore(fingerprint, root_fp, &path, &navigation),
+                )
                 .await
             {
                 Ok(here) => here,
-                Err(error) if engine.scope.is_android() => {
+                Err(error) if engine.scope.is_mobile() => {
                     // Preserve the app and scan budget guards when an individual route drifts.
                     engine.context().await?;
                     map.notes.push(format!("{from}: {error}"));
@@ -1035,16 +1110,20 @@ pub(super) async fn scan(
             map.attempted += 1;
             engine.input_budget -= 1;
             let name = format!("{from}-{}", original.control.id);
-            let (evidence, error) = replay::run(
-                robot,
-                &engine.scope,
-                &opt.device_id,
-                dir,
-                &name,
-                row.replay_action(opt, original.control.initially_offscreen),
-                opt.delay(),
-            )
-            .await?;
+            let (evidence, error) = timing
+                .measure(
+                    "execute_action",
+                    replay::run(
+                        robot,
+                        &engine.scope,
+                        &opt.device_id,
+                        dir,
+                        &name,
+                        row.replay_action(opt, original.control.initially_offscreen),
+                        opt.delay(),
+                    ),
+                )
+                .await?;
             if let Some(control) = map
                 .screens
                 .iter_mut()
@@ -1059,7 +1138,10 @@ pub(super) async fn scan(
                 engine.context().await?;
                 continue;
             }
-            let mut next = match engine.settled().await {
+            let mut next = match timing
+                .measure("settle_after_action", engine.settled())
+                .await
+            {
                 Ok(next) => next,
                 Err(error) => {
                     mark(

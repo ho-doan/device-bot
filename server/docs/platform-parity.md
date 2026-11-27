@@ -1,64 +1,66 @@
-# Platform parity decision
+# Platform parity
 
-## Decision
+Device Bot registers six drivers at startup. Shared MCP tools use the same
+argument and result contracts, while drivers own their native prerequisites,
+target selection, and lifecycle. See the [architecture](architecture.md)
+and [driver assembly](../crates/mcp-server/src/bootstrap.rs).
 
-During phased delivery, Android and iOS may temporarily expose different
-capabilities while their platform drivers are built independently. Do not
-declare the product complete until a dedicated platform-parity pass has made
-the shared MCP surface behave consistently on both platforms.
+## Platform matrix
 
-## Current known gap
+The matrix describes implemented paths. On a selected target, use
+`mobile_get_capabilities` to check the readiness the driver can establish.
+Readiness can differ between the host, a window, a device, and its selected
+app. See [capability preflight](architecture.md#device-capability-preflight).
 
-`mobile_start_screen_recording` and `mobile_stop_screen_recording` are backed
-by `xcrun simctl io recordVideo` for iOS Simulator. The Android driver does
-not yet implement the equivalent `adb shell screenrecord` lifecycle and
-therefore returns the portable `Unsupported` result for these operations.
+| Driver | Element source | Explicit document scope | System keyboard exclusion | Screen recording |
+| --- | --- | --- | --- | --- |
+| Android | UI Automator XML via ADB | Unsupported | Unsupported | ADB `screenrecord`, with `setsid` for ownership |
+| iOS Simulator | XCTest UI runner | Inspectable WebView | Supported by the native XCTest query | `simctl io recordVideo` |
+| Physical iOS | Signed XCTest agent | Inspectable WebView with `appId` | Unsupported | QuickTime with a supported device connection |
+| macOS | Native AXUIElement for the selected app or window | Unsupported | Unsupported | ffmpeg with AVFoundation and screen permission |
+| Windows | UIA raw view or the opt-in MSAA provider | Unsupported | Unsupported | ffmpeg with gdigrab on an interactive desktop |
+| Chrome | DOM via CDP | Page and frame selectors | Unsupported | CDP screenshots encoded by ffmpeg |
 
-The real iOS driver currently exposes `go-ios` install/launch and UI-runner
-control, but leaves uninstall explicitly unsupported because `go-ios` has no
-stable uninstall command in its current CLI surface. The parity pass must
-resolve this shared app-lifecycle contract.
+Android and iOS Simulator support installing and uninstalling apps. Physical
+iOS uses `go-ios` for install and `xcrun devicectl` for uninstall. Desktop
+and Chrome app install/uninstall return `Unsupported`. macOS and Windows
+implement native drag through the swipe tool. Browser runtime and network
+observation are Chrome-only and scoped to the attached page.
 
-## Desktop parity status
+## Element query contract
 
-The macOS and Windows host drivers now expose the same normalized accessibility
-tree contract through their native APIs: the macOS driver traverses AXUIElement
-children and the Windows driver traverses the UI Automation raw view. Both
-drivers apply a case-insensitive filter while traversing and stop at
-`maxResults`, so `mobile_list_elements_on_screen` does not need to materialize
-an unbounded desktop tree.
+Match case-insensitive text and normalized element type before applying
+`maxResults`, preserving source order. The text fields include class,
+resource ID, label, description, and value when the source provides them.
+An explicit unsupported scope or keyboard exclusion request returns
+`Unsupported`.
 
-Windows UIA follows the Flutter plugin's existing semantics: process-scoped
-root resolution, control-type role mapping, automation id/name/help text,
-physical-pixel bounds, enabled state, clickable inference, and bounded raw-view
-traversal. It falls back to the foreground process only when no app has been
-launched through the Windows robot. UIA remains unavailable across elevated or
-different desktop sessions.
-
-Windows also offers an explicit MSAA/`IAccessible` native backend through
-`DEVICE_BOT_WINDOWS_ACCESSIBILITY=msaa`. It reads semantic providers on the
-selected HWND and its same-process child windows, without a Flutter package.
-UIA remains the default; trees are not merged. MSAA supplies no invented resource
-IDs or Flutter widget classes. See the [comparison and release validation guide](../crates/robot-windows/README.md).
-
-The desktop drivers intentionally retain their platform-specific gaps: macOS
-supports screen recording while Windows does not; neither driver installs or
-uninstalls apps; and macOS does not expose drag/swipe through its current native
-backend while Windows does.
+- Android normalizes the UI Automator snapshot, and Chrome normalizes DOM
+  nodes for the chosen document or frames. Both apply the portable query.
+- The iOS drivers pass native limits and filters to XCTest and apply the
+  portable query to the decoded results. Scoped WebView queries use the
+  Web Inspector.
+- macOS filters during AX traversal for both host and window targets. The
+  traversal retains its depth and time budgets.
+- Windows applies the portable query to UIA and MSAA snapshots in both host
+  and window paths. The helpers cap the snapshot at 5,000 nodes and depth
+  128 with a 10-second helper deadline. MSAA also caps visited nodes at
+  5,000. Filtered queries search within these budgets. Unfiltered queries
+  can stop at the caller's requested count. The backends use separate native
+  providers, with UIA selected by default. [Windows validation guide](../crates/robot-windows/README.md)
 
 ## Required parity pass
 
-After the planned feature phases are implemented, before project completion:
+1. Check each shared operation against its portable contract and its selected
+   target's readiness. Document unsupported options and relevant prerequisites.
+2. Use parser fixtures for native payloads and assert portable fields, filter
+   order, result limits, and typed errors in driver and MCP tests.
+3. Run the same MCP scenarios on the relevant native targets, including an
+   Android emulator and an iOS Simulator for mobile parity. Use an interactive
+   Windows or macOS session for desktop UI and a Chrome page for DOM/frame
+   behavior. Record screenshots or video when the scenario needs evidence.
 
-1. Inventory every `Robot` capability and each MCP tool on Android and iOS.
-2. Implement missing platform equivalents where feasible; otherwise make
-   capability availability explicit in tool results and documentation.
-3. Align argument validation, result schemas, artifact locations, lifecycle
-   semantics, and actionable error messages.
-4. Run the same MCP end-to-end scenarios on an Android emulator and iOS
-   Simulator, saving screenshots or recordings under `artifacts/` as evidence.
-5. Add regression tests for every agreed cross-platform behavior.
-
-The parity pass owns synchronization work; individual phases remain focused on
-their platform-specific driver and must not accumulate cross-platform policy in
-tool router files.
+The [automation workflow](../../.github/workflows/automation-tests.yml) runs
+web scenarios on Linux and Windows and provides a manually triggered iOS
+Simulator job. Use the [automation guide](../automation_test/README.md) for
+the runtime prerequisites and replay procedure.

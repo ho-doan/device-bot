@@ -66,20 +66,20 @@ do not assume MSAA exposes Flutter `ValueKey` or widget class names.
 - Invisible/offscreen nodes are excluded. Password/protected text is not queried;
   if state cannot be read, values/names are withheld and enabled is conservative.
   Mixed checkbox state and unavailable state remain unknown.
-- Traversal is capped at 5,000 visits, depth 128 and the requested result limit.
-  A 10-second external deadline kills a hung helper. These limits can produce a
-  partial tree; absence in a large snapshot alone does not prove no semantics.
+- Traversal is capped at 5,000 visits and depth 128. A 10-second external
+  deadline kills a hung helper. Filtered queries apply the portable text, type,
+  and result limit to the snapshot. Unfiltered queries can stop at the caller's
+  requested count.
 - MSAA does not replace bridge-specific IME actions or touch swipes. Native
   pointer, keyboard and drag input retain their existing behavior.
 - An interactive Windows session and compatible elevation are required. This
   reader does not bypass secure desktops or cross-session access restrictions.
 
-`cargo test -p robot-windows --all-targets` runs Rust tests and, on Windows, managed
-IAccessible provider contracts for child IDs/object children, cycle and visit
-limits, roles, filters, state and protected values. The ignored release test
-requires the app and environment variables above. Actual `oleacc.dll` behavior
-and Flutter release coverage require Windows validation; tests on macOS do not
-establish that the bridge can be removed.
+`cargo test -p robot-windows --all-targets` runs Rust query tests and, on
+Windows, managed IAccessible provider contracts for child IDs and object
+children, cycle and visit limits, roles, state, and protected values. The ignored
+release test requires the app and environment variables above. Actual
+`oleacc.dll` behavior and Flutter release coverage require Windows validation.
 
 References: [AccessibleObjectFromWindow](https://learn.microsoft.com/en-us/windows/win32/api/oleacc/nf-oleacc-accessibleobjectfromwindow),
 [AccessibleChildren](https://learn.microsoft.com/en-us/windows/win32/api/oleacc/nf-oleacc-accessiblechildren),

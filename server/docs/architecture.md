@@ -16,10 +16,10 @@ mcp-server (binary + connection orchestration)
         ├── robot-project (project/env/resource orchestration)
         ├── robot-flow / robot-report (flow execution + persistent history)
         ├── robot-stream (Live session / WebRTC infrastructure)
-        └── robot-core (device contracts only)
-                │
-                └── robot-android / robot-ios-sim / robot-ios-real
-                    robot-macos / robot-windows / robot-chrome
+        ├── robot-core (portable device contracts and routing)
+        └── robot-android / robot-ios-sim / robot-ios-real
+            robot-macos / robot-windows / robot-chrome
+                    └── depend on robot-core
 ```
 
 `mcp-protocol` never starts processes, owns connection state, or knows a
@@ -74,14 +74,21 @@ contracts; use `cargo check --workspace --all-targets` to verify consumers after
 changing a public contract.
 
 `ElementQuery` applies document scope, text, and element type before
-`max_results`, preserving the order returned by the source. Adapters can push
-filters into a bounded native traversal and use `apply_element_query` on the
-normalized results. The iOS adapters use that path for typed and untyped
-queries. The native iOS Simulator query forwards system keyboard exclusion
-to XCTest and checks its acknowledgment. Other element sources return
+`max_results`, preserving source order. Text matching is case-insensitive
+across class, resource ID, label, description, and native value when present.
+`apply_element_query` implements the portable policy for normalized snapshots.
+macOS reuses the portable role classifier and text matching while traversing
+AX, stopping after it finds the requested number of matches. Windows applies
+the portable query to a bounded UIA or MSAA snapshot. It forwards a caller's
+result limit to the helper for unfiltered requests and zero-result queries.
+The iOS adapters also pass filters to XCTest to bound native traversal.
+
+The native iOS Simulator query forwards system keyboard exclusion to XCTest
+and checks its acknowledgment. Other element sources return
 `RobotError::Unsupported` for that explicit request before reading the tree.
 The option controls tree membership. Keyboard visibility is managed separately
-by the app and OS.
+by the app and OS. See the [platform matrix](platform-parity.md) for each
+driver's element source, document scope, and runtime prerequisites.
 
 `robot-flow::runner` owns flow lifecycle, cancellation, step deadlines, device
 scope and the MCP session. Its private modules share that state while keeping
@@ -117,10 +124,9 @@ normal MCP JSON retains the original values. CI exports real Flutter recordings
 and replays them through the Rust compiler and a stdio MCP fixture on Linux and
 Windows, comparing the forwarded text with the original recorded input.
 
-Each platform crate owns its external process commands, output parsers, and
-driver-specific tests. `robot-android` may depend on `robot-core`, but no
-platform driver may depend on `mcp-server`; tool-to-driver adaptation belongs
-in narrowly scoped server handler modules added with each tool family.
+Each platform crate depends on `robot-core` and owns its external process
+commands, output parsers, and driver-specific tests. Tool-to-driver adaptation
+belongs in the server handler module for each tool family.
 
 `robot-ios-real` owns the `go-ios` command boundary, signed XCTest control,
 and the USB/Wi-Fi screen capture paths. It is independent of `robot-ios-sim`, whose
@@ -137,10 +143,8 @@ uses `tools/device.rs`, `tools/app.rs`, `tools/navigation.rs`,
 parsing in `tools/arguments.rs`. The router stays a small method-to-handler
 dispatch table rather than a business-logic container.
 
-Temporary platform capability gaps are tracked in
-[platform-parity.md](platform-parity.md). The final parity pass owns alignment
-of shared MCP behavior rather than making a phase-specific handler a
-cross-platform policy container.
+Platform capabilities, implementation limits, and the checks for shared MCP
+behavior are tracked in [platform-parity.md](platform-parity.md).
 
 Inside `robot-macos`, `lib.rs` owns the driver, process commands and session
 state. Native implementation details live behind private modules:
@@ -158,6 +162,12 @@ helpers also compile under tests on other hosts. Keep this distinction when
 moving native code so Linux/Windows builds remain useful for portable tests.
 Run `cargo test -p robot-macos --lib` for automated regressions and use a Linux
 target check to verify the non-macOS configuration.
+
+Inside `robot-windows`, `src/accessibility/` contains the UIA PowerShell
+template and the optional MSAA provider. Both project native nodes into the
+same payload for the Rust decoder. `live.rs` pins window-scoped reads to the
+selected HWND and its owner. `lib.rs` assembles the driver and applies the
+portable query on the decoded snapshot.
 
 ### Browser observation
 

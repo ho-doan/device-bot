@@ -19,27 +19,26 @@ thật với nguồn HTTP thay thế. [Cargo manifest][reference-cargo] · [Trai
 | Adapter nền tảng | Các crate driver sở hữu lệnh hệ điều hành, parser, SDK và vòng đời native. Chúng chuyển kết quả sang các kiểu của `robot-core` tại ranh giới adapter. [Kiến trúc driver](architecture.md#architecture-boundaries) |
 | Điều phối và giao thức | `mcp-server/src/bootstrap.rs` gắn sáu driver vào registry. `mcp-server/src/tools/` chuyển đổi MCP. `robot-flow` sở hữu điều phối YAML và lỗi thực thi. [Khởi tạo driver](../crates/mcp-server/src/bootstrap.rs#L68-L92) · [Ranh giới MCP và flow](architecture.md#architecture-boundaries) |
 
-## Chuyển parity thành kiểm thử
+## Áp dụng vào truy vấn cây giao diện
 
-1. Lập ma trận theo thao tác và driver từ `Robot`. Dùng
-   `mobile_get_capabilities` để kiểm tra mức sẵn sàng theo nhóm tính năng.
-   Phân biệt `available`, `blocked`, `unsupported` và `unknown`. Đối chiếu mã
-   với tài liệu hiện có. Ví dụ, ghi chú parity ghi Android chưa hỗ trợ ghi màn
-   hình, trong khi driver đã có mã khởi động `screenrecord`, dừng và tải MP4 qua
-   ADB. Mức sẵn sàng trên từng thiết bị vẫn cần kiểm tra. [Ghi chú parity](platform-parity.md#current-known-gap) · [Driver Android](../crates/robot-android/src/lib.rs#L370-L460) · [Ý nghĩa trạng thái](architecture.md#device-capability-preflight)
-2. Chọn truy vấn cây giao diện làm lát cắt đầu tiên. Dùng cùng bộ fixture để
-   kiểm tra kiểu phần tử, lọc không phân biệt hoa thường và áp dụng `maxResults`
-   sau khi lọc. Chrome áp dụng quy tắc chung trên DOM đã thu thập. Khi truy
-   vấn theo kiểu phần tử, iOS thật chuyển bộ lọc cho XCTest rồi áp dụng quy
-   tắc chung trên dữ liệu trả về. Giữ phép lọc trong quá trình duyệt native
-   khi cần giới hạn chi phí và kiểm tra cùng kỳ vọng ở cả hai đường chạy.
-   [Quy tắc chung](../crates/robot-core/src/elements.rs#L165-L211) · [Kiểm thử hiện có](../crates/robot-core/src/tests.rs#L155) · [Chrome](../crates/robot-chrome/src/lib.rs#L1692-L1725) · [iOS thật](../crates/robot-ios-real/src/xctest_robot.rs#L1393-L1441)
-3. Với mỗi bản sửa hành vi chung, đưa ca tái hiện vào bộ hợp đồng và kiểm tra
-   mọi adapter có hỗ trợ thao tác. Dùng fixture đầu ra native cho lỗi parser
-   và dùng cùng kịch bản MCP trên thiết bị hoặc trình duyệt cho hành vi phụ
-   thuộc môi trường. CI đã có ma trận web Linux/Windows và một job iOS
-   Simulator chạy theo yêu cầu. Ghi rõ bằng chứng nào đến từ fixture và bằng
-   chứng nào đến từ chạy trên thiết bị. [Workflow hiện tại](../../.github/workflows/automation-tests.yml#L166-L275) · [Yêu cầu parity](platform-parity.md#required-parity-pass)
+Cả sáu driver dùng hợp đồng `ElementQuery`. Quy tắc chung lọc theo phạm vi
+tài liệu, kiểu phần tử và văn bản trước khi áp dụng `maxResults`. Văn bản
+được so khớp không phân biệt hoa thường, bao gồm giá trị ô nhập liệu khi
+nguồn cung cấp. Các driver giữ thứ tự từ nguồn. [Hợp đồng truy vấn](platform-parity.md#element-query-contract) · [Quy tắc Rust](../crates/robot-core/src/elements.rs)
+
+macOS lọc ngay khi duyệt AX và dừng khi đủ kết quả cho cả host và cửa sổ.
+Windows áp dụng cùng quy tắc trên snapshot UIA hoặc MSAA có giới hạn riêng.
+iOS có thể chuyển bộ lọc cho XCTest để giảm chi phí duyệt. Android và Chrome
+áp dụng bộ lọc trên dữ liệu đã chuẩn hóa. [macOS AX](../crates/robot-macos/src/accessibility.rs) · [Windows accessibility](../crates/robot-windows/src/accessibility/mod.rs) · [iOS Simulator](../crates/robot-ios-sim/src/lib.rs) · [iOS thật](../crates/robot-ios-real/src/xctest_robot.rs)
+
+Ma trận parity ghi nhận backend thực tế và các tùy chọn riêng, gồm
+`screenrecord` trên Android, quay màn hình trên Windows và gỡ ứng dụng
+bằng `devicectl` trên iOS thật. Dùng `mobile_get_capabilities` để kiểm tra mức
+sẵn sàng của target đã chọn trước khi chạy. [Ma trận](platform-parity.md#platform-matrix) · [Ý nghĩa trạng thái](architecture.md#device-capability-preflight)
+
+Fixture Rust và payload giả lập kiểm tra thứ tự lọc, giới hạn kết quả và lỗi
+cho tùy chọn không hỗ trợ. Các ca phụ thuộc vào GUI, XCTest và thiết bị cần
+chạy lại qua MCP trên target tương ứng. [Kiểm thử hợp đồng Rust](../crates/robot-core/src/tests.rs) · [Kiểm thử adapter](../crates/mcp-server/tests/element_query_contract.rs) · [Yêu cầu parity](platform-parity.md#required-parity-pass)
 
 [reference-cargo]: https://github.com/MSC29/clean-architecture-rust/blob/41f214277f9514a98f100e1707217c095ff1ec11/Cargo.toml#L1-L13
 [reference-port]: https://github.com/MSC29/clean-architecture-rust/blob/41f214277f9514a98f100e1707217c095ff1ec11/src/application/repositories/cat_facts_repository_abstract.rs#L1-L14

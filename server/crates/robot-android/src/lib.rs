@@ -92,9 +92,13 @@ impl CommandRunner for TokioCommandRunner {
         args: &[String],
         log_path: &std::path::Path,
     ) -> Result<(), RobotError> {
-        let log = std::fs::File::create(log_path).map_err(|error| {
-            RobotError::CommandFailed(format!("could not create emulator log: {error}"))
-        })?;
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)
+            .map_err(|error| {
+                RobotError::CommandFailed(format!("could not open emulator log: {error}"))
+            })?;
         let stderr = log.try_clone().map_err(|error| {
             RobotError::CommandFailed(format!("could not clone emulator log: {error}"))
         })?;
@@ -330,6 +334,12 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
 
     async fn boot_device(&self, device_id: &str) -> Result<(), RobotError> {
         self.boot_emulator(device_id).await
+    }
+    async fn recovery_boot_target(&self, device_id: &str) -> Result<Option<String>, RobotError> {
+        Ok(self
+            .running_avd_name(device_id)
+            .await
+            .map(|name| format!("avd:{name}")))
     }
 
     async fn list_installed_apps(&self, device_id: &str) -> Result<Value, RobotError> {

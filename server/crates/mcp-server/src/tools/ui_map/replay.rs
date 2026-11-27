@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 use async_trait::async_trait;
 use robot_core::{Robot, UiElement, WebContext};
@@ -58,7 +58,13 @@ impl Action<'_> {
         settle_ms: u64,
         capture: bool,
     ) -> Result<String, String> {
-        let mut selector = json!({"timeout_ms":3000});
+        let mut selector = if matches!(scope, Scope::Mobile { .. } | Scope::IosNative) {
+            // Use the flow runner's normal selector wait and the driver's
+            // deadline. A short step override also cuts off the native tap.
+            json!({})
+        } else {
+            json!({"timeout_ms":3000})
+        };
         if self.flutter {
             selector["source"] = json!("flutter");
         }
@@ -70,9 +76,6 @@ impl Action<'_> {
         if matches!(scope, Scope::Web { .. }) && self.initially_offscreen.is_some() {
             selector["scroll_into_view"] = json!(true);
             selector["timeout_ms"] = json!(8000);
-        } else if matches!(scope, Scope::Mobile { .. } | Scope::IosNative) {
-            // Selecting a stable element and verifying editor focus can take several native queries.
-            selector["timeout_ms"] = json!(15000);
         }
         if let Some(id) = self.resource_id {
             selector["resource_id"] = json!(id);
@@ -96,15 +99,23 @@ impl Action<'_> {
             let mut scroll = json!({
                 "class_contains": plan.anchor.locator.class_name,
                 "source": if self.flutter { "flutter" } else { "native" },
-                "direction": if plan.delta > 0 { "down" } else { "up" },
-                "wheel_delta": plan.delta.unsigned_abs(),
             });
+            let step = if let Some(gesture) = plan.anchor.android_swipe(plan.delta) {
+                scroll["from"] = json!(gesture.from);
+                scroll["to"] = json!(gesture.to);
+                scroll["duration_ms"] = json!(gesture.duration_ms);
+                "gesture"
+            } else {
+                scroll["direction"] = json!(if plan.delta > 0 { "down" } else { "up" });
+                scroll["wheel_delta"] = json!(plan.delta.unsigned_abs());
+                "scroll"
+            };
             if let Some(id) = &plan.anchor.locator.resource_id {
                 scroll["resource_id"] = json!(id);
             }
             escape_templates(&mut scroll);
             for _ in &plan.slices {
-                steps.push(json!({"scroll":scroll}));
+                steps.push(json!({(step):scroll}));
                 steps.push(json!({"wait":{"ms":SCROLL_SETTLE_MS}}));
             }
         }
@@ -266,12 +277,7 @@ async fn execute(
     }
     let mut runner = FlowRunner::new(Some(Box::new(client)), scratch.to_owned());
     runner.set_environment(env);
-    let timeout = Duration::from_secs(
-        if matches!(scope, Scope::Mobile { .. } | Scope::IosNative) {
-            45
-        } else {
-            25
-        },
-    );
-    Ok(runner.run(&flow, &Profile::default(), &[], timeout).await)
+    Ok(runner
+        .run_without_case_timeout(&flow, &Profile::default(), &[])
+        .await)
 }

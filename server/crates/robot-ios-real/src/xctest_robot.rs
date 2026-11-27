@@ -626,7 +626,11 @@ impl IosXCTestRobot {
         })
     }
 
-    async fn agent_status(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
+    async fn agent_status(
+        &self,
+        device_id: &str,
+        timeout: Duration,
+    ) -> Result<UiRunnerStatus, RobotError> {
         let default_project = &self.runner_project;
         let default_derived = default_project.parent().unwrap().join("build");
         let cache = self
@@ -641,7 +645,7 @@ impl IosXCTestRobot {
         let expected = cache.version()?;
         let health = self
             .agent
-            .dispatch_for(device_id, "health", json!({}), AGENT_PROBE_TIMEOUT)
+            .dispatch_for(device_id, "health", json!({}), timeout)
             .await;
         let mut status = live_status(
             device_id,
@@ -1458,12 +1462,15 @@ impl Robot for IosXCTestRobot {
 
     async fn ui_runner_status(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
         validate_device_id(device_id)?;
-        self.agent_status(device_id).await
+        // A foreground check guards an automation operation. Keep the
+        // read-only command pending across a transient LAN poll failure
+        // instead of restarting the helper on a two-second UI probe.
+        self.agent_status(device_id, ACTION_TIMEOUT).await
     }
     async fn check_device_health(&self, device_id: &str) -> Result<UiRunnerStatus, RobotError> {
         validate_device_id(device_id)?;
         let (status, report, screen_locked) = tokio::join!(
-            self.agent_status(device_id),
+            self.agent_status(device_id, AGENT_PROBE_TIMEOUT),
             self.connection_report(device_id, false),
             crate::connection::device_lock_state(&self.xcrun_path, device_id)
         );
@@ -1515,7 +1522,7 @@ impl Robot for IosXCTestRobot {
         let target = if app_id.is_some() {
             app_id.map(str::to_owned)
         } else {
-            self.agent_status(device_id)
+            self.agent_status(device_id, AGENT_PROBE_TIMEOUT)
                 .await
                 .ok()
                 .and_then(|s| s.target_app_id)
@@ -1544,7 +1551,7 @@ impl Robot for IosXCTestRobot {
         if let Some(app_id) = target {
             self.launch_app(device_id, &app_id).await?;
         }
-        self.agent_status(device_id).await
+        self.agent_status(device_id, AGENT_PROBE_TIMEOUT).await
     }
 }
 

@@ -40,12 +40,12 @@ struct LeaseInfo {
 }
 
 struct Lease {
-    key: String,
+    id: String,
 }
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        ACTIVE.lock().unwrap().remove(&self.key);
+        ACTIVE.lock().unwrap().retain(|_, job| job.id != self.id);
     }
 }
 
@@ -68,7 +68,26 @@ fn acquire(device: &str, id: &str) -> Result<(Lease, Arc<AtomicBool>), String> {
             stop: stop.clone(),
         },
     );
-    Ok((Lease { key }, stop))
+    Ok((Lease { id: id.into() }, stop))
+}
+
+// Keep the old serial reserved until the scan ends and claim the replacement
+// before any input is sent to it.
+fn claim_recovered_device(map_id: &str, device: &str) -> Result<(), String> {
+    let mut active = ACTIVE.lock().unwrap();
+    match active.get(device) {
+        Some(job) if job.id == map_id => return Ok(()),
+        Some(_) => return Err("Another UI map scan owns the recovered device.".into()),
+        None => {}
+    }
+    if let Some(job) = active.values().find(|job| job.id == map_id) {
+        let job = LeaseInfo {
+            id: job.id.clone(),
+            stop: job.stop.clone(),
+        };
+        active.insert(device.into(), job);
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -97,7 +116,7 @@ pub(super) fn definition() -> ToolDefinition {
                 "expandSelectionStates":{"type":"boolean","description":"Explore every checked or selected variant even if it exposes the same actionable controls"},
                 "inputs":{"type":"object","maxProperties":30,"additionalProperties":{"type":"string"}},
                 "backControl":{"type":"string"},
-                "resetAppId":{"type":"string","description":"Opt in to relaunching the foreground mobile fixture or selected single-window macOS fixture. Must match its app or bundle ID."},
+                "resetAppId":{"type":"string","description":"Opt in to relaunching the exact fixture and resuming after Android AVD or iOS runner disconnects. Must match the open mobile app or selected single-window macOS bundle."},
                 "maxScreens":{"type":"integer","minimum":1,"maximum":crawl::MAX_SCREENS},
                 "maxActions":{"type":"integer","minimum":1,"maximum":crawl::MAX_ACTIONS},
                 "maxDepth":{"type":"integer","minimum":1,"maximum":crawl::MAX_DEPTH},

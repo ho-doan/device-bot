@@ -7,7 +7,7 @@ use std::{
 use axum::{
     Json, Router,
     extract::{Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -41,6 +41,8 @@ pub struct AgentCommand {
     pub params: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_id: Option<String>,
+    #[serde(skip)]
+    delivery_session_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -103,6 +105,7 @@ impl XCTestAgentBridge {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, RobotError> {
+        let command_name = method.clone();
         let id = Uuid::new_v4().to_string();
         let (sender, receiver) = oneshot::channel();
         self.state.waiters.lock().await.insert(id.clone(), sender);
@@ -111,19 +114,32 @@ impl XCTestAgentBridge {
             method,
             params,
             device_id,
+            delivery_session_id: None,
         });
 
         let result = tokio::time::timeout(timeout, receiver).await;
         if result.is_err() {
+            let phase = {
+                let mut commands = self.state.commands.lock().await;
+                match commands.iter().position(|command| command.id == id) {
+                    Some(index)
+                        if commands
+                            .remove(index)
+                            .unwrap()
+                            .delivery_session_id
+                            .is_some() =>
+                    {
+                        "delivered to a runner session, but no POST /result arrived"
+                    }
+                    Some(_) => "not fetched by GET /next",
+                    None => "no result available after delivery",
+                }
+            };
             self.state.waiters.lock().await.remove(&id);
-            self.state
-                .commands
-                .lock()
-                .await
-                .retain(|command| command.id != id);
-            return Err(RobotError::CommandFailed(
-                self.connection_diagnostic().await,
-            ));
+            return Err(RobotError::CommandFailed(format!(
+                "iOS XCTest command {command_name} ({id}) timed out: {phase}. {}",
+                self.connection_diagnostic().await
+            )));
         }
         let result = result.unwrap().map_err(|_| {
             RobotError::CommandFailed(
@@ -203,6 +219,7 @@ fn authorized(headers: &HeaderMap, state: &StateData) -> bool {
 struct AgentIdentity {
     device_id: Option<String>,
     expected_version: Option<String>,
+    delivery_session_id: Option<String>,
 }
 
 async fn next(
@@ -213,15 +230,59 @@ async fn next(
     if !authorized(&headers, &state) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    let session = match identity
+        .delivery_session_id
+        .as_deref()
+        .map(Uuid::parse_str)
+        .transpose()
+    {
+        Ok(session) => session,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
     *state.last_authenticated_request.lock().await = Some(std::time::Instant::now());
     let mut commands = state.commands.lock().await;
-    let index = commands
-        .iter()
-        .position(|command| command.device_id.is_none() || command.device_id == identity.device_id);
-    match index.and_then(|index| commands.remove(index)) {
+    {
+        // A caller can time out or cancel while waiting on dispatch. Do not
+        // send a command after its result receiver has already gone away.
+        let mut waiters = state.waiters.lock().await;
+        waiters.retain(|_, waiter| !waiter.is_closed());
+        commands.retain(|command| waiters.contains_key(&command.id));
+    }
+    let index = commands.iter().position(|command| {
+        (command.device_id.is_none() || command.device_id == identity.device_id)
+            && (command.delivery_session_id.is_none() || command.delivery_session_id == session)
+    });
+    let command = index.and_then(|index| {
+        if let Some(session) = session {
+            let command = commands.get_mut(index)?;
+            command.delivery_session_id = Some(session);
+            Some(command.clone())
+        } else {
+            // Older simulator and runner clients still use destructive polling.
+            commands.remove(index)
+        }
+    });
+    let response = match command {
         Some(command) => Json(command).into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
+    };
+    if session.is_some() {
+        runner_http_response(response)
+    } else {
+        response
     }
+}
+
+fn runner_http_response(mut response: Response) -> Response {
+    // The physical runner polls over LAN. Do not cache an empty poll or
+    // leave a half-open connection around for the next poll to reuse.
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+        .headers_mut()
+        .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    response
 }
 
 async fn result(
@@ -233,6 +294,11 @@ async fn result(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     *state.last_authenticated_request.lock().await = Some(std::time::Instant::now());
+    state
+        .commands
+        .lock()
+        .await
+        .retain(|command| command.id != result.id);
     if let Some(waiter) = state.waiters.lock().await.remove(&result.id) {
         let _ = waiter.send(result);
         StatusCode::NO_CONTENT.into_response()
@@ -383,6 +449,93 @@ mod tests {
         assert!(bridge.state.commands.lock().await.is_empty());
         assert!(bridge.state.waiters.lock().await.is_empty());
     }
+    #[tokio::test]
+    async fn a_cancelled_dispatch_cannot_send_input_after_the_caller_has_gone() {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+        let bridge = XCTestAgentBridge::new(None);
+        let sender = bridge.clone();
+        let task = tokio::spawn(async move {
+            sender
+                .dispatch_for("phone", "tap", Value::Null, Duration::from_secs(2))
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert_eq!(bridge.state.commands.lock().await.len(), 1);
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        let response = bridge.router().oneshot(
+            Request::builder()
+                .uri("/next?deviceId=phone&deliverySessionId=12300000-0000-0000-0000-000000000123")
+                .body(Body::empty())
+                .unwrap()
+        ).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(bridge.state.commands.lock().await.is_empty());
+        assert!(bridge.state.waiters.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn retained_delivery_survives_a_lost_poll_without_reassigning_the_action() {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+        let bridge = XCTestAgentBridge::new(None);
+        let sender = bridge.clone();
+        let task = tokio::spawn(async move {
+            sender
+                .dispatch_for("phone", "tap", Value::Null, Duration::from_secs(2))
+                .await
+        });
+        tokio::task::yield_now().await;
+        let poll = |uri: &'static str| {
+            bridge
+                .router()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        };
+        const ORIGINAL: &str =
+            "/next?deviceId=phone&deliverySessionId=12300000-0000-0000-0000-000000000123";
+        const REPLACEMENT: &str =
+            "/next?deviceId=phone&deliverySessionId=45600000-0000-0000-0000-000000000456";
+        let first = poll(ORIGINAL).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(first.headers()[header::CONNECTION], "close");
+        let first = axum::body::to_bytes(first.into_body(), 4096).await.unwrap();
+        assert_eq!(
+            poll(REPLACEMENT).await.unwrap().status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            poll("/next?deviceId=phone").await.unwrap().status(),
+            StatusCode::NO_CONTENT
+        );
+        let repeated = poll(ORIGINAL).await.unwrap();
+        assert_eq!(repeated.status(), StatusCode::OK);
+        let repeated = axum::body::to_bytes(repeated.into_body(), 4096)
+            .await
+            .unwrap();
+        assert_eq!(first, repeated);
+        let command: Value = serde_json::from_slice(&first).unwrap();
+        let post = || {
+            bridge.router().oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/result")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"id":command["id"],"ok":true}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+        };
+        assert_eq!(post().await.unwrap().status(), StatusCode::NO_CONTENT);
+        assert_eq!(post().await.unwrap().status(), StatusCode::NOT_FOUND);
+        let empty = poll(ORIGINAL).await.unwrap();
+        assert_eq!(empty.status(), StatusCode::NO_CONTENT);
+        assert_eq!(empty.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(empty.headers()[header::CONNECTION], "close");
+        assert!(task.await.unwrap().is_ok());
+    }
+
     #[tokio::test]
     async fn helper_on_another_device_cannot_consume_scoped_commands() {
         use axum::{body::Body, http::Request};

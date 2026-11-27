@@ -334,6 +334,28 @@ fn context_queries_match_constraints_without_runtime_identity() {
 }
 
 #[tokio::test]
+async fn exact_avd_alias_routes_when_the_emulator_is_offline() {
+    let driver: Arc<dyn Robot> = Arc::new(StubRobot {
+        device: Some(RobotDevice {
+            id: "emulator-5554".into(),
+            name: "Small_Phone".into(),
+            platform: Platform::Android,
+            state: DeviceState::Offline,
+        }),
+        ..Default::default()
+    });
+    let registry = RobotRegistry::new([driver]);
+    assert!(matches!(
+        registry.boot_device("avd:Small_Phone").await,
+        Err(RobotError::Unsupported(_))
+    ));
+    assert!(matches!(
+        registry.boot_device("avd:Other").await,
+        Err(RobotError::DeviceNotFound(_))
+    ));
+}
+
+#[tokio::test]
 async fn desktop_window_targets_route_without_changing_their_identity() {
     for (host, platform, target) in [
         ("windows-host", Platform::Windows, "windows:123:456"),

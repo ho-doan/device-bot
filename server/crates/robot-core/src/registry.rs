@@ -35,6 +35,9 @@ impl RobotRegistry {
             };
             if let Some(device) = devices.iter().find(|device| {
                 device.id == device_id
+                    || (device.platform == Platform::Android
+                        && device.id.starts_with("emulator-")
+                        && device_id.strip_prefix("avd:") == Some(device.name.as_str()))
                     || (device_id == "chrome:browser" && device.platform == Platform::Chrome)
                     // Window-scoped Windows IDs retain the selected PID/HWND for
                     // every operation. The driver validates the actual identity.
@@ -236,6 +239,9 @@ impl Robot for RobotRegistry {
     }
     async fn boot_device(&self, id: &str) -> Result<(), RobotError> {
         self.driver_for(id).await?.boot_device(id).await
+    }
+    async fn recovery_boot_target(&self, id: &str) -> Result<Option<String>, RobotError> {
+        self.driver_for(id).await?.recovery_boot_target(id).await
     }
     async fn configure_web_proxy(
         &self,

@@ -18,7 +18,7 @@ use tokio::time::Instant;
 use url::Url;
 
 use super::{
-    Control, Screen, Transition, UiMap, replay, save_map,
+    Control, Screen, Transition, UiMap, claim_recovered_device, replay, save_map,
     timing::TimingLog,
     viewport::{self, MAX_STEPS_PER_DIRECTION, Reveal, SCROLL_SETTLE_MS, Viewport},
 };
@@ -269,6 +269,7 @@ struct Engine<'a> {
     deadline: Option<Instant>,
     input_budget: usize,
     last_same_screen: Option<Observation>,
+    recovery_boot_target: Option<String>,
 }
 
 impl Engine<'_> {
@@ -296,6 +297,160 @@ impl Engine<'_> {
                 self.scope.location(&**self.robot, &self.device),
             )
             .await
+    }
+
+    async fn recover_target(
+        &mut self,
+        map_id: &str,
+        failure: &str,
+    ) -> Result<Option<String>, String> {
+        self.check()?;
+        let Scope::Mobile { app, platform } = &self.scope else {
+            return Ok(None);
+        };
+        if self.options.reset_app_id.as_deref() != Some(app) {
+            return Ok(None);
+        }
+        let detail = match platform {
+            Platform::Android => {
+                let Some(boot_target) = &self.recovery_boot_target else {
+                    return Ok(None);
+                };
+                let devices = self
+                    .robot
+                    .list_devices()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if devices
+                    .iter()
+                    .any(|d| d.id == self.device && d.state == DeviceState::Available)
+                {
+                    if is_mobile_transport_error(failure) && self.context().await.is_ok() {
+                        "ADB recovered without restarting the AVD".into()
+                    } else {
+                        return Ok(None);
+                    }
+                } else {
+                    self.robot
+                        .boot_device(boot_target)
+                        .await
+                        .map_err(|error| format!("Boot/reconnect {boot_target}: {error}"))?;
+                    let devices =
+                        self.robot.list_devices().await.map_err(|error| {
+                            format!("Discover {boot_target} after boot: {error}")
+                        })?;
+                    let mut recovered = None;
+                    for device in devices.into_iter().filter(|d| {
+                        d.platform == Platform::Android && d.state == DeviceState::Available
+                    }) {
+                        if self
+                            .robot
+                            .recovery_boot_target(&device.id)
+                            .await
+                            .ok()
+                            .flatten()
+                            .as_ref()
+                            == Some(boot_target)
+                        {
+                            if recovered.replace(device.id).is_some() {
+                                return Err(format!("More than one device matches {boot_target}."));
+                            }
+                        }
+                    }
+                    let device =
+                        recovered.ok_or_else(|| format!("{boot_target} did not return to ADB."))?;
+                    self.check()?;
+                    claim_recovered_device(map_id, &device)?;
+                    // Do not reset the app if transport came back with it still in scope.
+                    let needs_launch = self.scope.location(&**self.robot, &device).await.is_err();
+                    if needs_launch {
+                        self.robot
+                            .launch_app(&device, app)
+                            .await
+                            .map_err(|error| format!("Launch {app} on {boot_target}: {error}"))?;
+                    }
+                    self.device = device;
+                    if needs_launch {
+                        // An accepted launch is not proof that Android has
+                        // finished showing the fixture after a cold boot.
+                        self.wait_for_mobile_relaunch(&[]).await?;
+                    }
+                    format!("ADB reconnected to {boot_target} on {}", self.device)
+                }
+            }
+            Platform::Ios => {
+                let status = self
+                    .robot
+                    .check_device_health(&self.device)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if status.ready
+                    && status.target_app_id.as_deref() == Some(app)
+                    && is_mobile_transport_error(failure)
+                {
+                    "XCTest bridge recovered without restarting the runner".into()
+                } else if matches!(status.state.as_str(), "disconnected" | "bridge_unreachable") {
+                    let recovered = self
+                        .robot
+                        .reboot_helper(&self.device, Some(app))
+                        .await
+                        .map_err(|error| {
+                            format!(
+                                "{}; restarting the XCTest runner failed: {error}",
+                                status.detail
+                            )
+                        })?;
+                    if !recovered.ready || recovered.target_app_id.as_deref() != Some(app) {
+                        return Err(format!(
+                            "{}; XCTest runner is still unavailable: {}",
+                            status.detail, recovered.detail
+                        ));
+                    }
+                    format!(
+                        "Restarted the XCTest runner on the same iOS device after {}",
+                        status.detail
+                    )
+                } else {
+                    return Ok(None);
+                }
+            }
+            _ => return Ok(None),
+        };
+        self.context().await?;
+        self.last_same_screen = None;
+        Ok(Some(detail))
+    }
+
+    async fn recover_at(
+        &mut self,
+        map: &mut UiMap,
+        screen: &str,
+        failure: &str,
+    ) -> Result<bool, String> {
+        // Operator stop or an explicitly configured scan limit is not a
+        // target disconnect. Preserve that reason without a recovery note.
+        self.check()?;
+        let recovery = self
+            .timing
+            .measure("device_recovery", self.recover_target(&map.id, failure))
+            .await;
+        match recovery {
+            Ok(Some(detail)) => {
+                map.device_id.clone_from(&self.device);
+                map.notes.push(format!(
+                    "{screen}: {failure}. {detail}. Continuing from verified screens."
+                ));
+                save_map(self.dir, map).await?;
+                Ok(true)
+            }
+            Ok(None) => Ok(false),
+            Err(error) => {
+                let detail = format!("{screen}: {failure}. Device recovery failed: {error}");
+                map.notes.push(detail.clone());
+                save_map(self.dir, map).await?;
+                Err(detail)
+            }
+        }
     }
 
     async fn native_tree(&self) -> Result<(Vec<UiElement>, bool), String> {
@@ -376,6 +531,8 @@ impl Engine<'_> {
             viewport::inspect(&elements, self.flutter.get() == Some(&true))
         } else if self.scope.is_android() {
             viewport::inspect_android(&elements)
+        } else if self.scope.is_scoped_ios() || matches!(self.scope, Scope::IosNative) {
+            viewport::inspect_ios(&elements)
         } else {
             Ok(None)
         };
@@ -497,15 +654,26 @@ impl Engine<'_> {
 
     async fn scroll_slice(&self, viewport: &Viewport, dy: i32) -> Result<Observation, String> {
         self.check()?;
-        if self.scope.is_android() {
+        if self.scope.is_mobile() {
             self.context().await?;
         }
         self.timing
-            .measure(
-                "viewport_scroll",
-                self.robot
-                    .scroll(&self.device, viewport.center(), 0., f64::from(dy)),
-            )
+            .measure("viewport_scroll", async {
+                if let Some(gesture) = viewport.android_swipe(dy) {
+                    self.robot
+                        .swipe(
+                            &self.device,
+                            viewport.screen_point(gesture.from),
+                            viewport.screen_point(gesture.to),
+                            Some(gesture.duration_ms),
+                        )
+                        .await
+                } else {
+                    self.robot
+                        .scroll(&self.device, viewport.center(), 0., f64::from(dy))
+                        .await
+                }
+            })
             .await
             .map_err(|error| format!("Could not scroll the selected viewport: {error}"))?;
         tokio::time::sleep(Duration::from_millis(SCROLL_SETTLE_MS)).await;
@@ -725,10 +893,13 @@ impl Engine<'_> {
 
     async fn settled_entry(&self) -> Result<Observation, String> {
         let mut observation = self.settled().await?;
-        if matches!(self.scope, Scope::Web { .. }) {
-            // A fresh document can report its route before publishing controls.
+        if matches!(self.scope, Scope::Web { .. }) || self.scope.is_mobile() {
+            // A fresh document or app can report its location before publishing controls.
             let ready_by = Instant::now() + Duration::from_secs(4);
-            while observation.controls.is_empty() && Instant::now() < ready_by {
+            while observation.controls.is_empty()
+                && observation.native_viewport.is_none()
+                && Instant::now() < ready_by
+            {
                 self.check()?;
                 observation = self.settled().await?;
             }
@@ -759,6 +930,15 @@ impl Engine<'_> {
         loop {
             self.check()?;
             match self.observe().await {
+                Ok(here) if accepted.is_empty() => {
+                    if !here.controls.is_empty() || here.native_viewport.is_some() {
+                        return Ok(here);
+                    }
+                    if Instant::now() >= ready_by {
+                        return Err("The relaunched fixture did not expose its UI.".into());
+                    }
+                    tokio::time::sleep(Duration::from_millis(140)).await;
+                }
                 Ok(here) if accepted.contains(&here.fingerprint) || remaining == 0 => {
                     return Ok(here);
                 }
@@ -830,15 +1010,19 @@ impl Engine<'_> {
         root: u64,
         path: &[Arc<PathStep>],
         navigation: &Navigation,
-        control: &LiveControl,
+        control: Option<&LiveControl>,
     ) -> Result<Observation, String> {
         // A tap can change the layout without changing the screen signature.
         // For an opted-in window fixture, reuse the normal relaunch path if a
         // recorded scroll action cannot start at the current viewport slice.
-        let require_anchor = control.reveal.is_some()
-            && (matches!(self.scope, Scope::WindowFixture) || self.options.reset_app_id.is_some());
+        let anchor = control.filter(|control| {
+            control.reveal.is_some()
+                && (matches!(self.scope, Scope::WindowFixture)
+                    || self.options.reset_app_id.is_some())
+        });
         let ready = |here: &Observation| {
-            here.fingerprint == expected && (!require_anchor || at_scroll_anchor(control, here))
+            here.fingerprint == expected
+                && anchor.is_none_or(|control| at_scroll_anchor(control, here))
         };
         // The previous action already verified this unchanged screen. The
         // action runner still checks the foreground and resolves its selector
@@ -1016,6 +1200,26 @@ fn clipped(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
+fn is_mobile_transport_error(error: &str) -> bool {
+    [
+        "device offline",
+        "adb protocol fault",
+        "adb exited with status 255",
+        "error: closed",
+        "transport error",
+        "connection reset",
+        "adb devices timed out",
+        "device not found:",
+        "iOS XCTest command ",
+        "iOS XCTest agent disconnected",
+        "iOS XCTest agent last contacted the bridge",
+        "no authenticated iOS XCTest agent",
+        "XCTest could not reach the Mac bridge",
+    ]
+    .iter()
+    .any(|message| error.contains(message))
+}
+
 struct ViewportProbe {
     revealed: usize,
     hit_limit: bool,
@@ -1046,7 +1250,7 @@ fn candidate(value: &Option<String>) -> Option<String> {
         .map(|s| clipped(s, 160))
 }
 
-fn is_xctest_node_id(id: &str) -> bool {
+pub(super) fn is_xctest_node_id(id: &str) -> bool {
     id.strip_prefix("ios-").is_some_and(|part| {
         (part.len() == 36 && uuid::Uuid::parse_str(part).is_ok())
             || part.split_once('-').is_some_and(|(generation, index)| {
@@ -1258,12 +1462,12 @@ async fn classify_scope(robot: &dyn Robot, opt: &Options) -> Result<Scope, Strin
 }
 
 async fn record(
-    engine: &Engine<'_>,
+    engine: &mut Engine<'_>,
     map: &mut UiMap,
-    dir: &Path,
     obs: &mut Observation,
     same_controls_as: Option<&str>,
-) -> String {
+    checkpoint: (u64, &[Arc<PathStep>], &Navigation),
+) -> Result<String, String> {
     let id = format!("s{}", map.screens.len() + 1);
     let viewport = if matches!(engine.scope, Scope::Web { .. }) {
         engine
@@ -1309,7 +1513,7 @@ async fn record(
                 .observe()
                 .await
                 .is_ok_and(|current| current.fingerprint == obs.fingerprint)
-                && tokio::fs::write(dir.join(format!("{id}.png")), png)
+                && tokio::fs::write(engine.dir.join(format!("{id}.png")), png)
                     .await
                     .is_ok()
         }
@@ -1318,45 +1522,59 @@ async fn record(
     if obs.ambiguous_viewport {
         map.notes.push(format!("{id}: Could not identify a unique native scroll viewport. Only visible controls were inventoried."));
     }
-    let native_viewport = if same_controls_as.is_none() {
-        if let Some(bounds) = obs.native_viewport.as_ref().map(|v| v.bounds.clone()) {
-            match engine
-                .timing
-                .measure("viewport_discovery", engine.probe_viewport(obs))
-                .await
-            {
-                Ok(ViewportProbe {
-                    revealed: revealed_controls,
-                    hit_limit,
-                    stopped,
-                }) => {
-                    if let Some(reason) = stopped {
-                        map.notes.push(format!(
-                            "{id}: Native viewport discovery stopped early. {reason}"
-                        ));
-                    }
-                    if hit_limit {
-                        map.notes.push(format!("{id}: Native viewport discovery reached its bounded scroll or inventory limit."));
-                    }
-                    Some(super::model::NativeViewport {
-                        bounds,
-                        revealed_controls,
-                        hit_limit,
-                    })
-                }
-                Err(error) => {
-                    map.notes.push(format!("{id}: {error}"));
-                    for row in obs.controls.iter_mut().filter(|row| row.action.is_some()) {
-                        row.action = None;
-                        row.control.status = "skipped".into();
-                        row.control.note =
-                            Some("Viewport discovery could not verify the entry position.".into());
-                    }
-                    None
-                }
+    let native_viewport = if same_controls_as.is_none() && obs.native_viewport.is_some() {
+        let mut discovery = engine
+            .timing
+            .measure("viewport_discovery", engine.probe_viewport(obs))
+            .await;
+        if let Err(error) = &discovery
+            && engine.recover_at(map, &id, error).await?
+        {
+            let (root, path, navigation) = checkpoint;
+            let expected = obs.fingerprint;
+            *obs = engine
+                .restore(expected, root, path, navigation, None)
+                .await?;
+            if obs.native_viewport.is_some() {
+                discovery = engine
+                    .timing
+                    .measure("viewport_discovery", engine.probe_viewport(obs))
+                    .await;
+            } else {
+                discovery =
+                    Err("The recovered screen did not expose its original viewport.".into());
             }
-        } else {
-            None
+        }
+        match discovery {
+            Ok(ViewportProbe {
+                revealed: revealed_controls,
+                hit_limit,
+                stopped,
+            }) => {
+                if let Some(reason) = stopped {
+                    map.notes.push(format!(
+                        "{id}: Native viewport discovery stopped early. {reason}"
+                    ));
+                }
+                if hit_limit {
+                    map.notes.push(format!("{id}: Native viewport discovery reached its bounded scroll or inventory limit."));
+                }
+                Some(super::model::NativeViewport {
+                    bounds: obs.native_viewport.as_ref().unwrap().bounds.clone(),
+                    revealed_controls,
+                    hit_limit,
+                })
+            }
+            Err(error) => {
+                map.notes.push(format!("{id}: {error}"));
+                for row in obs.controls.iter_mut().filter(|row| row.action.is_some()) {
+                    row.action = None;
+                    row.control.status = "skipped".into();
+                    row.control.note =
+                        Some("Viewport discovery could not verify the entry position.".into());
+                }
+                None
+            }
         }
     } else {
         None
@@ -1393,7 +1611,7 @@ async fn record(
             })
             .collect(),
     });
-    id
+    Ok(id)
 }
 
 fn mark(map: &mut UiMap, screen: &str, control: &str, status: &str, note: Option<String>) {
@@ -1419,6 +1637,14 @@ pub(super) async fn scan(
     let scope = timing
         .measure("scope_setup", classify_scope(&**robot, opt))
         .await?;
+    let recovery_boot_target = if scope.is_android() && opt.reset_app_id.is_some() {
+        robot
+            .recovery_boot_target(&opt.device_id)
+            .await
+            .map_err(|error| error.to_string())?
+    } else {
+        None
+    };
     let mut engine = Engine {
         robot,
         dir,
@@ -1434,11 +1660,15 @@ pub(super) async fn scan(
             .map(|seconds| Instant::now() + Duration::from_secs(seconds)),
         input_budget: opt.actions() * (opt.depth() + 2) + 20,
         last_same_screen: None,
+        recovery_boot_target,
     };
     let mut root = timing
         .measure("entry_observation", engine.settled_entry())
         .await?;
-    if matches!(engine.scope, Scope::Web { .. }) && root.controls.is_empty() {
+    if (matches!(engine.scope, Scope::Web { .. }) || engine.scope.is_mobile())
+        && root.controls.is_empty()
+        && root.native_viewport.is_none()
+    {
         map.notes
             .push("No controls were found on the entry page after waiting for it to load.".into());
     }
@@ -1450,7 +1680,16 @@ pub(super) async fn scan(
             "No named controls were exposed by the selected macOS window. For a sandboxed Flutter app with DeviceBotFlutter enabled, configure its exact window endpoint before scanning.".into(),
         );
     }
-    let root_id = record(&engine, map, dir, &mut root, None).await;
+    let root_fp = root.fingerprint;
+    let mut navigation = Navigation::new();
+    let root_id = record(
+        &mut engine,
+        map,
+        &mut root,
+        None,
+        (root_fp, &[], &navigation),
+    )
+    .await?;
     let mut seen = HashMap::from([(root.fingerprint, root_id.clone())]);
     let mut control_signatures = HashMap::from([(root.control_signature, root_id.clone())]);
     let mut queue = VecDeque::from([(
@@ -1459,8 +1698,6 @@ pub(super) async fn scan(
         Vec::<Arc<PathStep>>::new(),
         root.controls,
     )]);
-    let root_fp = root.fingerprint;
-    let mut navigation = Navigation::new();
     save_map(dir, map).await?;
     'crawl: while let Some((fingerprint, from, path, inventory)) = queue.pop_front() {
         for original in inventory.iter().filter(|c| c.action.is_some()) {
@@ -1480,12 +1717,22 @@ pub(super) async fn scan(
                 break 'crawl;
             }
             engine.check()?;
-            let restored = timing
+            let mut restored = timing
                 .measure(
                     "restore_branch",
-                    engine.restore(fingerprint, root_fp, &path, &navigation, original),
+                    engine.restore(fingerprint, root_fp, &path, &navigation, Some(original)),
                 )
                 .await;
+            if let Err(error) = &restored
+                && engine.recover_at(map, &from, error).await?
+            {
+                restored = timing
+                    .measure(
+                        "restore_branch",
+                        engine.restore(fingerprint, root_fp, &path, &navigation, Some(original)),
+                    )
+                    .await;
+            }
             if map.device_id != engine.device {
                 map.device_id.clone_from(&engine.device);
                 save_map(dir, map).await?;
@@ -1567,12 +1814,31 @@ pub(super) async fn scan(
                 control.evidence = Some(evidence);
             }
             if let Some(err) = error {
-                mark(map, &from, &original.control.id, "failed", Some(err));
+                mark(
+                    map,
+                    &from,
+                    &original.control.id,
+                    "failed",
+                    Some(err.clone()),
+                );
                 save_map(dir, map).await?;
+                if engine.recover_at(map, &from, &err).await? {
+                    // The action may have reached the device before the
+                    // disconnect. Never resend it as the interrupted attempt.
+                    continue;
+                }
                 engine.context().await?;
                 if row.reveal.is_some() {
-                    let current = engine.observe().await?;
-                    engine.reset_after_reveal(row, &here, current).await?;
+                    let reset = async {
+                        let current = engine.observe().await?;
+                        engine.reset_after_reveal(row, &here, current).await
+                    }
+                    .await;
+                    if let Err(error) = reset
+                        && !engine.recover_at(map, &from, &error).await?
+                    {
+                        return Err(error);
+                    }
                 }
                 continue;
             }
@@ -1590,11 +1856,31 @@ pub(super) async fn scan(
                         "failed",
                         Some(error.clone()),
                     );
+                    save_map(dir, map).await?;
+                    if engine.recover_at(map, &from, &error).await? {
+                        continue;
+                    }
                     return Err(error);
                 }
             };
             if row.reveal.is_some() {
-                next = engine.reset_after_reveal(row, &here, next).await?;
+                match engine.reset_after_reveal(row, &here, next).await {
+                    Ok(restored) => next = restored,
+                    Err(error) => {
+                        mark(
+                            map,
+                            &from,
+                            &original.control.id,
+                            "failed",
+                            Some(error.clone()),
+                        );
+                        save_map(dir, map).await?;
+                        if engine.recover_at(map, &from, &error).await? {
+                            continue;
+                        }
+                        return Err(error);
+                    }
+                }
             }
             if next.fingerprint == fingerprint {
                 mark(
@@ -1627,12 +1913,19 @@ pub(super) async fn scan(
                                 .get(&next.control_signature)
                                 .map(String::as_str)
                         };
-                    let to = record(&engine, map, dir, &mut next, representative).await;
+                    let mut child_path = path.clone();
+                    child_path.push(Arc::clone(&step));
+                    let to = record(
+                        &mut engine,
+                        map,
+                        &mut next,
+                        representative,
+                        (root_fp, &child_path, &navigation),
+                    )
+                    .await?;
                     seen.insert(next.fingerprint, to.clone());
                     if representative.is_none() {
                         control_signatures.insert(next.control_signature, to.clone());
-                        let mut child_path = path.clone();
-                        child_path.push(Arc::clone(&step));
                         queue.push_back((next.fingerprint, to.clone(), child_path, next.controls));
                     }
                     to

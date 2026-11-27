@@ -43,15 +43,19 @@ viewport. This happens before generating actions for the screen. Generated
 YAML uses `scroll_into_view: true` so the runner can measure again and find
 the control after scrolling.
 
-On macOS and Android, the crawler checks for a unique, visible vertical scroll
-container. It uses AX or the scan's Flutter tree on macOS and native
-ScrollView/ListView nodes on Android. It probes up to four observed positions per direction,
+On macOS, Android and iOS, the crawler checks for a unique, visible vertical
+scroll container. It uses AX or the scan's Flutter tree on macOS, native
+ScrollView/ListView nodes on Android, and XCTest scroll-view roles on iOS.
+It probes up to four observed positions per direction,
 reads the tree after each scroll, and verifies the original viewport before
 trying controls. Controls first seen elsewhere in that viewport are kept on
 the original screen and marked `initiallyOffscreen`. Their action YAML scrolls
 inside the measured container before resolving and tapping the control. On
-Android, the driver turns each scroll delta into a swipe within the viewport
-and verifies that the selected app is still in the foreground.
+Android, discovery and replay use the same recorded viewport-relative swipe.
+It starts below the center for a downward scroll so an editor there cannot
+consume the gesture. iOS uses a swipe from the viewport center. Scoped scans
+verify that the selected app is still in the foreground.
+iOS does not use generated XCTest node IDs as replay selectors or scroll anchors.
 `nativeViewport` records the visible bounds and number of newly
 revealed controls. It does not estimate the full content height.
 
@@ -60,8 +64,8 @@ revealed controls. It does not estimate the full content height.
 The crawler uses the selected device's accessibility tree and real input
 driver. It visits newly observed states, deduplicates signatures, verifies
 the route back to each branch before continuing, and bounds depth, screens,
-actions and runtime. On a fresh web entry page, the crawler gives controls
-time to appear and reports partial coverage if the inventory stays empty.
+actions and runtime. At a fresh web or scoped mobile entry, the crawler gives
+controls time to appear and reports partial coverage if the inventory stays empty.
 On web, scoped mobile and opted-in macOS fixtures, it tries short
 routes through previously observed transitions and verifies each state. When web cannot restore a
 branch, it restarts from the initial URL in a fresh document. It stops on an
@@ -77,6 +81,23 @@ the XCTest helper only terminates its currently selected app bundle. If a native
 cannot be restored, the scan reports partial coverage rather than sending
 input to an unverified screen. Desktop maps use an explicitly selected
 process/window, just like desktop Live.
+
+With the exact mobile fixture bundle set, if ADB drops the selected emulator
+the scanner reconnects to its verified AVD, starting that same AVD if needed.
+If the iOS bridge disconnects, it checks whether that device's XCTest runner
+has recovered and restarts the runner if it is still disconnected. Neither
+operation clears app data. The scanner keeps the same map and verifies the
+screen again by replaying the known route when necessary. A tap whose result
+is unknown stays marked failed, and is not sent again. The map notes record
+the original transport failure and the result of recovery.
+
+An updated physical iOS helper sends a runner-session ID when polling, and
+the bridge retains the command ID until the helper posts its result or the
+command expires. The same runner can return a cached result after an HTTP
+drop. A replacement runner cannot inherit an unacknowledged action.
+Physical XCTest foreground verification during automation waits within the
+driver's existing action window for a real heartbeat. The QC health indicator
+still uses its shorter probe.
 
 For a disposable macOS fixture with one window, set **Fixture bundle ID** in QC
 or pass `resetAppId` to the MCP tool. It must match the selected window's app.
@@ -99,8 +120,9 @@ sandboxed apps may need a configured endpoint. See the
 [Orbit macOS example](../../examples/flutter_app/README.md#macos-ui-map).
 The default scan budget is 24 screens, 45 actions and 5 levels. There is no
 total elapsed-time limit unless `maxTimeSeconds` or **Scan limits → Time
-limit in seconds** is set. Driver and individual-action timeouts still report
-stalled operations.
+limit in seconds** is set. UI Map also does not impose a separate wall-clock
+deadline on its generated action YAML. Driver and selector timeouts still
+report stalled operations.
 
 This is an inventory of reachable and observable UI states, not proof of
 exhaustive app coverage or a test verdict. Beyond the bounded native viewport

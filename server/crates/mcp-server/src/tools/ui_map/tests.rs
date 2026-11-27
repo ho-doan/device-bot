@@ -56,9 +56,14 @@ struct FixtureState {
     left_no_longer_reproducible: bool,
     delay_android_foreground_on_launch: bool,
     foreground_reads_until_ready: u8,
+    disconnect_on_tap: Option<&'static str>,
+    extra_left_action: bool,
+    disconnected: bool,
+    recoveries: usize,
     xctest_generation: Option<usize>,
     xctest_uuid: bool,
     tree_delay_ms: u64,
+    tap_delay_ms: u64,
     focus: bool,
     entered: bool,
     checked: bool,
@@ -129,7 +134,14 @@ impl Robot for Fixture {
         let (id, platform) = if state.macos_flutter {
             ("macos-host", Platform::Macos)
         } else if state.android {
-            ("android-fixture", Platform::Android)
+            (
+                if state.recoveries == 0 {
+                    "android-fixture"
+                } else {
+                    "android-recovered"
+                },
+                Platform::Android,
+            )
         } else if state.ios {
             ("ios-fixture", Platform::Ios)
         } else {
@@ -139,14 +151,41 @@ impl Robot for Fixture {
             id: id.into(),
             name: "Fixture".into(),
             platform,
-            state: robot_core::DeviceState::Available,
+            state: if state.android && state.disconnected {
+                robot_core::DeviceState::Offline
+            } else {
+                robot_core::DeviceState::Available
+            },
         }])
+    }
+
+    async fn recovery_boot_target(&self, id: &str) -> Result<Option<String>, RobotError> {
+        let state = self.0.lock().unwrap();
+        Ok(
+            (state.android && matches!(id, "android-fixture" | "android-recovered"))
+                .then(|| "avd:test".into()),
+        )
+    }
+
+    async fn boot_device(&self, id: &str) -> Result<(), RobotError> {
+        assert_eq!(id, "avd:test");
+        let mut state = self.0.lock().unwrap();
+        assert!(state.android && state.disconnected);
+        state.disconnected = false;
+        state.recoveries += 1;
+        state.foreground_reads_until_ready = 1;
+        Ok(())
     }
 
     async fn stream_context(&self, _: &str) -> Result<Value, RobotError> {
         let mut state = self.0.lock().unwrap();
         assert!(!state.ios, "iOS scans must not depend on the Live window");
         if state.android {
+            if state.disconnected {
+                return Err(RobotError::CommandFailed(
+                    "adb exited: device offline".into(),
+                ));
+            }
             if state.foreground_reads_until_ready > 0 {
                 state.foreground_reads_until_ready -= 1;
                 return Ok(json!({"appId":"launcher.app"}));
@@ -166,10 +205,37 @@ impl Robot for Fixture {
         let state = self.0.lock().unwrap();
         assert!(state.ios);
         Ok(UiRunnerStatus {
-            ready: state.page != 3,
+            ready: state.page != 3 && !state.disconnected,
+            state: if state.disconnected {
+                "disconnected".into()
+            } else {
+                "ready".into()
+            },
+            detail: if state.disconnected {
+                "iOS XCTest agent disconnected".into()
+            } else {
+                String::new()
+            },
             target_app_id: Some("fixture.app".into()),
             ..Default::default()
         })
+    }
+
+    async fn reboot_helper(
+        &self,
+        id: &str,
+        app: Option<&str>,
+    ) -> Result<UiRunnerStatus, RobotError> {
+        assert_eq!(id, "ios-fixture");
+        assert_eq!(app, Some("fixture.app"));
+        {
+            let mut state = self.0.lock().unwrap();
+            assert!(state.ios && state.disconnected);
+            state.disconnected = false;
+            state.recoveries += 1;
+        }
+        self.reset();
+        self.ui_runner_status(id).await
     }
 
     async fn take_screenshot(&self, id: &str) -> Result<Vec<u8>, RobotError> {
@@ -178,6 +244,8 @@ impl Robot for Fixture {
     }
 
     async fn tap(&self, id: &str, point: Point) -> Result<(), RobotError> {
+        let delay = self.0.lock().unwrap().tap_delay_ms;
+        tokio::time::sleep(Duration::from_millis(delay)).await;
         let mut state = self.0.lock().unwrap();
         Self::assert_current_macos_device(&state, id);
         let x = if state.macos_flutter {
@@ -226,10 +294,21 @@ impl Robot for Fixture {
                 "back"
             }
             (1, 20) => "same",
+            (1, 30) if state.extra_left_action => "after",
             _ => return Err(RobotError::CommandFailed("Unexpected tap".into())),
         };
         state.focus = action == "editor";
         state.taps.push(action.into());
+        if state.disconnect_on_tap == Some(action) {
+            state.disconnect_on_tap = None;
+            state.disconnected = true;
+            let detail = if state.android {
+                "adb exited: device offline"
+            } else {
+                "iOS XCTest agent disconnected"
+            };
+            return Err(RobotError::CommandFailed(detail.into()));
+        }
         Ok(())
     }
 
@@ -285,9 +364,9 @@ impl Robot for Fixture {
         Self::assert_current_macos_device(&state, id);
         assert_eq!(
             (at.x, at.y, dx),
-            (if state.android { 150. } else { -850. }, 100., 0.)
+            (if state.macos_flutter { -850. } else { 150. }, 100., 0.)
         );
-        if state.android {
+        if state.android || state.ios {
             assert!((0.0..=200.0).contains(&(at.y - dy)));
         }
         state.scrolls.push(dy as i32);
@@ -297,8 +376,24 @@ impl Robot for Fixture {
         Ok(())
     }
 
-    async fn swipe(&self, _: &str, _: Point, _: Point, _: Option<u64>) -> Result<(), RobotError> {
-        unreachable!()
+    async fn swipe(
+        &self,
+        id: &str,
+        from: Point,
+        to: Point,
+        duration: Option<u64>,
+    ) -> Result<(), RobotError> {
+        let mut state = self.0.lock().unwrap();
+        assert!(state.android && state.viewport_fixture);
+        assert_eq!(id, "android-fixture");
+        assert_eq!((from.x, to.x, duration), (150., 150., Some(420)));
+        assert!((from.y == 160. && to.y == 80.) || (from.y == 80. && to.y == 160.));
+        let delta = (from.y - to.y) as i32;
+        state.scrolls.push(delta);
+        if state.page == 0 {
+            state.slice = (state.slice + delta.signum()).clamp(0, 1);
+        }
+        Ok(())
     }
     async fn install_app(&self, _: &str, _: &str) -> Result<(), RobotError> {
         unreachable!()
@@ -386,18 +481,28 @@ impl Robot for Fixture {
                 }
                 rows
             }
-            1 => vec![
-                node("Back", "back", 10, ElementType::Button),
-                node("Same state", "same", 20, ElementType::Button),
-            ],
+            1 => {
+                let mut controls = vec![
+                    node("Back", "back", 10, ElementType::Button),
+                    node("Same state", "same", 20, ElementType::Button),
+                ];
+                if s.extra_left_action {
+                    controls.push(node("After recovery", "after", 30, ElementType::Button));
+                }
+                controls
+            }
             2 => vec![node("Back", "back", 10, ElementType::Button)],
             _ => panic!("must stop before inspecting outside origin"),
         };
-        if s.macos_flutter || s.android {
+        if s.macos_flutter || s.android || s.ios {
             if s.viewport_fixture {
                 let mut viewport = node("", "fixture-viewport", 150, ElementType::StaticText);
                 viewport.class_name = if s.android {
                     "android.widget.ScrollView".into()
+                } else if s.ios {
+                    viewport.resource_id =
+                        Some(format!("ios-{}-5", s.xctest_generation.unwrap_or(0)));
+                    "scrollView".into()
                 } else {
                     "scrollView Scrollable".into()
                 };
@@ -511,34 +616,46 @@ async fn macos_viewport_reveals_controls_and_exports_scroll_before_tap() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn android_viewport_reveals_and_taps_control_outside_entry_tree() {
-    let dir = Temp::new();
-    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
-        android: true,
-        viewport_fixture: true,
-        ..Default::default()
-    })));
-    let robot: Arc<dyn Robot> = fixture.clone();
-    let mut map = graph();
-    let opt: Options = serde_json::from_value(json!({
-        "deviceId": "android-fixture", "allowedTaps": ["below"]
-    }))
-    .unwrap();
-    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
-        .await
+async fn mobile_native_viewports_reveal_and_tap_controls_outside_entry_tree() {
+    for (device_id, class_name) in [
+        ("ios-fixture", "scrollView"),
+        ("android-fixture", "android.widget.ScrollView"),
+    ] {
+        let dir = Temp::new();
+        let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+            ios: device_id == "ios-fixture",
+            android: device_id == "android-fixture",
+            xctest_generation: (device_id == "ios-fixture").then_some(0),
+            viewport_fixture: true,
+            ..Default::default()
+        })));
+        let robot: Arc<dyn Robot> = fixture.clone();
+        let mut map = graph();
+        let opt: Options = serde_json::from_value(json!({
+            "deviceId": device_id, "allowedTaps": ["below"]
+        }))
         .unwrap();
-    let target = map.screens[0]
-        .controls
-        .iter()
-        .find(|row| row.label == "Below fold")
-        .unwrap();
-    assert_eq!(target.initially_offscreen, Some(true));
-    assert_eq!(target.status, "observed", "{:?}", target.note);
-    let yaml =
-        std::fs::read_to_string(dir.0.join(&target.evidence.as_ref().unwrap().yaml)).unwrap();
-    assert!(yaml.find("scroll:").unwrap() < yaml.find("tap_element:").unwrap());
-    assert!(yaml.contains("android.widget.ScrollView"));
-    assert_eq!(fixture.0.lock().unwrap().taps, ["below"]);
+        scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+            .await
+            .unwrap();
+        let target = map.screens[0]
+            .controls
+            .iter()
+            .find(|row| row.label == "Below fold")
+            .unwrap();
+        assert_eq!(target.initially_offscreen, Some(true));
+        assert_eq!(target.status, "observed", "{:?}", target.note);
+        let yaml =
+            std::fs::read_to_string(dir.0.join(&target.evidence.as_ref().unwrap().yaml)).unwrap();
+        let reveal = if device_id == "android-fixture" {
+            "gesture:"
+        } else {
+            "scroll:"
+        };
+        assert!(yaml.find(reveal).unwrap() < yaml.find("tap_element:").unwrap());
+        assert!(yaml.contains(class_name));
+        assert_eq!(fixture.0.lock().unwrap().taps, ["below"]);
+    }
 }
 
 #[test]
@@ -958,6 +1075,82 @@ async fn reuses_observed_web_routes_to_restore_siblings_without_reloading() {
     assert_eq!(map.attempted, 5);
     assert_eq!(map.transitions.len(), 4);
     assert_eq!(fixture.0.lock().unwrap().resets, 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_slow_map_action_is_not_cut_off_by_a_second_case_deadline() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        ios: true,
+        tap_delay_ms: 46_000,
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId":"ios-fixture", "resetAppId":"fixture.app",
+        "allowedTaps":["left"], "settleMs":100
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    assert_eq!(fixture.0.lock().unwrap().taps, ["left"]);
+    assert_eq!(map.transitions.len(), 1);
+    assert_eq!(map.screens[0].controls[0].status, "observed");
+}
+
+#[tokio::test(start_paused = true)]
+async fn resumes_the_same_map_after_mobile_transport_loss_without_resending_the_tap() {
+    for (ios, device, recovered_device) in [
+        (false, "android-fixture", "android-recovered"),
+        (true, "ios-fixture", "ios-fixture"),
+    ] {
+        let dir = Temp::new();
+        let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+            android: !ios,
+            ios,
+            disconnect_on_tap: Some("same"),
+            extra_left_action: true,
+            delay_android_foreground_on_launch: !ios,
+            ..Default::default()
+        })));
+        let robot: Arc<dyn Robot> = fixture.clone();
+        let mut map = graph();
+        let opt: Options = serde_json::from_value(json!({
+            "deviceId":device, "resetAppId":"fixture.app",
+            "allowedTaps":["left","same","after"], "settleMs":100
+        }))
+        .unwrap();
+        scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+            .await
+            .unwrap();
+        assert_eq!(fixture.0.lock().unwrap().recoveries, 1);
+        assert_eq!(
+            fixture.0.lock().unwrap().taps,
+            ["left", "same", "left", "after"]
+        );
+        assert_eq!(map.device_id, recovered_device);
+        assert_eq!(map.attempted, 3);
+        assert_eq!(map.transitions.len(), 1);
+        assert_eq!(map.transitions[0].label, "Left");
+        assert!(
+            map.notes
+                .iter()
+                .any(|note| note.contains("Continuing from verified screens"))
+        );
+        assert!(
+            map.screens[1]
+                .controls
+                .iter()
+                .any(|control| control.label == "Same state" && control.status == "failed")
+        );
+        assert!(
+            map.screens[1].controls.iter().any(|control| {
+                control.label == "After recovery" && control.status == "no_change"
+            })
+        );
+    }
 }
 
 #[tokio::test(start_paused = true)]

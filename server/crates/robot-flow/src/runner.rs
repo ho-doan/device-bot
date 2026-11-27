@@ -227,6 +227,28 @@ impl FlowRunner {
         confirmed: &[String],
         case_timeout: Duration,
     ) -> FlowReport {
+        self.run_case(flow, profile, confirmed, Some(case_timeout))
+            .await
+    }
+
+    /// Run an embedded case without a second wall-clock deadline. Individual
+    /// steps and driver operations retain their own timeout and error reports.
+    pub async fn run_without_case_timeout(
+        &mut self,
+        flow: &FlowDocument,
+        profile: &Profile,
+        confirmed: &[String],
+    ) -> FlowReport {
+        self.run_case(flow, profile, confirmed, None).await
+    }
+
+    async fn run_case(
+        &mut self,
+        flow: &FlowDocument,
+        profile: &Profile,
+        confirmed: &[String],
+        case_timeout: Option<Duration>,
+    ) -> FlowReport {
         self.profile = profile.clone();
         self.run_started = Instant::now();
         self.version = flow.version;
@@ -277,7 +299,13 @@ impl FlowRunner {
             self.preflight(&steps)?;
             self.execute_steps(&steps).await
         };
-        let outcome = tokio::select! {result=timeout(case_timeout,result)=>result,_=interrupted()=>Ok(Err(FlowError::new(ErrorKind::Interrupted, "runner interrupted")))};
+        let case = async {
+            match case_timeout {
+                Some(limit) => timeout(limit, result).await,
+                None => Ok(result.await),
+            }
+        };
+        let outcome = tokio::select! {result=case=>result,_=interrupted()=>Ok(Err(FlowError::new(ErrorKind::Interrupted, "runner interrupted")))};
         // A case deadline can drop nested step futures before their normal restoration.
         self.step_device = None;
         let mut error = match outcome {

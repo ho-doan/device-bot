@@ -11,6 +11,7 @@ enum ScrollKind {
     Ax,
     Flutter,
     Android,
+    Ios,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +36,12 @@ pub(super) struct Reveal {
     pub slices: Vec<(u64, Viewport)>,
 }
 
+pub(super) struct ViewportSwipe {
+    pub from: Point,
+    pub to: Point,
+    pub duration_ms: u64,
+}
+
 impl Viewport {
     pub fn center(&self) -> Point {
         Point {
@@ -54,10 +61,35 @@ impl Viewport {
     pub fn step(&self) -> i32 {
         let height = i64::from(self.bounds.bottom) - i64::from(self.bounds.top);
         match self.kind {
-            // The Android driver converts the delta to a swipe starting at
-            // the viewport center. Both points must stay inside the viewport.
-            ScrollKind::Android => (height * 35 / 100).clamp(1, 900) as i32,
+            // Android uses the direction of this delta to choose the
+            // viewport-relative gesture. iOS starts at the viewport center.
+            ScrollKind::Android => (height * 40 / 100) as i32,
+            ScrollKind::Ios => (height * 35 / 100).clamp(1, 900) as i32,
             _ => (height * 7 / 10).clamp(80, 900) as i32,
+        }
+    }
+
+    pub fn android_swipe(&self, dy: i32) -> Option<ViewportSwipe> {
+        if !matches!(self.kind, ScrollKind::Android) {
+            return None;
+        }
+        // A swipe starting at the center can land on a focused editor
+        // instead of scrolling. Use the measured viewport's lower-to-upper
+        // span (and its reverse), with both ends inside the container.
+        let (from, to) = if dy > 0 { (0.8, 0.4) } else { (0.4, 0.8) };
+        Some(ViewportSwipe {
+            from: Point { x: 0.5, y: from },
+            to: Point { x: 0.5, y: to },
+            duration_ms: 420,
+        })
+    }
+
+    pub fn screen_point(&self, relative: Point) -> Point {
+        let b = &self.bounds;
+        let (left, top) = (f64::from(b.left), f64::from(b.top));
+        Point {
+            x: left + relative.x * (f64::from(b.right) - left),
+            y: top + relative.y * (f64::from(b.bottom) - top),
         }
     }
 
@@ -107,10 +139,21 @@ pub(super) fn inspect_android(elements: &[UiElement]) -> Result<Option<Viewport>
     inspect_kind(elements, ScrollKind::Android)
 }
 
+pub(super) fn inspect_ios(elements: &[UiElement]) -> Result<Option<Viewport>, ()> {
+    inspect_kind(elements, ScrollKind::Ios)
+}
+
+fn stable_id(e: &UiElement, kind: ScrollKind) -> Option<&String> {
+    e.resource_id
+        .as_ref()
+        .filter(|id| !matches!(kind, ScrollKind::Ios) || !super::crawl::is_xctest_node_id(id))
+}
+
 fn inspect_kind(elements: &[UiElement], kind: ScrollKind) -> Result<Option<Viewport>, ()> {
     let matches_kind = |e: &UiElement| match kind {
         ScrollKind::Flutter => e.class_name.starts_with("scrollView "),
         ScrollKind::Ax => e.class_name == "AXScrollArea",
+        ScrollKind::Ios => e.class_name == "scrollView",
         ScrollKind::Android => matches!(
             e.class_name.as_str(),
             "android.widget.ScrollView"
@@ -140,9 +183,7 @@ fn inspect_kind(elements: &[UiElement], kind: ScrollKind) -> Result<Option<Viewp
     }) {
         return Err(());
     }
-    let id = first
-        .resource_id
-        .as_ref()
+    let id = stable_id(first, kind)
         .filter(|id| !id.is_empty() && id.len() <= 160 && !id.chars().any(char::is_control));
     let unique = elements
         .iter()
@@ -171,10 +212,7 @@ fn inspect_kind(elements: &[UiElement], kind: ScrollKind) -> Result<Option<Viewp
         .iter()
         .filter(intersects)
         .filter_map(|e| {
-            let id = e
-                .resource_id
-                .as_ref()
-                .filter(|id| e.clickable && !id.is_empty())?;
+            let id = stable_id(e, kind).filter(|id| e.clickable && !id.is_empty())?;
             Some((id.clone(), relative(&e.bounds)))
         })
         .collect::<Vec<_>>();
@@ -185,7 +223,7 @@ fn inspect_kind(elements: &[UiElement], kind: ScrollKind) -> Result<Option<Viewp
         .map(|e| {
             (
                 &e.class_name,
-                &e.resource_id,
+                stable_id(e, kind),
                 e.text
                     .as_deref()
                     .filter(|_| e.element_type == Some(robot_core::ElementType::StaticText)),

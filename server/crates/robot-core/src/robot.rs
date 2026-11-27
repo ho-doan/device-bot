@@ -200,6 +200,11 @@ pub trait Robot: Send + Sync {
             "boot is not supported for device {device_id}"
         )))
     }
+    /// Stable boot identity for a running virtual device, if the driver can
+    /// verify it independently of the connection's transient serial.
+    async fn recovery_boot_target(&self, _device_id: &str) -> Result<Option<String>, RobotError> {
+        Ok(None)
+    }
     async fn configure_web_proxy(
         &self,
         device_id: &str,

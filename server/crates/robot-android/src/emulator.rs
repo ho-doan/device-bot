@@ -61,6 +61,13 @@ fn valid_avd_name(name: &str) -> bool {
         && !name.starts_with('-')
 }
 
+fn is_adb_startup_interruption(error: &RobotError) -> bool {
+    matches!(error, RobotError::CommandFailed(detail) if [
+        "error: closed", "protocol fault", "cannot connect", "device offline",
+        "adb devices timed out", "connection reset",
+    ].iter().any(|marker| detail.contains(marker)))
+}
+
 impl<R: CommandRunner> AndroidRobot<R> {
     async fn adb_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
         let output = tokio::time::timeout(
@@ -91,7 +98,7 @@ impl<R: CommandRunner> AndroidRobot<R> {
         Ok(avd_names(&output.stdout))
     }
 
-    async fn running_avd_name(&self, serial: &str) -> Option<String> {
+    pub(super) async fn running_avd_name(&self, serial: &str) -> Option<String> {
         if !serial.starts_with("emulator-") {
             return None;
         }
@@ -153,30 +160,37 @@ impl<R: CommandRunner> AndroidRobot<R> {
         if !valid_avd_name(name) || !self.configured_avds().await?.iter().any(|avd| avd == name) {
             return Err(RobotError::DeviceNotFound(id.into()));
         }
-        // A stale QC row or a repeated start must not launch a second AVD instance.
-        for device in self.adb_devices().await? {
-            if self.running_avd_name(&device.id).await.as_deref() == Some(name) {
-                return self.wait_for_android(&device.id).await;
-            }
-        }
-        tokio::fs::create_dir_all(&self.artifact_dir)
-            .await
-            .map_err(|error| {
-                RobotError::CommandFailed(format!(
-                    "could not create emulator log directory: {error}"
-                ))
-            })?;
         let log_path = self.artifact_dir.join(format!("emulator-{name}.log"));
-        self.runner
-            .spawn_background(
-                &self.emulator_path,
-                &["-avd".into(), name.into()],
-                &log_path,
-            )
-            .await?;
         let wait = async {
+            // A stale QC row or a repeated start must not launch a second
+            // instance. Read through ADB's transport transition first.
+            for device in self.adb_devices_during_boot().await? {
+                if self.running_avd_name(&device.id).await.as_deref() == Some(name) {
+                    if device.state == DeviceState::Offline {
+                        let reconnect = ["-s".into(), device.id.clone(), "reconnect".into()];
+                        let _ =
+                            tokio::time::timeout(Duration::from_secs(5), self.run_adb(&reconnect))
+                                .await;
+                    }
+                    return self.wait_for_android(&device.id).await;
+                }
+            }
+            tokio::fs::create_dir_all(&self.artifact_dir)
+                .await
+                .map_err(|error| {
+                    RobotError::CommandFailed(format!(
+                        "could not create emulator log directory: {error}"
+                    ))
+                })?;
+            self.runner
+                .spawn_background(
+                    &self.emulator_path,
+                    &["-avd".into(), name.into()],
+                    &log_path,
+                )
+                .await?;
             loop {
-                for device in self.adb_devices().await? {
+                for device in self.adb_devices_during_boot().await? {
                     if self.running_avd_name(&device.id).await.as_deref() == Some(name) {
                         return self.wait_for_android(&device.id).await;
                     }
@@ -187,6 +201,17 @@ impl<R: CommandRunner> AndroidRobot<R> {
         tokio::time::timeout(Duration::from_secs(150), wait).await.map_err(|_| {
             RobotError::CommandFailed(format!("AVD {name} did not finish starting within 150 seconds; check {}. It may still be starting; refresh devices before retrying.", log_path.display()))
         })?
+    }
+
+    async fn adb_devices_during_boot(&self) -> Result<Vec<RobotDevice>, RobotError> {
+        loop {
+            match self.adb_devices().await {
+                Err(error) if is_adb_startup_interruption(&error) => {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                result => return result,
+            }
+        }
     }
 
     async fn wait_for_android(&self, serial: &str) -> Result<(), RobotError> {
@@ -247,6 +272,12 @@ mod tests {
         let runner = FakeRunner::new([
             successful("Pixel_API_34\n"),
             successful("List of devices attached\n"),
+            crate::CommandOutput {
+                success: false,
+                exit_code: Some(1),
+                stdout: vec![],
+                stderr: b"error: closed\n".to_vec(),
+            },
             successful("List of devices attached\nemulator-5554 device\n"),
             successful("Pixel_API_34\nOK\n"),
             successful("1\n"),
@@ -290,6 +321,31 @@ mod tests {
                 .calls
                 .lock()
                 .unwrap()
+                .iter()
+                .any(|(_, args)| args.first().is_some_and(|a| a == "-avd"))
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnects_the_offline_avd_without_starting_a_second_emulator() {
+        let runner = FakeRunner::new([
+            successful("Pixel\n"),
+            successful("List of devices attached\nemulator-5554 offline\nphone device\n"),
+            successful("Pixel\nOK\n"),
+            successful("reconnecting emulator-5554\n"),
+            successful("1\n"),
+        ]);
+        let robot = AndroidRobot::with_runner("adb", runner);
+        robot.boot_device("avd:Pixel").await.unwrap();
+        let calls = robot.runner.calls.lock().unwrap();
+        assert_eq!(calls[3].1, ["-s", "emulator-5554", "reconnect"]);
+        assert!(
+            calls
+                .iter()
+                .all(|(exe, _)| exe == "adb" || exe == &robot.emulator_path)
+        );
+        assert!(
+            !calls
                 .iter()
                 .any(|(_, args)| args.first().is_some_and(|a| a == "-avd"))
         );

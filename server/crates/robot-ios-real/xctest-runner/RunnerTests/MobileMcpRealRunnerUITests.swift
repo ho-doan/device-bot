@@ -311,6 +311,9 @@ private final class MobileMcpRealHostAgent {
   private let hosts: [String]
   private let port: Int
   private let token: String?
+  private let deliverySessionId = UUID().uuidString
+  private var lastResult: (id: String, body: [String: Any])?
+  private var preferredHost: String?
   private var currentBundleId: String?
   private var running = true
   private var pollWasUnreachable = false
@@ -327,7 +330,14 @@ private final class MobileMcpRealHostAgent {
         RunLoop.current.run(until: Date().addingTimeInterval(0.4))
         continue
       }
-      postResult(id: command.id, body: execute(command))
+      // The bridge may resend the same ID after a lost HTTP response. Return
+      // the original result without running the XCTest action a second time.
+      if lastResult?.id != command.id {
+        lastResult = (command.id, execute(command))
+      }
+      if let result = lastResult {
+        postResult(id: result.id, body: result.body)
+      }
       if command.method == "stop" { running = false }
     }
   }
@@ -727,30 +737,41 @@ private final class MobileMcpRealHostAgent {
   }
 
   private func nextCommand() -> Command? {
-    for host in hosts {
-      if let command = getCommand(host: host) { return command }
+    for host in orderedHosts() {
+      // An empty 204 is a healthy poll, not a reason to try other hosts.
+      guard let data = poll(host: host) else { continue }
+      preferredHost = host
+      guard !data.isEmpty,
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let id = object["id"] as? String,
+            let method = object["method"] as? String else { return nil }
+      return Command(id: id, method: method, params: object["params"] as? [String: Any] ?? [:])
     }
     return nil
+  }
+
+  private func orderedHosts() -> [String] {
+    guard let preferredHost else { return hosts }
+    return [preferredHost] + hosts.filter { $0 != preferredHost }
   }
 
   private func postResult(id: String, body: [String: Any]) {
     var payload = body
     payload["id"] = id
-    for host in hosts {
+    for host in orderedHosts() {
       if post(host: host, json: payload) { return }
     }
   }
 
-  private func getCommand(host: String) -> Command? {
+  private func poll(host: String) -> Data? {
     guard let base = bridgeUrl(host: host, port: port, path: "/next"),
           var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
-    components.queryItems = [URLQueryItem(name: "deviceId", value: ProcessInfo.processInfo.environment["DEVICE_BOT_DEVICE_ID"] ?? "")]
+    components.queryItems = [
+      URLQueryItem(name: "deviceId", value: ProcessInfo.processInfo.environment["DEVICE_BOT_DEVICE_ID"] ?? ""),
+      URLQueryItem(name: "deliverySessionId", value: deliverySessionId)
+    ]
     guard let url = components.url else { return nil }
-    guard let data = request(url: url, method: "GET", body: nil),
-          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let id = object["id"] as? String,
-          let method = object["method"] as? String else { return nil }
-    return Command(id: id, method: method, params: object["params"] as? [String: Any] ?? [:])
+    return request(url: url, method: "GET", body: nil)
   }
 
   private func post(host: String, json: [String: Any]) -> Bool {
@@ -760,10 +781,11 @@ private final class MobileMcpRealHostAgent {
   }
 
   private func request(url: URL, method: String, body: Data?) -> Data? {
-    var request = URLRequest(url: url)
+    var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
     request.httpMethod = method
     request.timeoutInterval = 20
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("close", forHTTPHeaderField: "Connection")
     if let token { request.setValue(token, forHTTPHeaderField: "X-MobileMcp-Token") }
     request.httpBody = body
 
@@ -772,12 +794,13 @@ private final class MobileMcpRealHostAgent {
     var transportFailure = false
     var receivedHTTP = false
     let semaphore = DispatchSemaphore(value: 0)
-    URLSession.shared.dataTask(with: request) { data, response, error in
+    let task = URLSession.shared.dataTask(with: request) { data, response, error in
       defer { semaphore.signal() }
       receivedHTTP = response is HTTPURLResponse
       if let error {
         let endpoint = url.absoluteString.split(separator: "?", maxSplits: 1).first ?? ""
-        print("Device Bot bridge request failed (\(method) \(endpoint)): \(error.localizedDescription)")
+        let failure = error as NSError
+        print("Device Bot bridge request failed (\(method) \(endpoint)): \(failure.domain) \(failure.code) \(failure.localizedDescription)")
         if let code = (error as? URLError)?.code {
           switch code {
           case .timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
@@ -790,10 +813,13 @@ private final class MobileMcpRealHostAgent {
         return
       }
       let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-      if status == 204 { return }
-      if (200..<300).contains(status) { result = data } else { failed = true }
-    }.resume()
-    guard semaphore.wait(timeout: .now() + 22) == .success else { return nil }
+      if (200..<300).contains(status) { result = data ?? Data() } else { failed = true }
+    }
+    task.resume()
+    guard semaphore.wait(timeout: .now() + 22) == .success else {
+      task.cancel()
+      return nil
+    }
     if method == "GET" && url.path == "/next" {
       if transportFailure {
         let endpoint = url.absoluteString.split(separator: "?", maxSplits: 1).first ?? ""

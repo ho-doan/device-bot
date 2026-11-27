@@ -4,7 +4,7 @@ use std::{
     hash::{Hash, Hasher},
     path::Path,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -127,6 +127,7 @@ impl LiveControl {
         &'a self,
         options: &'a Options,
         initially_offscreen: Option<bool>,
+        flutter: bool,
     ) -> replay::Action<'a> {
         let input = if self.action == Some("input") {
             self.lookup
@@ -142,6 +143,7 @@ impl LiveControl {
             resource_id: self.control.resource_id.as_deref(),
             input,
             initially_offscreen,
+            flutter,
         }
     }
 }
@@ -232,6 +234,7 @@ struct Engine<'a> {
     scope: Scope,
     stop: &'a AtomicBool,
     timing: &'a TimingLog,
+    flutter: OnceLock<bool>,
     deadline: Instant,
     input_budget: usize,
 }
@@ -260,15 +263,14 @@ impl Engine<'_> {
             .await
     }
 
-    async fn observe(&self) -> Result<Observation, String> {
-        let location = self.context().await?;
+    async fn native_tree(&self) -> Result<(Vec<UiElement>, bool), String> {
         let mut query = ElementQuery {
             include_frames: matches!(self.scope, Scope::Web { .. }),
             max_results: Some(450),
             ..Default::default()
         };
         let mut root_only = false;
-        let mut elements = match self
+        let elements = match self
             .timing
             .measure(
                 "ui_tree",
@@ -291,6 +293,53 @@ impl Engine<'_> {
                     .map_err(|e| e.to_string())?
             }
             Err(error) => return Err(error.to_string()),
+        };
+        Ok((elements, root_only))
+    }
+
+    async fn flutter_tree(&self) -> Result<Vec<UiElement>, String> {
+        self.timing
+            .measure(
+                "ui_tree",
+                self.robot.list_flutter_elements(&self.options.device_id),
+            )
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn observe(&self) -> Result<Observation, String> {
+        let location = self.context().await?;
+        let (mut elements, root_only) = if self.flutter.get() == Some(&true) {
+            let mut elements = self.flutter_tree().await?;
+            if elements.is_empty() {
+                // A bounded bridge snapshot can miss a frame. Retry the same
+                // source once without accepting an empty screen as a state.
+                tokio::time::sleep(Duration::from_millis(140)).await;
+                self.check()?;
+                elements = self.flutter_tree().await?;
+            }
+            if elements.is_empty() {
+                return Err("The selected macOS window stopped exposing its Flutter tree.".into());
+            }
+            (elements, false)
+        } else {
+            let (mut elements, root_only) = self.native_tree().await?;
+            if self.options.device_id.starts_with("macos:") && self.flutter.get().is_none() {
+                prepare_elements(&mut elements);
+                let native_has_controls = elements.iter().any(|element| {
+                    live_control(element, self.options).is_some_and(|row| !row.lookup.is_empty())
+                });
+                if !native_has_controls
+                    && let Ok(flutter) = self.flutter_tree().await
+                    && !flutter.is_empty()
+                {
+                    let _ = self.flutter.set(true);
+                    elements = flutter;
+                } else {
+                    let _ = self.flutter.set(false);
+                }
+            }
+            (elements, root_only)
         };
         prepare_elements(&mut elements);
         let title = elements
@@ -409,6 +458,10 @@ impl Engine<'_> {
 
     async fn settled(&self) -> Result<Observation, String> {
         tokio::time::sleep(Duration::from_millis(self.options.delay())).await;
+        self.settled_after_wait().await
+    }
+
+    async fn settled_after_wait(&self) -> Result<Observation, String> {
         let mut last = self.observe().await?;
         for _ in 0..3 {
             tokio::time::sleep(Duration::from_millis(140)).await;
@@ -633,7 +686,11 @@ impl Engine<'_> {
                     &self.scope,
                     &self.options.device_id,
                     self.dir,
-                    row.replay_action(self.options, step.initially_offscreen),
+                    row.replay_action(
+                        self.options,
+                        step.initially_offscreen,
+                        self.flutter.get() == Some(&true),
+                    ),
                     self.options.delay(),
                 )
                 .await?;
@@ -1028,6 +1085,7 @@ pub(super) async fn scan(
         scope,
         stop,
         timing,
+        flutter: OnceLock::new(),
         deadline: Instant::now() + Duration::from_secs(opt.time_seconds()),
         input_budget: opt.actions() * (opt.depth() + 2) + 20,
     };
@@ -1037,6 +1095,14 @@ pub(super) async fn scan(
     if matches!(engine.scope, Scope::Web { .. }) && root.controls.is_empty() {
         map.notes
             .push("No controls were found on the entry page after waiting for it to load.".into());
+    }
+    if opt.device_id.starts_with("macos:")
+        && engine.flutter.get() == Some(&false)
+        && root.controls.iter().all(|row| row.lookup.is_empty())
+    {
+        map.notes.push(
+            "No named controls were exposed by the selected macOS window. For a sandboxed Flutter app with DeviceBotFlutter enabled, configure its exact window endpoint before scanning.".into(),
+        );
     }
     let root_id = record(&engine, map, dir, &mut root, None).await;
     let mut seen = HashMap::from([(root.fingerprint, root_id.clone())]);
@@ -1119,7 +1185,11 @@ pub(super) async fn scan(
                         &opt.device_id,
                         dir,
                         &name,
-                        row.replay_action(opt, original.control.initially_offscreen),
+                        row.replay_action(
+                            opt,
+                            original.control.initially_offscreen,
+                            engine.flutter.get() == Some(&true),
+                        ),
                         opt.delay(),
                     ),
                 )
@@ -1139,7 +1209,8 @@ pub(super) async fn scan(
                 continue;
             }
             let mut next = match timing
-                .measure("settle_after_action", engine.settled())
+                // Successful action YAML has already waited before capturing evidence.
+                .measure("settle_after_action", engine.settled_after_wait())
                 .await
             {
                 Ok(next) => next,

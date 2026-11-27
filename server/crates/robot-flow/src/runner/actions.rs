@@ -15,6 +15,16 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::time::sleep;
 
+fn macos_window_id(id: &str) -> bool {
+    let Some((pid, window)) = id.strip_prefix("macos:").and_then(|id| id.split_once(':')) else {
+        return false;
+    };
+    pid.bytes().all(|b| b.is_ascii_digit())
+        && window.bytes().all(|b| b.is_ascii_digit())
+        && pid.parse::<i32>().is_ok_and(|pid| pid > 0)
+        && window.parse::<u32>().is_ok_and(|window| window > 0)
+}
+
 impl FlowRunner {
     pub(super) async fn execute(
         &mut self,
@@ -33,11 +43,23 @@ impl FlowRunner {
                     .pointer("/structuredContent/devices")
                     .and_then(Value::as_array)
                     .ok_or("MCP devices missing")?;
+                let window = args["id"].as_str().filter(|id| macos_window_id(id));
                 let matches = devices
                     .iter()
-                    .filter(|d| {
+                    .filter_map(|d| {
+                        let mut device = d.clone();
+                        if let Some(id) = window
+                            && d["id"] == "macos-host"
+                            && d["platform"] == "macos"
+                            && d["state"] == "available"
+                        {
+                            // The driver validates the PID/window pair before
+                            // inspecting, capturing, or sending input.
+                            device["id"] = json!(id);
+                        }
                         args.as_object()
-                            .is_some_and(|o| o.iter().all(|(k, v)| d.get(k) == Some(v)))
+                            .is_some_and(|o| o.iter().all(|(k, v)| device.get(k) == Some(v)))
+                            .then_some(device)
                     })
                     .collect::<Vec<_>>();
                 if matches.len() != 1 {
@@ -47,7 +69,7 @@ impl FlowRunner {
                     )
                     .into());
                 }
-                self.device = Some(matches[0].clone());
+                self.device = matches.into_iter().next();
             }
             "wait" => {
                 sleep(Duration::from_millis(

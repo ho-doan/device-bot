@@ -19,6 +19,34 @@ Demo credentials: **alex@orbit.demo** / **Orbit123!**.
 Use **Try demo workspace** to fill the credentials and sign in immediately.
 Other credentials show an authentication error.
 
+## macOS UI map
+
+Build Orbit from this directory with `flutter build macos --debug` and open
+`build/macos/Build/Products/Debug/flutter_app.app`. The example targets macOS
+12 or newer. In QC, open **UI map** for the Mac and select the Orbit window.
+Enlarge the window before scanning if **Try demo workspace** is below the fold.
+
+If native Accessibility only exposes the window chrome, the UI map can use
+Orbit's existing Flutter bridge. Because this app is sandboxed, configure its
+endpoint on the MCP server. Get the Orbit PID and window ID with the
+`mobile_list_running_apps` and `mobile_list_windows` tools, then start the server
+with these values:
+
+```sh
+orbit_pid=123  # Replace with Orbit's PID.
+orbit_window=456  # Replace with Orbit's window ID.
+orbit_manifest="$HOME/Library/Containers/com.example.flutterApp/Data/tmp/device-bot-flutter/$orbit_pid.json"
+export DEVICE_BOT_FLUTTER_ENDPOINTS="$(jq -c --arg id "macos:$orbit_pid:$orbit_window" '{($id): .}' "$orbit_manifest")"
+device-bot mcp --listen 127.0.0.1:3337
+```
+
+Reconnect QC to this server and regenerate the endpoint if you relaunch Orbit.
+The bridge only exposes visible controls and requires Orbit to have one window.
+For a small MCP smoke scan, allow `forgot-password-button` and
+`back-to-sign-in-button`. Include `forgot-password-button` in `fixtureControls`
+to run Orbit's simulated reset flow, as password-related controls are blocked
+by default.
+
 ## Flow
 
 See [Behavior flows (Mermaid, tiếng Việt)](BEHAVIOR_FLOWS.md) for the implemented

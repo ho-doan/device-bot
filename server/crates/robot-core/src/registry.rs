@@ -7,27 +7,33 @@ use crate::{
 };
 use async_trait::async_trait;
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// Routes a device operation to the driver which currently owns that ID.
 #[derive(Default)]
 pub struct RobotRegistry {
     drivers: Vec<Arc<dyn Robot>>,
+    macos: OnceLock<Arc<dyn Robot>>,
 }
 
 impl RobotRegistry {
     pub fn new(drivers: impl IntoIterator<Item = Arc<dyn Robot>>) -> Self {
         Self {
             drivers: drivers.into_iter().collect(),
+            macos: OnceLock::new(),
         }
     }
 
     async fn driver_for(&self, device_id: &str) -> Result<Arc<dyn Robot>, RobotError> {
+        let macos_target = device_id == "macos-host" || device_id.starts_with("macos:");
+        if macos_target && let Some(driver) = self.macos.get() {
+            return Ok(Arc::clone(driver));
+        }
         for driver in &self.drivers {
             let Ok(devices) = driver.list_devices().await else {
                 continue;
             };
-            if devices.iter().any(|device| {
+            if let Some(device) = devices.iter().find(|device| {
                 device.id == device_id
                     || (device_id == "chrome:browser" && device.platform == Platform::Chrome)
                     // Window-scoped Windows IDs retain the selected PID/HWND for
@@ -39,6 +45,11 @@ impl RobotRegistry {
                         && device.id == "macos-host"
                         && device.platform == Platform::Macos)
             }) {
+                if macos_target && device.id == "macos-host" && device.platform == Platform::Macos {
+                    // The local driver is fixed for this session. It still
+                    // verifies each window identity, which can change at any time.
+                    let _ = self.macos.set(Arc::clone(driver));
+                }
                 return Ok(Arc::clone(driver));
             }
         }

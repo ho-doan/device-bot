@@ -20,6 +20,7 @@ pub(super) struct Action<'a> {
     pub resource_id: Option<&'a str>,
     pub input: Option<&'a str>,
     pub initially_offscreen: Option<bool>,
+    pub flutter: bool,
 }
 
 fn stable_context(context: &WebContext) -> Value {
@@ -52,6 +53,9 @@ impl Action<'_> {
         capture: bool,
     ) -> Result<String, String> {
         let mut selector = json!({"timeout_ms":3000});
+        if self.flutter {
+            selector["source"] = json!("flutter");
+        }
         if self.initially_offscreen.is_some() {
             selector["scroll_into_view"] = json!(true);
             selector["timeout_ms"] = json!(8000);

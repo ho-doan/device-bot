@@ -14,10 +14,18 @@ pub fn directory() -> PathBuf {
 }
 
 pub async fn configured(device_id: &str) -> Option<Vec<UiElement>> {
+    configured_for_process(device_id, None).await
+}
+
+/// When targeting a desktop window, verify the responding app is its owner.
+pub async fn configured_for_process(
+    device_id: &str,
+    process_id: Option<u32>,
+) -> Option<Vec<UiElement>> {
     let config: Value =
         serde_json::from_str(&std::env::var("DEVICE_BOT_FLUTTER_ENDPOINTS").ok()?).ok()?;
     let endpoint = config.get(device_id)?;
-    elements(endpoint, None).await
+    elements(endpoint, process_id).await
 }
 
 pub async fn for_process(process_id: u32) -> Option<Vec<UiElement>> {

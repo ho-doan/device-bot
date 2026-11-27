@@ -2,8 +2,8 @@
 use crate::outcome::{ErrorKind, FlowError};
 
 use super::arguments::{
-    SCROLL, VIEWPORT, gesture_arguments, query_arguments, rectangle, scroll_arguments,
-    tap_arguments, type_arguments,
+    SCROLL, VIEWPORT, element_rectangle, gesture_arguments, query_arguments, rectangle,
+    scroll_arguments, tap_arguments, type_arguments,
 };
 use super::artifacts::write;
 use super::{BATCH, ElementProbeReport, ElementProbeSample, FlowRunner, QUERY, SWIPE, TAP};
@@ -110,6 +110,7 @@ impl FlowRunner {
         unique: bool,
     ) -> Result<Value> {
         let s = schema::selector(args, &self.profile)?;
+        let desktop_points = self.device_id()?.starts_with("macos:");
         let deadline = Instant::now()
             + Duration::from_millis(
                 args.get("timeout_ms")
@@ -148,7 +149,7 @@ impl FlowRunner {
                         .all(|key| e["bounds"][key].as_f64() == Some(0.))
                 });
                 if let Some(e) = found.first() {
-                    let bounds = rectangle(e)?;
+                    let bounds = element_rectangle(e, desktop_points)?;
                     if (!enabled || e["enabled"] == true) && (!clickable || e["clickable"] == true)
                     {
                         let root_document = e.pointer("/webContext/framePath")
@@ -400,9 +401,11 @@ impl FlowRunner {
                 .ok_or("native tap requires label/filter")?;
             self.call(BATCH,json!({"deviceId":self.device_id()?,"actions":[{"type":"tap_element","filter":filter}]})).await?;
         } else {
-            let b = rectangle(e)?;
-            self.call(TAP, tap_arguments(self.device_id()?, e, b))
-                .await?;
+            let device = self.device_id()?;
+            // A window to the left of or above the primary display has
+            // negative desktop coordinates. The scoped driver validates hits.
+            let b = element_rectangle(e, device.starts_with("macos:"))?;
+            self.call(TAP, tap_arguments(device, e, b)).await?;
         }
         Ok(())
     }

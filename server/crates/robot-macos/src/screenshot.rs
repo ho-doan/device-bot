@@ -81,6 +81,45 @@ function run() {
 }"#;
 
 impl MacosRobot {
+    pub(super) async fn capture_window(&self, target: live::Target) -> Result<Vec<u8>, RobotError> {
+        let _lock = self.capture_lock.lock().await;
+        live::geometry(target)?;
+        let path = self.artifact_dir.join(format!(
+            "macos-window-screenshot-{}-{}.png",
+            std::process::id(),
+            SCREENSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let result = async {
+            tokio::fs::create_dir_all(&self.artifact_dir)
+                .await
+                .map_err(|error| {
+                    RobotError::CommandFailed(format!(
+                        "could not create screenshot directory: {error}"
+                    ))
+                })?;
+            self.run(
+                &self.screencapture_path,
+                &[
+                    "-x".into(),
+                    "-o".into(),
+                    "-a".into(),
+                    format!("-l{}", target.window),
+                    path.to_string_lossy().into_owned(),
+                ],
+            )
+            .await?;
+            live::geometry(target)?;
+            tokio::fs::read(&path).await.map_err(|error| {
+                RobotError::CommandFailed(format!(
+                    "could not read macOS window screenshot: {error}"
+                ))
+            })
+        }
+        .await;
+        let _ = tokio::fs::remove_file(path).await;
+        result
+    }
+
     pub(super) async fn focus_command(&self, mode: &str, value: &str) -> Result<i32, RobotError> {
         let output = tokio::time::timeout(
             std::time::Duration::from_secs(8),

@@ -3,11 +3,16 @@
 use super::*;
 use async_trait::async_trait;
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
+#[derive(Default)]
 struct StubRobot {
     device: Option<RobotDevice>,
     list_error: bool,
+    list_reads: AtomicUsize,
 }
 
 #[async_trait]
@@ -41,6 +46,7 @@ impl Robot for StubRobot {
     }
 
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
+        self.list_reads.fetch_add(1, Ordering::Relaxed);
         if self.list_error {
             return Err(RobotError::CommandFailed("driver unavailable".into()));
         }
@@ -251,7 +257,7 @@ async fn chrome_boot_alias_routes_to_driver_with_an_available_page() {
             platform: Platform::Chrome,
             state: DeviceState::Available,
         }),
-        list_error: false,
+        ..Default::default()
     });
     let registry = RobotRegistry::new(vec![Arc::clone(&driver)]);
     assert_eq!(
@@ -269,7 +275,7 @@ async fn registry_forwards_context_editing_to_the_selected_driver() {
             platform: Platform::Ios,
             state: DeviceState::Available,
         }),
-        list_error: false,
+        ..Default::default()
     }) as Arc<dyn Robot>]);
     let context = WebContext {
         app_id: Some("fixture.app".into()),
@@ -340,7 +346,7 @@ async fn desktop_window_targets_route_without_changing_their_identity() {
                 platform,
                 state: DeviceState::Available,
             }),
-            list_error: false,
+            ..Default::default()
         });
         let registry = RobotRegistry::new(vec![Arc::clone(&driver)]);
         assert_eq!(
@@ -360,11 +366,34 @@ async fn desktop_window_targets_route_without_changing_their_identity() {
 }
 
 #[tokio::test]
+async fn repeated_macos_window_operations_do_not_enumerate_other_platforms() {
+    let other = Arc::new(StubRobot::default());
+    let mac = Arc::new(StubRobot {
+        device: Some(RobotDevice {
+            id: "macos-host".into(),
+            name: "Local Mac".into(),
+            platform: Platform::Macos,
+            state: DeviceState::Available,
+        }),
+        ..Default::default()
+    });
+    let registry = RobotRegistry::new([other.clone() as Arc<dyn Robot>, mac.clone()]);
+    for target in ["macos:41:42", "macos:50:51", "macos:41:42"] {
+        assert_eq!(
+            registry.stream_context(target).await.unwrap(),
+            serde_json::json!({"deviceId":target})
+        );
+    }
+    assert_eq!(other.list_reads.load(Ordering::Relaxed), 1);
+    assert_eq!(mac.list_reads.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
 async fn routes_to_a_healthy_driver_when_another_driver_is_unavailable() {
     let registry = RobotRegistry::new(vec![
         Arc::new(StubRobot {
-            device: None,
             list_error: true,
+            ..Default::default()
         }) as Arc<dyn Robot>,
         Arc::new(StubRobot {
             device: Some(RobotDevice {
@@ -373,7 +402,7 @@ async fn routes_to_a_healthy_driver_when_another_driver_is_unavailable() {
                 platform: Platform::Ios,
                 state: DeviceState::Available,
             }),
-            list_error: false,
+            ..Default::default()
         }),
     ]);
 
@@ -390,7 +419,7 @@ async fn capability_report_routes_to_selected_driver_and_defaults_are_conservati
             platform: Platform::Android,
             state: DeviceState::Available,
         }),
-        list_error: false,
+        ..Default::default()
     });
     let registry = RobotRegistry::new(vec![driver]);
     let report = registry.capabilities("device-1").await.unwrap();

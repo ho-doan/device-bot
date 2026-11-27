@@ -198,6 +198,8 @@ pub struct MacosRobot {
     active_window_id: Arc<Mutex<Option<String>>>,
     capture_lock: Arc<Mutex<()>>,
     live_geometry: Arc<Mutex<std::collections::HashMap<String, live::Geometry>>>,
+    #[cfg(target_os = "macos")]
+    flutter_windows: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 impl MacosRobot {
@@ -214,6 +216,8 @@ impl MacosRobot {
             active_window_id: Arc::default(),
             capture_lock: Arc::default(),
             live_geometry: Arc::default(),
+            #[cfg(target_os = "macos")]
+            flutter_windows: Arc::default(),
         }
     }
 
@@ -593,6 +597,10 @@ impl Robot for MacosRobot {
         session.active_process_id = Arc::default();
         session.active_window_id = Arc::default();
         session.live_geometry = Arc::default();
+        #[cfg(target_os = "macos")]
+        {
+            session.flutter_windows = Arc::default();
+        }
         session.recording = Arc::default();
         Some(Arc::new(session))
     }
@@ -728,8 +736,7 @@ impl Robot for MacosRobot {
     }
 
     async fn take_screenshot(&self, device_id: &str) -> Result<Vec<u8>, RobotError> {
-        self.require_device(device_id)?;
-        self.capture_desktop(&robot_core::ScreenshotOptions::default())
+        self.take_screenshot_with_options(device_id, &robot_core::ScreenshotOptions::default())
             .await
     }
 
@@ -739,6 +746,14 @@ impl Robot for MacosRobot {
         options: &robot_core::ScreenshotOptions,
     ) -> Result<Vec<u8>, RobotError> {
         self.require_device(device_id)?;
+        if let Some(target) = live::Target::parse(device_id)? {
+            if options.app_id.is_some() || options.display_id.is_some() {
+                return Err(RobotError::InvalidInput(
+                    "A window-scoped screenshot cannot select a different app or display".into(),
+                ));
+            }
+            return self.capture_window(target).await;
+        }
         self.capture_desktop(options).await
     }
 
@@ -840,7 +855,12 @@ impl Robot for MacosRobot {
         if live::Target::parse(device_id)?.is_some() {
             let target = self.live_guard(device_id, &[point]).await?;
             #[cfg(target_os = "macos")]
-            return native_accessibility_tap(point, Some(target.pid));
+            {
+                if self.flutter_windows.lock().await.contains(device_id) {
+                    return pointer::gesture(point, robot_core::PointerGesture::Tap).await;
+                }
+                return native_accessibility_tap(point, Some(target.pid));
+            }
             #[cfg(not(target_os = "macos"))]
             let _ = target;
         }
@@ -981,9 +1001,8 @@ impl Robot for MacosRobot {
 
     async fn list_flutter_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
         self.require_device(device_id)?;
-        if live::Target::parse(device_id)?.is_some() {
-            // The widget bridge identifies only a PID, not an individual window.
-            return Ok(vec![]);
+        if let Some(target) = live::Target::parse(device_id)? {
+            return self.live_flutter_elements(device_id, target).await;
         }
         if let Some(elements) = robot_flutter_bridge::configured(device_id).await {
             return Ok(elements);

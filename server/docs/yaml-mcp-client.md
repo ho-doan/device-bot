@@ -131,6 +131,10 @@ explicitly selected device or parent scope is reused; otherwise the runner calls
 `mobile_list_available_devices` and requires exactly one device for the platform.
 Zero/multiple matches fail before the action. With multiple Chrome tabs, first
 use `select_device` with the exact `chrome:<target-id>`.
+For a macOS window use `select_device: {id: 'macos:<pid>:<window-id>'}`.
+This requires an available macOS host and preserves the exact window ID for
+driver validation. Window IDs are session-specific, so refresh them after
+reopening the app.
 
 `platform` also supports profile/recipe variables. A platform on `run` supplies
 the default for its expanded recipe steps; a platform on `if_element` covers the

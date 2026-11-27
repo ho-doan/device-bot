@@ -123,7 +123,7 @@ fn windows() -> Result<Vec<(Target, Geometry)>, RobotError> {
     Ok(output)
 }
 #[cfg(target_os = "macos")]
-fn geometry(target: Target) -> Result<Geometry, RobotError> {
+pub(super) fn geometry(target: Target) -> Result<Geometry, RobotError> {
     windows()?
         .into_iter()
         .find(|(t, _)| *t == target)
@@ -136,12 +136,17 @@ fn geometry(target: Target) -> Result<Geometry, RobotError> {
         })
 }
 #[cfg(not(target_os = "macos"))]
-fn geometry(_: Target) -> Result<Geometry, RobotError> {
+pub(super) fn geometry(_: Target) -> Result<Geometry, RobotError> {
     Err(RobotError::Unsupported("macOS Live requires macOS".into()))
 }
 
 #[cfg(target_os = "macos")]
 fn ax_window(target: Target, g: Geometry) -> Result<CfOwned, RobotError> {
+    resolve_ax_window(target, g, false)
+}
+
+#[cfg(target_os = "macos")]
+fn resolve_ax_window(target: Target, g: Geometry, single: bool) -> Result<CfOwned, RobotError> {
     if !request_accessibility_permission() {
         return Err(RobotError::CommandFailed(
             "Grant Accessibility permission before using macOS Live input or inspection".into(),
@@ -150,8 +155,14 @@ fn ax_window(target: Target, g: Geometry) -> Result<CfOwned, RobotError> {
     let attrs = NativeAxAttributes::new()?;
     let app = native_frontmost_application(Some(target.pid))?;
     let list = native_required_attribute(app.0, attrs.windows, "AXWindows")?;
+    let count = unsafe { CFArrayGetCount(list.0) };
+    if single && count != 1 {
+        return Err(RobotError::Unsupported(
+            "Flutter discovery requires the selected macOS app to have exactly one window".into(),
+        ));
+    }
     let mut found = None;
-    for index in 0..unsafe { CFArrayGetCount(list.0) } {
+    for index in 0..count {
         let element = unsafe { CFArrayGetValueAtIndex(list.0, index) };
         let Some(position) = native_point_attribute(element, attrs.position) else {
             continue;
@@ -178,6 +189,55 @@ fn ax_window(target: Target, g: Geometry) -> Result<CfOwned, RobotError> {
 }
 
 impl MacosRobot {
+    pub(super) async fn live_flutter_elements(
+        &self,
+        id: &str,
+        target: Target,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        #[cfg(target_os = "macos")]
+        {
+            let g = geometry(target)?;
+            let pid = target.pid as u32;
+            let elements = match robot_flutter_bridge::configured_for_process(id, Some(pid)).await {
+                Some(nodes) => nodes,
+                None => robot_flutter_bridge::for_process(pid)
+                    .await
+                    .unwrap_or_default(),
+            };
+            if elements.is_empty() {
+                return Ok(elements);
+            }
+            // A bridge registration identifies a process, not a window. With
+            // multiple windows there is no safe way to assign the snapshot.
+            if geometry(target)? != g {
+                return Err(RobotError::InvalidInput(
+                    "Flutter window geometry changed during inspection".into(),
+                ));
+            }
+            resolve_ax_window(target, g, true)?;
+            if elements
+                .iter()
+                .any(|element| !g.contains_bounds(&element.bounds))
+            {
+                return Err(RobotError::InvalidInput(
+                    "Flutter snapshot bounds do not belong to the selected window".into(),
+                ));
+            }
+            self.live_geometry
+                .lock()
+                .await
+                .entry(id.into())
+                .or_insert(g);
+            self.flutter_windows.lock().await.insert(id.into());
+            Ok(elements)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (id, target);
+            Ok(vec![])
+        }
+    }
+
     pub(super) fn live_edit_text(&self, target: Target, text: &str, clear: bool) -> bool {
         #[cfg(target_os = "macos")]
         {
@@ -263,7 +323,8 @@ impl MacosRobot {
         let cache = self.live_geometry.lock().await;
         if cache.get(id).is_none_or(|saved| *saved != g) {
             return Err(RobotError::InvalidInput(
-                "Window moved/resized or Live is not open; reopen Live before input".into(),
+                "Window moved/resized or has not been inspected; reselect the window before input"
+                    .into(),
             ));
         }
         drop(cache);
@@ -366,18 +427,28 @@ impl MacosRobot {
         let g = geometry(target)?;
         #[cfg(target_os = "macos")]
         {
-            let window = ax_window(target, g)?;
-            let attrs = NativeAxAttributes::new()?;
-            let mut elements = Vec::new();
-            native_collect_elements(
-                window.0,
-                &attrs,
-                filter,
-                max,
-                Instant::now() + NATIVE_FILTER_BUDGET,
-                0,
-                &mut elements,
-            );
+            let elements = {
+                let window = ax_window(target, g)?;
+                let attrs = NativeAxAttributes::new()?;
+                let mut elements = Vec::new();
+                native_collect_elements(
+                    window.0,
+                    &attrs,
+                    filter,
+                    max,
+                    Instant::now() + NATIVE_FILTER_BUDGET,
+                    0,
+                    &mut elements,
+                );
+                elements
+            };
+            // A scoped inspector (including UI map) need not start a video
+            // helper to pin coordinates. Do not overwrite an earlier pin.
+            self.live_geometry
+                .lock()
+                .await
+                .entry(id.into())
+                .or_insert(g);
             Ok(elements)
         }
         #[cfg(not(target_os = "macos"))]
@@ -385,6 +456,17 @@ impl MacosRobot {
             let _ = (g, filter, max);
             Err(RobotError::Unsupported("macOS Live requires macOS".into()))
         }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Geometry {
+    fn contains_bounds(self, b: &robot_core::Bounds) -> bool {
+        // Bounds are rounded to desktop points.
+        f64::from(b.left) >= self.x - 1.
+            && f64::from(b.top) >= self.y - 1.
+            && f64::from(b.right) <= self.x + self.width + 1.
+            && f64::from(b.bottom) <= self.y + self.height + 1.
     }
 }
 

@@ -85,6 +85,10 @@ pub(super) fn pointer_gesture_arguments(
 }
 
 pub(super) fn rectangle(v: &Value) -> Result<(f64, f64, f64, f64)> {
+    element_rectangle(v, false)
+}
+
+pub(super) fn element_rectangle(v: &Value, desktop_points: bool) -> Result<(f64, f64, f64, f64)> {
     let b = &v["bounds"];
     let r = (
         number(b, "left")?,
@@ -92,7 +96,7 @@ pub(super) fn rectangle(v: &Value) -> Result<(f64, f64, f64, f64)> {
         number(b, "right")?,
         number(b, "bottom")?,
     );
-    if r.0 < 0. || r.1 < 0. || r.2 <= r.0 || r.3 <= r.1 {
+    if (!desktop_points && (r.0 < 0. || r.1 < 0.)) || r.2 <= r.0 || r.3 <= r.1 {
         return Err("element has no visible valid bounds".into());
     }
     Ok(r)

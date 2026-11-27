@@ -42,6 +42,9 @@ struct Fixture(Mutex<FixtureState>);
 #[derive(Default)]
 struct FixtureState {
     page: usize,
+    macos_flutter: bool,
+    native_window_reads: usize,
+    flutter_reads: usize,
     android: bool,
     ios: bool,
     left_no_longer_reproducible: bool,
@@ -98,7 +101,9 @@ fn node(label: &str, id: &str, x: i32, kind: ElementType) -> UiElement {
 impl Robot for Fixture {
     async fn list_devices(&self) -> Result<Vec<RobotDevice>, RobotError> {
         let state = self.0.lock().unwrap();
-        let (id, platform) = if state.android {
+        let (id, platform) = if state.macos_flutter {
+            ("macos-host", Platform::Macos)
+        } else if state.android {
             ("android-fixture", Platform::Android)
         } else if state.ios {
             ("ios-fixture", Platform::Ios)
@@ -148,7 +153,13 @@ impl Robot for Fixture {
 
     async fn tap(&self, _: &str, point: Point) -> Result<(), RobotError> {
         let mut state = self.0.lock().unwrap();
-        let action = match (state.page, point.x as i32) {
+        let x = if state.macos_flutter {
+            assert!(point.x < 0., "the fixture is left of the primary display");
+            point.x as i32 + 1000
+        } else {
+            point.x as i32
+        };
+        let action = match (state.page, x) {
             (0, 10) => {
                 if !state.left_no_longer_reproducible || !state.taps.iter().any(|tap| tap == "left")
                 {
@@ -225,8 +236,31 @@ impl Robot for Fixture {
         unreachable!()
     }
 
-    async fn list_elements(&self, _: &str) -> Result<Vec<UiElement>, RobotError> {
+    async fn list_flutter_elements(&self, device: &str) -> Result<Vec<UiElement>, RobotError> {
+        let mut visible = false;
+        if device == "macos:41:42" {
+            let mut state = self.0.lock().unwrap();
+            if state.macos_flutter {
+                state.flutter_reads += 1;
+                // The bridge briefly returns no tree while the window settles.
+                visible = state.flutter_reads != 2;
+            }
+        }
+        if visible {
+            self.list_elements("fixture-flutter").await
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    async fn list_elements(&self, device: &str) -> Result<Vec<UiElement>, RobotError> {
         let mut s = self.0.lock().unwrap();
+        if s.macos_flutter && device == "macos:41:42" {
+            s.native_window_reads += 1;
+            let mut chrome = node("", "", 10, ElementType::Button);
+            chrome.resource_id = None;
+            return Ok(vec![chrome]);
+        }
         if s.empty_queries > 0 {
             s.empty_queries -= 1;
             return Ok(Vec::new());
@@ -235,7 +269,7 @@ impl Robot for Fixture {
             *generation += 1;
             *generation
         });
-        let rows = match s.page {
+        let mut rows = match s.page {
             0 => {
                 let mut editor = node("Search", "search", 30, ElementType::TextField);
                 editor.focused = Some(s.focus);
@@ -281,6 +315,12 @@ impl Robot for Fixture {
             2 => vec![node("Back", "back", 10, ElementType::Button)],
             _ => panic!("must stop before inspecting outside origin"),
         };
+        if s.macos_flutter {
+            for row in &mut rows {
+                row.bounds.left -= 1000;
+                row.bounds.right -= 1000;
+            }
+        }
         Ok(rows)
     }
 }
@@ -311,6 +351,80 @@ fn graph() -> UiMap {
         source_routes: vec![],
         notes: vec![],
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn macos_flutter_map_replays_against_the_exact_window() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        macos_flutter: true,
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId": "macos:41:42", "allowedTaps": ["left"]
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    assert_eq!(map.transitions.len(), 1, "{:?}", map.notes);
+    let evidence = map.screens[0].controls[0].evidence.as_ref().unwrap();
+    let yaml = std::fs::read_to_string(dir.0.join(&evidence.yaml)).unwrap();
+    assert!(yaml.contains("source: flutter"));
+    assert!(evidence.screenshot.is_some());
+    let state = fixture.0.lock().unwrap();
+    assert_eq!(state.taps, ["left"]);
+    assert_eq!(state.native_window_reads, 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn action_settling_does_not_wait_the_yaml_delay_twice() {
+    let dir = Temp::new();
+    let robot: Arc<dyn Robot> = Arc::new(Fixture::default());
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId": "chrome:fixture", "allowedTaps": ["left"], "settleMs": 450
+    }))
+    .unwrap();
+    let timing = timing::TimingLog::new();
+    crawl::scan(
+        &robot,
+        &opt,
+        &AtomicBool::new(false),
+        &mut map,
+        &dir.0,
+        &timing,
+    )
+    .await
+    .unwrap();
+    timing.save(&dir.0).await.unwrap();
+    let phases: Value =
+        serde_json::from_slice(&std::fs::read(dir.0.join("timing.json")).unwrap()).unwrap();
+    let phases = &phases["phases"];
+    assert_eq!(map.transitions.len(), 1);
+    assert!(phases["execute_action"]["totalMs"].as_u64().unwrap() >= 450);
+    let post_action = phases["settle_after_action"]["totalMs"].as_u64().unwrap();
+    assert!(
+        (140..450).contains(&post_action),
+        "post-action settling took {post_action} ms"
+    );
+    let yaml = std::fs::read_to_string(
+        dir.0.join(
+            &map.screens[0]
+                .controls
+                .iter()
+                .find(|control| control.label == "Left")
+                .unwrap()
+                .evidence
+                .as_ref()
+                .unwrap()
+                .yaml,
+        ),
+    )
+    .unwrap();
+    assert!(yaml.contains("ms: 450"));
 }
 
 #[tokio::test(start_paused = true)]

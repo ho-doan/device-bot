@@ -2,6 +2,23 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 
 #[tokio::test]
+async fn invalid_scoped_screenshot_does_not_fall_back_to_the_desktop() {
+    let mut robot = MacosRobot::new(std::env::temp_dir());
+    robot.screencapture_path = "/usr/bin/false".into();
+    let id = "macos:2147483647:4294967295";
+    assert!(matches!(
+        robot.take_screenshot(id).await,
+        Err(RobotError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        robot
+            .take_screenshot_with_options(id, &robot_core::ScreenshotOptions::default())
+            .await,
+        Err(RobotError::InvalidInput(_))
+    ));
+}
+
+#[tokio::test]
 #[ignore = "requires an interactive macOS session"]
 async fn real_focus_restores_the_foreground_pid_without_applescript_coercion() {
     let robot = MacosRobot::new(std::env::temp_dir());

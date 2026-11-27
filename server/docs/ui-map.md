@@ -31,6 +31,9 @@ and the count, total, and longest duration for each phase. Tree reads and
 foreground checks can be part of branch restore or settling, so phase totals
 overlap.
 
+The action YAML supplies the first settle wait. The crawler then checks for
+two matching screen signatures without repeating that initial wait.
+
 Each attempted action runs through `robot-flow`. Its `evidence` entry links
 to the generated `scenario.yaml` and, when captured, `result.png` under
 `actions/<screen-id>-<control-id>/`. These include actions that kept the
@@ -61,6 +64,11 @@ lets the scanner restart it before replaying a branch. If a native screen
 cannot be restored, the scan reports partial coverage rather than sending
 input to an unverified screen. Desktop maps use an explicitly selected
 process/window, just like desktop Live.
+On macOS, screenshots are limited to the selected window. If native
+Accessibility exposes no named controls on entry, the job can use the Flutter
+bridge for the same single-window process. It keeps that source for the whole
+scan and records it in the action YAML. Sandboxed apps may need a configured
+endpoint. See the [Orbit macOS example](../../examples/flutter_app/README.md#macos-ui-map).
 The default scan budget is 24 screens, 45 actions, 5 levels and 8 minutes.
 Use **Scan limits** to change it for larger test targets.
 

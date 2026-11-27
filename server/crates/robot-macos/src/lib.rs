@@ -15,8 +15,8 @@ use std::{ptr, time::Duration};
 
 use async_trait::async_trait;
 use robot_core::{
-    AppWindow, DeviceState, Platform, Point, Robot, RobotDevice, RobotError, RunningApp, UiElement,
-    UiTarget,
+    AppWindow, DeviceState, ElementQuery, Platform, Point, Robot, RobotDevice, RobotError,
+    RunningApp, UiElement, UiTarget,
 };
 use serde_json::{Value, json};
 use tokio::{process::Command, sync::Mutex};
@@ -292,23 +292,16 @@ impl MacosRobot {
 
     async fn accessibility_elements(
         &self,
-        filter: Option<&str>,
-        max_results: Option<usize>,
+        query: ElementQuery,
     ) -> Result<Vec<UiElement>, RobotError> {
         #[cfg(target_os = "macos")]
         {
-            let filter = filter.map(str::to_owned).map(|value| value.to_lowercase());
             let application = *self.active_process_id.lock().await;
             let window = self.active_window_id.lock().await.clone();
             tokio::time::timeout(
                 Duration::from_millis(2_500),
                 tokio::task::spawn_blocking(move || {
-                    native_accessibility_elements(
-                        filter.as_deref(),
-                        max_results,
-                        application,
-                        window,
-                    )
+                    native_accessibility_elements(&query, application, window)
                 }),
             )
             .await
@@ -325,7 +318,7 @@ impl MacosRobot {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (filter, max_results);
+            let _ = query;
             Err(RobotError::Unsupported(
                 "the macOS robot is available only when the MCP server runs on macOS".into(),
             ))
@@ -513,7 +506,12 @@ impl Robot for MacosRobot {
             let ax = unsafe { AXIsProcessTrusted() };
             let capture = unsafe { CGPreflightScreenCaptureAccess() };
             let ax_ready = if ax {
-                self.accessibility_elements(None, Some(1)).await.is_ok()
+                self.accessibility_elements(ElementQuery {
+                    max_results: Some(1),
+                    ..Default::default()
+                })
+                .await
+                .is_ok()
             } else {
                 false
             };
@@ -1045,11 +1043,8 @@ impl Robot for MacosRobot {
     }
 
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
-        self.require_device(device_id)?;
-        if live::Target::parse(device_id)?.is_some() {
-            return self.live_elements(device_id, None, None).await;
-        }
-        self.accessibility_elements(None, None).await
+        self.list_elements_query(device_id, ElementQuery::default())
+            .await
     }
 
     async fn list_elements_filtered(
@@ -1058,13 +1053,29 @@ impl Robot for MacosRobot {
         filter: Option<&str>,
         max_results: Option<usize>,
     ) -> Result<Vec<UiElement>, RobotError> {
+        self.list_elements_query(
+            device_id,
+            ElementQuery {
+                filter: filter.map(str::to_owned),
+                max_results,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    async fn list_elements_query(
+        &self,
+        device_id: &str,
+        query: ElementQuery,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        query.reject_keyboard_exclusion()?;
+        query.reject_web_context(device_id)?;
         self.require_device(device_id)?;
         if live::Target::parse(device_id)?.is_some() {
-            return self.live_elements(device_id, filter, max_results).await;
+            return self.live_elements(device_id, query).await;
         }
-        // Filter during native AXUIElement traversal in the MCP process, and
-        // stop descending once the requested result count has been reached.
-        self.accessibility_elements(filter, max_results).await
+        self.accessibility_elements(query).await
     }
 }
 

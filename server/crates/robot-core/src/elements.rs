@@ -75,6 +75,20 @@ pub struct ElementQuery {
 }
 
 impl ElementQuery {
+    /// Reject a document selector when the element source only exposes native nodes.
+    pub fn reject_web_context(&self, device_id: &str) -> Result<(), RobotError> {
+        if self
+            .web_context
+            .as_ref()
+            .is_some_and(|context| !context.is_empty())
+        {
+            return Err(RobotError::Unsupported(format!(
+                "web context queries are not supported for {device_id}"
+            )));
+        }
+        Ok(())
+    }
+
     /// Call before reading from a source that cannot exclude keyboard nodes.
     pub fn reject_keyboard_exclusion(&self) -> Result<(), RobotError> {
         if self.exclude_system_keyboard {
@@ -176,17 +190,28 @@ pub fn classify_class_name(class_name: &str) -> Option<ElementType> {
 }
 
 pub fn element_matches_filter(element: &UiElement, filter: &str) -> bool {
+    element_fields_match_filter(
+        [
+            Some(element.class_name.as_str()),
+            element.resource_id.as_deref(),
+            element.text.as_deref(),
+            element.content_description.as_deref(),
+            element.value.as_deref(),
+        ],
+        filter,
+    )
+}
+
+/// Matches projected accessibility fields before a driver reads the rest of a node.
+pub fn element_fields_match_filter<const N: usize>(
+    fields: [Option<&str>; N],
+    filter: &str,
+) -> bool {
     let filter = filter.to_lowercase();
-    [
-        Some(element.class_name.as_str()),
-        element.resource_id.as_deref(),
-        element.text.as_deref(),
-        element.content_description.as_deref(),
-        element.value.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|value| value.to_lowercase().contains(&filter))
+    fields
+        .into_iter()
+        .flatten()
+        .any(|value| value.to_lowercase().contains(&filter))
 }
 
 /// Filters document scope, text, and type before applying `max_results`.

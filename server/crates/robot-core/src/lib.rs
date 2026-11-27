@@ -25,7 +25,7 @@ pub use device::{
 };
 pub use elements::{
     ElementQuery, ElementType, UiElement, apply_element_query, classify_class_name,
-    element_matches_filter, prepare_elements,
+    element_fields_match_filter, element_matches_filter, prepare_elements,
 };
 pub use error::RobotError;
 pub use input::{

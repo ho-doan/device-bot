@@ -153,12 +153,14 @@ impl Robot for TreeRobot {
 
 #[tokio::test]
 async fn element_type_and_text_filter_run_before_max_results() {
+    let mut email_field = element("android.widget.EditText", "Email address");
+    email_field.value = Some("user@example.com".into());
     let robot = TreeRobot {
         elements: vec![
             element("android.widget.Button", "Save"),
             element("android.widget.Button", "Cancel"),
             element("android.widget.EditText", "secret"),
-            element("android.widget.EditText", "user@example.com"),
+            email_field,
         ],
     };
 
@@ -187,9 +189,9 @@ async fn element_type_and_text_filter_run_before_max_results() {
         .list_elements_query(
             "device",
             ElementQuery {
-                filter: Some("user@example.com".into()),
+                filter: Some("USER@EXAMPLE.COM".into()),
                 element_type: Some(ElementType::TextField),
-                max_results: Some(2),
+                max_results: Some(1),
                 web_context: None,
                 include_frames: false,
                 exclude_system_keyboard: false,
@@ -198,7 +200,8 @@ async fn element_type_and_text_filter_run_before_max_results() {
         .await
         .unwrap();
     assert_eq!(email.len(), 1);
-    assert_eq!(email[0].text.as_deref(), Some("user@example.com"));
+    assert_eq!(email[0].text.as_deref(), Some("Email address"));
+    assert_eq!(email[0].value.as_deref(), Some("user@example.com"));
 
     let untyped = robot
         .list_elements_filtered("device", None, Some(1))

@@ -13,7 +13,9 @@ use super::ffi::{
 };
 use super::windows::native_listed_windows;
 use super::{NATIVE_FILTER_BUDGET, non_empty, request_accessibility_permission};
-use robot_core::{Point, RobotError, UiElement};
+use robot_core::{
+    ElementQuery, Point, RobotError, UiElement, classify_class_name, element_fields_match_filter,
+};
 use std::{ffi::CStr, os::raw::c_long, ptr, time::Instant};
 
 pub(super) struct NativeAxAttributes {
@@ -265,21 +267,6 @@ pub(super) fn native_size_attribute(
     .then_some(size)
 }
 
-fn native_matches_filter(
-    filter: Option<&str>,
-    role: &str,
-    text: Option<&str>,
-    description: Option<&str>,
-) -> bool {
-    let Some(filter) = filter else {
-        return true;
-    };
-    [Some(role), text, description]
-        .into_iter()
-        .flatten()
-        .any(|value| value.to_lowercase().contains(filter))
-}
-
 fn native_bool_attribute(element: AXUIElementRef, attribute: CFStringRef) -> Option<bool> {
     let value = native_copy_attribute(element, attribute)?;
     (unsafe { CFGetTypeID(value.0) } == unsafe { CFBooleanGetTypeID() })
@@ -293,14 +280,13 @@ fn native_is_editor(role: &str) -> bool {
 pub(super) fn native_collect_elements(
     element: AXUIElementRef,
     attributes: &NativeAxAttributes,
-    filter: Option<&str>,
-    max_results: Option<usize>,
+    query: &ElementQuery,
     deadline: Instant,
     depth: usize,
     elements: &mut Vec<UiElement>,
 ) {
     if Instant::now() >= deadline
-        || max_results.is_some_and(|max| elements.len() >= max)
+        || query.max_results.is_some_and(|max| elements.len() >= max)
         || depth > 128
     {
         return;
@@ -308,54 +294,68 @@ pub(super) fn native_collect_elements(
 
     let role =
         native_string_attribute(element, attributes.role).unwrap_or_else(|| "AXUnknown".into());
-    let title =
-        native_string_attribute(element, attributes.title).and_then(|value| non_empty(&value));
-    let description = native_string_attribute(element, attributes.description)
-        .and_then(|value| non_empty(&value));
-    let value = native_string_attribute(element, attributes.value);
-    let enabled = native_bool_attribute(element, attributes.enabled).unwrap_or(true);
-    let text = title.clone().or_else(|| value.clone());
+    let element_type = classify_class_name(&role);
+    if query
+        .element_type
+        .is_none_or(|kind| element_type == Some(kind))
+    {
+        let title =
+            native_string_attribute(element, attributes.title).and_then(|value| non_empty(&value));
+        let value = native_string_attribute(element, attributes.value);
+        let description = native_string_attribute(element, attributes.description)
+            .and_then(|value| non_empty(&value));
+        let text = title.or_else(|| value.clone());
+        let matches = query.filter.as_deref().is_none_or(|filter| {
+            element_fields_match_filter(
+                [
+                    Some(&role),
+                    text.as_deref(),
+                    description.as_deref(),
+                    value.as_deref(),
+                ],
+                filter,
+            )
+        });
 
-    if native_matches_filter(filter, &role, text.as_deref(), description.as_deref()) {
-        if let (Some(position), Some(size)) = (
-            native_point_attribute(element, attributes.position),
-            native_size_attribute(element, attributes.size),
-        ) {
-            if size.width > 0.0 && size.height > 0.0 {
-                elements.push(UiElement {
-                    class_name: role.clone(),
-                    resource_id: None,
-                    text,
-                    content_description: description,
-                    bounds: robot_core::Bounds {
-                        left: position.x.round() as i32,
-                        top: position.y.round() as i32,
-                        right: (position.x + size.width).round() as i32,
-                        bottom: (position.y + size.height).round() as i32,
-                    },
-                    clickable: enabled
-                        && (native_is_editor(&role)
-                            || matches!(
-                                role.as_str(),
-                                "AXButton"
-                                    | "AXLink"
-                                    | "AXMenuItem"
-                                    | "AXPopUpButton"
-                                    | "AXRadioButton"
-                            )),
-                    enabled,
-                    focused: native_bool_attribute(element, attributes.focused),
-                    checked: None,
-                    selected: None,
-                    value,
-                    element_type: None,
-                    web_context: None,
-                });
-            }
+        if matches
+            && let (Some(position), Some(size)) = (
+                native_point_attribute(element, attributes.position),
+                native_size_attribute(element, attributes.size),
+            )
+            && size.width > 0.0
+            && size.height > 0.0
+        {
+            let enabled = native_bool_attribute(element, attributes.enabled).unwrap_or(true);
+            let clickable = enabled
+                && (native_is_editor(&role)
+                    || matches!(
+                        role.as_str(),
+                        "AXButton" | "AXLink" | "AXMenuItem" | "AXPopUpButton" | "AXRadioButton"
+                    ));
+            elements.push(UiElement {
+                class_name: role,
+                resource_id: None,
+                text,
+                content_description: description,
+                bounds: robot_core::Bounds {
+                    left: position.x.round() as i32,
+                    top: position.y.round() as i32,
+                    right: (position.x + size.width).round() as i32,
+                    bottom: (position.y + size.height).round() as i32,
+                },
+                clickable,
+                enabled,
+                focused: native_bool_attribute(element, attributes.focused),
+                checked: None,
+                selected: None,
+                value,
+                element_type,
+                web_context: None,
+            });
         }
     }
 
-    if max_results.is_some_and(|max| elements.len() >= max) {
+    if query.max_results.is_some_and(|max| elements.len() >= max) {
         return;
     }
     let Some(children) = native_copy_attribute(element, attributes.children) else {
@@ -368,17 +368,10 @@ pub(super) fn native_collect_elements(
     for index in 0..count {
         let child = unsafe { CFArrayGetValueAtIndex(children.0, index) };
         if !child.is_null() {
-            native_collect_elements(
-                child,
-                attributes,
-                filter,
-                max_results,
-                deadline,
-                depth + 1,
-                elements,
-            );
+            native_collect_elements(child, attributes, query, deadline, depth + 1, elements);
         }
-        if Instant::now() >= deadline || max_results.is_some_and(|max| elements.len() >= max) {
+        if Instant::now() >= deadline || query.max_results.is_some_and(|max| elements.len() >= max)
+        {
             break;
         }
     }
@@ -482,12 +475,11 @@ pub(super) fn native_accessibility_tap(
 }
 
 pub(super) fn native_accessibility_elements(
-    filter: Option<&str>,
-    max_results: Option<usize>,
+    query: &ElementQuery,
     preferred_pid: Option<i32>,
     preferred_window: Option<String>,
 ) -> Result<Vec<UiElement>, RobotError> {
-    if max_results == Some(0) {
+    if query.max_results == Some(0) {
         return Ok(vec![]);
     }
     if !request_accessibility_permission() {
@@ -511,8 +503,7 @@ pub(super) fn native_accessibility_elements(
     native_collect_elements(
         window.0,
         &attributes,
-        filter,
-        max_results,
+        query,
         Instant::now() + NATIVE_FILTER_BUDGET,
         0,
         &mut elements,

@@ -439,8 +439,7 @@ impl MacosRobot {
     pub(super) async fn live_elements(
         &self,
         id: &str,
-        filter: Option<&str>,
-        max: Option<usize>,
+        query: ElementQuery,
     ) -> Result<Vec<UiElement>, RobotError> {
         let target = Target::parse(id)?
             .ok_or_else(|| RobotError::InvalidInput("Missing window target".into()))?;
@@ -454,8 +453,7 @@ impl MacosRobot {
                 native_collect_elements(
                     window.0,
                     &attrs,
-                    filter,
-                    max,
+                    &query,
                     Instant::now() + NATIVE_FILTER_BUDGET,
                     0,
                     &mut elements,
@@ -473,7 +471,7 @@ impl MacosRobot {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (g, filter, max);
+            let _ = (g, query);
             Err(RobotError::Unsupported("macOS Live requires macOS".into()))
         }
     }

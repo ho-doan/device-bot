@@ -426,15 +426,7 @@ pub trait Robot: Send + Sync {
         query: ElementQuery,
     ) -> Result<Vec<UiElement>, RobotError> {
         query.reject_keyboard_exclusion()?;
-        if query
-            .web_context
-            .as_ref()
-            .is_some_and(|context| !context.is_empty())
-        {
-            return Err(RobotError::Unsupported(format!(
-                "web context queries are not supported for {device_id}"
-            )));
-        }
+        query.reject_web_context(device_id)?;
         if query.element_type.is_none() {
             return self
                 .list_elements_filtered(device_id, query.filter.as_deref(), query.max_results)

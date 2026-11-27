@@ -213,3 +213,24 @@ prompt for permissions, launch applications, inject input, or start recordings.
 Native application network observation is not implemented, and Chrome observation
 is limited to the DevTools target described above. `hostOs` identifies the server
 host, not necessarily the host of a remotely configured Chrome endpoint.
+
+## Rust implementation and review
+
+Choose the owning crate before designing the Rust API. Use the existing
+`Robot` trait and portable types at the driver boundary. Keep concrete
+types inside a crate when there is a single implementation. Add an
+abstraction when callers need the contract to support another implementation
+or an independently testable boundary.
+
+- Use typed errors in `robot-core` and `robot-flow`. Drivers translate
+  native failures into `RobotError`, and the MCP and reporting edges map
+  errors into their public formats. Keep public signatures, JSON/YAML fields,
+  and persisted status strings compatible unless the change calls for a
+  contract revision.
+- Put native commands, FFI, and cleanup in the owning adapter. Document the
+  invariants of changed unsafe code. Keep session and cancellation ownership
+  at the existing boundary, including shared ownership where the registry or
+  session lifecycle requires it.
+- Review the dependency direction and the data and error path before style
+  details. Test portable rules in their owning crate and use native fixtures
+  to test adapter translation. Use the workspace checks in [AGENTS.md](../../AGENTS.md#build-and-validation).

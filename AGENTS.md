@@ -44,6 +44,21 @@ Use `docs/repository-overview.md` for the full application and helper map.
 
 ## Implementation conventions
 
+### Rust
+
+- For Rust changes, use [rust-best-practices](.agents/skills/rust-best-practices/SKILL.md)
+  with Device Bot's [Rust architecture rules](server/docs/architecture.md#rust-implementation-and-review).
+- For Rust review, use [rust-review](.agents/skills/rust-review/SKILL.md) and
+  check dependency direction, native resource ownership, and compatibility of
+  public contracts in the requested scope.
+- For ports into Rust, use [rust-port](.agents/skills/rust-port/SKILL.md) and
+  carry the existing behavior tests into the owning crate.
+
+Use this repository's Cargo commands under Build and validation. The skills
+are vendored from [Beautiful Rust](https://github.com/morganlinton/BeautifulRust/tree/b9718436d77ee7bcf17cdcb6aa27628feb95d97a).
+
+### Project conventions
+
 - Keep `robot-core` independent of MCP/HTTP types and platform commands. Drivers
   own platform processes and parsers; MCP tool adaptation belongs in
   `mcp-server/src/tools/`. Preserve the transport/routing/lifecycle boundaries

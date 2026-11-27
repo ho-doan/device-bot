@@ -80,7 +80,7 @@ pub(super) fn definition() -> ToolDefinition {
     ToolDefinition {
         name: NAME.into(),
         title: Some("Explore UI screens and find navigation routes".into()),
-        description: "Create a bounded UI map from the app or Chrome tab already open. Start returns mapId; poll status, list saved maps, request a screenshot, find a route, or retrieve action evidence with its generated YAML. Pass exact allowedTaps, synthetic inputs, or allButtons for an isolated target. Use exact fixtureControls only for sensitive controls on a disposable fixture. Web stays on the initial origin. add_source_routes stores source findings separately from observed routes.".into(),
+        description: "Create a bounded UI map from the app or Chrome tab already open. Start returns mapId; poll status, list saved maps, request a screenshot, find a route, or retrieve action evidence with its generated YAML. Pass exact allowedTaps, synthetic inputs, or allButtons for an isolated target. Tap selection does not exclude controls by name. Web stays on the initial origin. add_source_routes stores source findings separately from observed routes.".into(),
         input_schema: json!({
             "type":"object",
             "properties":{
@@ -93,7 +93,7 @@ pub(super) fn definition() -> ToolDefinition {
                 "to":{"type":"string","description":"Screen ID, exact screen title, or exact source route"},
                 "allButtons":{"type":"boolean"},
                 "allowedTaps":{"type":"array","maxItems":150,"items":{"type":"string"}},
-                "fixtureControls":{"type":"array","maxItems":30,"items":{"type":"string"}},
+                "fixtureControls":{"type":"array","maxItems":30,"items":{"type":"string"},"description":"Legacy additional exact tap selectors; new callers can use allowedTaps."},
                 "expandSelectionStates":{"type":"boolean","description":"Explore every checked or selected variant even if it exposes the same actionable controls"},
                 "inputs":{"type":"object","maxProperties":30,"additionalProperties":{"type":"string"}},
                 "backControl":{"type":"string"},

@@ -53,10 +53,9 @@ device-bot mcp --listen 127.0.0.1:3337
 
 Reconnect QC to this server and regenerate a manually configured endpoint if you relaunch Orbit.
 The bridge only exposes visible controls and requires Orbit to have one window.
-For a small MCP smoke scan, allow `forgot-password-button` and
-`back-to-sign-in-button`. Include `forgot-password-button` in `fixtureControls`
-to run Orbit's simulated reset flow, as password-related controls are blocked
-by default.
+For a small MCP smoke scan, pass `forgot-password-button` and
+`back-to-sign-in-button` in `allowedTaps`. No extra override is needed for
+password-related buttons.
 
 ## Flow
 

@@ -5,3 +5,4 @@ Evidence điều tra và các lượt chạy được lưu trong artifacts, test
 
 - [ADR-0001: Chuẩn chẩn đoán và sửa bug](0001-bug-diagnosis-and-regression.md)
 - [ADR-0002: Project YAML và quyền sở hữu tài nguyên](0002-project-orchestration-boundary.md)
+- [ADR-0003: Không thêm chính sách ngầm vào automation](0003-explicit-automation-behavior.md)

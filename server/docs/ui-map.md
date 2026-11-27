@@ -8,15 +8,14 @@ is disconnected.
 
 Start with **Start scan**. With no actions selected the scanner inventories the
 current screen only. Supply exact visible labels or resource IDs for taps, or
-enable **Try all eligible buttons** for an isolated test target. The latter
-is not a side-effect sandbox. The crawler skips known sensitive controls,
-unlabeled or ambiguous targets, disabled controls, and input fields without
-configured synthetic values. Use a test session and avoid secrets in fixtures
-or captured screens. Values used to fill editors are not stored in the graph.
-A screenshot can still show displayed test data.
-For a disposable fixture, the MCP option `fixtureControls` can explicitly
-include exact labels or resource IDs that the scanner normally considers
-sensitive. An editor still needs a synthetic value in `inputs`.
+enable **Try all eligible buttons** for an isolated test target. The crawler
+does not classify controls by their names. It skips unlabeled or ambiguous
+targets, disabled controls, and editors without configured synthetic values.
+Taps can change app state. Values used to fill editors are not stored in the
+graph, but a screenshot can show displayed test data. The legacy MCP
+`fixtureControls` field still adds exact tap selectors like `allowedTaps`.
+See [ADR-0003](../../docs/adr/0003-explicit-automation-behavior.md) for the
+decision not to introduce hidden action filters.
 
 Nodes are observed screen signatures. A directed edge records the control
 and action that led from one state to another. Select a node to inspect its
@@ -83,6 +82,9 @@ It verifies the restored screen before continuing and verifies each step when
 replaying the recorded route. Status returns
 the latest window-scoped `deviceId`. Without this option the crawler will not
 quit the desktop app.
+When a recorded offscreen action needs its original viewport slice, the same
+opt-in recovery applies even if only the layout changed. If the recorded scroll
+position still cannot be verified, the action is marked skipped with that reason.
 
 On macOS, screenshots are limited to the selected window. If native
 Accessibility exposes no named controls on entry, the job can use the Flutter

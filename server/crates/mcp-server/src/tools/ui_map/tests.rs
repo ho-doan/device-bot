@@ -46,6 +46,7 @@ struct FixtureState {
     viewport_fixture: bool,
     no_scroll_restore: bool,
     viewport_slide_reads: Option<usize>,
+    viewport_content_shift_on_delete: Option<bool>,
     slice: i32,
     scrolls: Vec<i32>,
     native_window_reads: usize,
@@ -85,6 +86,10 @@ impl Fixture {
         state.entered = false;
         state.checked = false;
         state.focus = false;
+        state.slice = 0;
+        if let Some(shifted) = &mut state.viewport_content_shift_on_delete {
+            *shifted = false;
+        }
         if state.delay_android_foreground_on_launch {
             state.foreground_reads_until_ready = 2;
         }
@@ -195,7 +200,12 @@ impl Robot for Fixture {
                 state.focus = true;
                 "editor"
             }
-            (0, 40) => panic!("blocked Delete must never be tapped"),
+            (0, 40) => {
+                if let Some(shifted) = &mut state.viewport_content_shift_on_delete {
+                    *shifted = true;
+                }
+                "delete"
+            }
             (0, 50) => {
                 state.page = 3;
                 "external"
@@ -270,7 +280,7 @@ impl Robot for Fixture {
     async fn scroll(&self, id: &str, at: Point, dx: f64, dy: f64) -> Result<(), RobotError> {
         let mut state = self.0.lock().unwrap();
         assert!(state.viewport_fixture);
-        assert_eq!(id, "macos:41:42");
+        Self::assert_current_macos_device(&state, id);
         assert_eq!((at.x, at.y, dx), (-850., 100., 0.));
         state.scrolls.push(dy as i32);
         if state.page == 0 && !(state.no_scroll_restore && dy < 0.) {
@@ -393,6 +403,12 @@ impl Robot for Fixture {
                 if s.page == 0 && s.slice == 1 {
                     rows.retain(|row| row.resource_id.as_deref() != Some("left"));
                     rows.push(node("Below fold", "below", 80, ElementType::Button));
+                }
+                if s.viewport_content_shift_on_delete == Some(true) {
+                    for row in rows.iter_mut().filter(|row| row.clickable) {
+                        row.bounds.top += 30;
+                        row.bounds.bottom += 30;
+                    }
                 }
             }
             for row in &mut rows {
@@ -527,6 +543,41 @@ fn recorded_scroll_anchor_survives_a_window_move_but_not_a_different_slice() {
         .unwrap()
         .unwrap();
     assert!(!original.same_replay_anchor(&other_slice));
+}
+
+#[tokio::test(start_paused = true)]
+async fn macos_fixture_recovers_offscreen_control_after_same_screen_layout_change() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        macos_flutter: true,
+        viewport_fixture: true,
+        viewport_content_shift_on_delete: Some(false),
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId": "macos:41:42", "resetAppId": "fixture.app",
+        "allowedTaps": ["delete", "below"]
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    let entry = &map.screens[0].controls;
+    assert_eq!(
+        entry
+            .iter()
+            .find(|c| c.label == "Delete data")
+            .unwrap()
+            .status,
+        "no_change"
+    );
+    let hidden = entry.iter().find(|c| c.label == "Below fold").unwrap();
+    assert_eq!(hidden.status, "observed", "{:?}", hidden.note);
+    assert_eq!(hidden.initially_offscreen, Some(true));
+    assert_eq!(map.device_id, "macos:51:52");
+    assert_eq!(fixture.0.lock().unwrap().taps, ["delete", "below"]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -709,8 +760,9 @@ async fn maps_distinct_screens_and_restores_branch_with_test_input_only() {
             .find(|c| c.label == "Delete data")
             .unwrap()
             .status,
-        "skipped"
+        "no_change"
     );
+    assert!(state.taps.iter().any(|tap| tap == "delete"));
     assert_eq!(
         root.controls
             .iter()

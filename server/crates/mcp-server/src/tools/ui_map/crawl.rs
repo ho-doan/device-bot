@@ -794,21 +794,30 @@ impl Engine<'_> {
         root: u64,
         path: &[Arc<PathStep>],
         navigation: &Navigation,
+        control: &LiveControl,
     ) -> Result<Observation, String> {
+        // A tap can change the layout without changing the screen signature.
+        // For an opted-in window fixture, reuse the normal relaunch path if a
+        // recorded scroll action cannot start at the current viewport slice.
+        let require_anchor = matches!(self.scope, Scope::WindowFixture) && control.reveal.is_some();
+        let ready = |here: &Observation| {
+            here.fingerprint == expected && (!require_anchor || at_scroll_anchor(control, here))
+        };
         let mut here = self.observe().await?;
-        if here.fingerprint == expected {
+        if ready(&here) {
             return Ok(here);
         }
 
-        if !matches!(self.scope, Scope::Native)
+        if here.fingerprint != expected
+            && !matches!(self.scope, Scope::Native)
             && let Some(route) = known_route(navigation, here.fingerprint, expected)
                 .filter(|route| route.len() <= path.len() + 1)
         {
             here = match self.replay_path(here, &route).await {
-                Ok(restored) => return Ok(restored),
+                Ok(restored) => restored,
                 Err(_) => self.observe().await?,
             };
-            if here.fingerprint == expected {
+            if ready(&here) {
                 return Ok(here);
             }
         }
@@ -877,7 +886,6 @@ impl Engine<'_> {
                         && c.control.kind != "input"
                         && c.control.note.as_deref()
                             != Some("Selector is ambiguous in this screen.")
-                        && !blocked(c)
                         && if let Some(key) = &self.options.back_control {
                             c.lookup.contains(key)
                         } else {
@@ -1067,13 +1075,6 @@ fn live_control(element: &UiElement, opt: &Options) -> Option<LiveControl> {
         "Disabled"
     } else if row.lookup.is_empty() {
         "No stable label or resource ID"
-    } else if blocked(&row)
-        && !row
-            .lookup
-            .iter()
-            .any(|key| opt.fixture_controls.contains(key))
-    {
-        "Sensitive or state-changing control"
     } else if kind == "input" {
         if row.lookup.iter().any(|key| opt.inputs.contains_key(key)) {
             row.action = Some("input");
@@ -1099,41 +1100,6 @@ fn live_control(element: &UiElement, opt: &Options) -> Option<LiveControl> {
         row.control.note = Some(note.into());
     }
     Some(row)
-}
-
-fn blocked(row: &LiveControl) -> bool {
-    let words = format!("{} {}", row.lookup.join(" "), row.element.class_name).to_lowercase();
-    [
-        "password",
-        "passcode",
-        "securetext",
-        "one-time",
-        "authorization",
-        "sign out",
-        "log out",
-        "logout",
-        "delete",
-        "destroy",
-        "purchase",
-        "checkout",
-        "payment",
-        "send message",
-        "remove account",
-        "submit",
-        "confirm",
-        "erase",
-        "đăng xuất",
-        "mật khẩu",
-        "xóa",
-        "thanh toán",
-        "gửi tin",
-        "đặt hàng",
-    ]
-    .into_iter()
-    .any(|w| words.contains(w))
-        || words
-            .split(|c: char| !c.is_alphanumeric())
-            .any(|w| matches!(w, "send" | "save" | "pay" | "otp"))
 }
 
 fn parse_web(value: &str) -> Result<Url, String> {
@@ -1470,7 +1436,7 @@ pub(super) async fn scan(
             let restored = timing
                 .measure(
                     "restore_branch",
-                    engine.restore(fingerprint, root_fp, &path, &navigation),
+                    engine.restore(fingerprint, root_fp, &path, &navigation, original),
                 )
                 .await;
             if map.device_id != engine.device {
@@ -1510,12 +1476,17 @@ pub(super) async fn scan(
                     .find(|c| c.key == original.key && c.action == Some(action))
             };
             let Some(row) = row else {
+                let note = if original.reveal.is_some() {
+                    "Could not verify the recorded scroll position before input."
+                } else {
+                    "Control changed before input."
+                };
                 mark(
                     map,
                     &from,
                     &original.control.id,
                     "skipped",
-                    Some("Control changed before input.".into()),
+                    Some(note.into()),
                 );
                 continue;
             };

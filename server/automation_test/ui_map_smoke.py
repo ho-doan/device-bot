@@ -24,7 +24,7 @@ PAGES = {
           <button id="dismiss" onclick="this.closest('dialog').close()">Dismiss</button>
         </dialog>
         <label>Search <input id="search" aria-label="Search"></label>
-        <button id="delete" onclick="document.body.innerText='Unexpected delete'">Delete data</button>
+        <button id="delete" onclick="document.body.dataset.deleted = 'fixture-only'">Delete data</button>
         <script>document.querySelector('input').addEventListener('input', e => {
           if (e.target.value === 'qc-fixture-query') {
             window.history.pushState({}, '', '/search');
@@ -143,15 +143,15 @@ def exercise(server, binary, artifacts):
                 by_title = {screen["title"]: screen for screen in snapshot["screens"]}
                 assert {"Map Home", "Map Inbox", "Map Thread", "Map Settings", "Map Results",
                         "Map Dialog", "Map Below Fold", "Map End"} <= set(by_title), (by_title.keys(), snapshot["notes"])
-                blocked = next(c for c in by_title["Map Home"]["controls"] if c["resourceId"] == "delete")
-                assert blocked["status"] == "skipped", blocked
+                delete = next(c for c in by_title["Map Home"]["controls"] if c["resourceId"] == "delete")
+                assert delete["status"] == "no_change" and delete["evidence"], delete
                 assert "qc-fixture-query" not in json.dumps(snapshot)
                 controls = by_title["Map Home"]["controls"]
                 viewport = by_title["Map Home"]["viewport"]
                 assert viewport["contentHeight"] > viewport["height"], viewport
                 below = next(c for c in controls if c["resourceId"] == "below")
                 assert below["initiallyOffscreen"] is True and below["status"] == "observed", below
-                for resource in ("modal", "search", "below"):
+                for resource in ("modal", "search", "below", "delete"):
                     control = next(c for c in controls if c["resourceId"] == resource)
                     evidence = client.tool("mobile_ui_map", action="action_evidence", mapId=map_id,
                                            screenId=by_title["Map Home"]["id"], controlId=control["id"])

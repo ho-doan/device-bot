@@ -708,14 +708,39 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
     async fn clear_text(&self, device_id: &str) -> Result<(), RobotError> {
         ensure_device_id(device_id)?;
         let elements = self.list_elements(device_id).await?;
-        if !elements.iter().any(|element| {
+        let mut editors = elements.iter().filter(|element| {
             element.focused == Some(true)
                 && element.enabled
                 && element.element_type == Some(ElementType::TextField)
-        }) {
-            return Err(RobotError::InvalidInput(
-                "Focus an editable Android field before clearing text".into(),
-            ));
+        });
+        let editor = editors
+            .next()
+            .filter(|_| editors.next().is_none())
+            .ok_or_else(|| {
+                RobotError::InvalidInput(
+                    "Focus an editable Android field before clearing text".into(),
+                )
+            })?;
+        // Some Android editors handle Delete but ignore a keyboard Select All.
+        // For a bounded visible value, remove text on both sides of the caret.
+        const MAX_BATCH: usize = 512;
+        if let Some(value) = editor.value.as_deref() {
+            let count = value.chars().take(MAX_BATCH + 1).count();
+            if (1..=MAX_BATCH).contains(&count) {
+                let mut args = vec![
+                    "-s".into(),
+                    device_id.into(),
+                    "shell".into(),
+                    "input".into(),
+                    "keyevent".into(),
+                ];
+                args.extend(
+                    std::iter::repeat_n("KEYCODE_DEL", count)
+                        .chain(std::iter::repeat_n("KEYCODE_FORWARD_DEL", count))
+                        .map(str::to_owned),
+                );
+                return self.run_adb(&args).await.map(|_| ());
+            }
         }
         let temporary = if self.video_controls.available(device_id).await {
             None
@@ -1538,6 +1563,37 @@ mod tests {
         let error = robot.clear_text("phone").await.unwrap_err();
         assert!(error.to_string().contains("Focus an editable"));
         assert_eq!(robot.runner.calls.lock().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn clears_observed_text_on_both_sides_of_the_caret() {
+        let robot = AndroidRobot::with_runner(
+            "adb-test",
+            FakeRunner::new([
+                successful(""),
+                successful(
+                    r#"<hierarchy><node text="aé" class="android.widget.EditText" focused="true" enabled="true" bounds="[0,0][100,40]" /></hierarchy>"#,
+                ),
+                successful(""),
+                successful(""),
+            ]),
+        );
+
+        robot.clear_text("phone").await.unwrap();
+
+        let calls = robot.runner.calls.lock().unwrap();
+        assert_eq!(
+            calls[3].1[2..],
+            [
+                "shell",
+                "input",
+                "keyevent",
+                "KEYCODE_DEL",
+                "KEYCODE_DEL",
+                "KEYCODE_FORWARD_DEL",
+                "KEYCODE_FORWARD_DEL"
+            ]
+        );
     }
 
     #[tokio::test]

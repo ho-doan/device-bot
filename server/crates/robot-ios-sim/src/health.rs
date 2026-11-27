@@ -2,9 +2,10 @@
 use crate::IosSimulatorRobot;
 use robot_core::health::{CheckStatus, HealthCheck, HealthReport, RecordingCheck, RecordingOwner};
 use robot_core::{DeviceState, Robot, RobotError};
+use serde_json::{Value, json};
 use std::{
     path::Path,
-    process::Output,
+    process::{Output, Stdio},
     time::{Duration, Instant},
 };
 use tokio::{process::Command, time::timeout};
@@ -20,6 +21,114 @@ fn check(name: &str, status: CheckStatus, detail: impl Into<String>) -> HealthCh
 }
 
 impl IosSimulatorRobot {
+    pub(super) async fn capability_report(
+        &self,
+        id: &str,
+    ) -> Result<robot_core::CapabilityReport, RobotError> {
+        let device = self
+            .list_devices()
+            .await?
+            .into_iter()
+            .find(|device| device.id == id)
+            .ok_or_else(|| RobotError::DeviceNotFound(id.into()))?;
+        let mut report = robot_core::CapabilityReport::new(id);
+        report.capabilities.observation = robot_core::Capability::unsupported(
+            "Native application log and network observation is not implemented",
+        );
+        report.capabilities.discovery =
+            robot_core::Capability::available("Device was routed to the iOS driver");
+        if device.state != DeviceState::Available {
+            let blocked =
+                robot_core::Capability::blocked("Connect, trust and unlock the iOS device");
+            report.capabilities.launch = blocked.clone();
+            report.capabilities.input = blocked.clone();
+            report.capabilities.elements = blocked.clone();
+            report.capabilities.screenshot = blocked.clone();
+            report.capabilities.screen_recording = blocked;
+            return Ok(report);
+        }
+        let guest = tokio::time::timeout(
+            Duration::from_secs(8),
+            Command::new(&self.xcrun_path)
+                .args(["simctl", "spawn", id, "/usr/bin/true"])
+                .stdin(Stdio::null())
+                .kill_on_drop(true)
+                .output(),
+        );
+        let display = display_probe(&self.xcrun_path, id);
+        let recording = self.check_recording_session(id);
+        let (guest, display, recording) = tokio::join!(guest, display, recording);
+        report.capabilities.launch = if matches!(guest, Ok(Ok(result)) if result.status.success()) {
+            robot_core::Capability::available(
+                "Simulator guest process is responsive; launching a specific app can still fail",
+            )
+        } else {
+            robot_core::Capability::blocked("Check that the Simulator is booted and responsive")
+        };
+        let display_ok = matches!(display, Ok(result) if result.status.success() && result.stdout.starts_with(b"\x89PNG\r\n\x1a\n"));
+        report.capabilities.screenshot = if display_ok {
+            robot_core::Capability::available("Simulator display returned a valid PNG header")
+        } else {
+            robot_core::Capability::blocked("Check the Simulator display service")
+        };
+        report.capabilities.screen_recording = match recording {
+            Ok(check)
+                if display_ok
+                    && check.check.status == robot_core::health::CheckStatus::Pass
+                    && !self.recordings.lock().await.contains_key(id) =>
+            {
+                robot_core::Capability::available(
+                    "Simulator display is responsive and no recording owner was found; recording can still fail",
+                )
+            }
+            Ok(check) if check.check.status == robot_core::health::CheckStatus::Unknown => {
+                robot_core::Capability::unknown(
+                    "Simulator recording ownership could not be inspected",
+                )
+            }
+            _ => robot_core::Capability::blocked(
+                "Check the Simulator display and stop any existing recording",
+            ),
+        };
+        let runner = self.ui_runner_status(id).await;
+        let status = match runner {
+            Ok(status) if status.ready => {
+                let response = match &self.simulator_agent {
+                    Some(agent) => {
+                        agent
+                            .dispatch_for(
+                                id,
+                                "dump",
+                                json!({"maxResults":1}),
+                                Duration::from_secs(5),
+                            )
+                            .await
+                    }
+                    None => Err(RobotError::Unsupported("No simulator helper".into())),
+                };
+                if response
+                    .ok()
+                    .and_then(|value| value.get("elements").and_then(Value::as_array).cloned())
+                    .is_some()
+                {
+                    robot_core::Capability::available(
+                        "UI runner and target responded to a read-only element query; later actions can still fail",
+                    )
+                } else {
+                    robot_core::Capability::blocked(
+                        "Check the selected app and iOS UI runner; element query failed",
+                    )
+                }
+            }
+            _ => robot_core::Capability::blocked(
+                "Prepare the iOS UI runner and select its target app",
+            ),
+        };
+        report.capabilities.input = status.clone();
+        report.capabilities.elements = status;
+        Ok(report)
+    }
+
     /// Does not record, launch apps, start XCTest, kill processes or reset devices.
     pub async fn check_health(&self, device_id: &str) -> Result<HealthReport, RobotError> {
         Self::valid_device_id(device_id)?;

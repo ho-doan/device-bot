@@ -1,5 +1,7 @@
 //! Simulator Live uses native ScreenCaptureKit frames from the selected simulator's
 //! visible screen. New Xcodes no longer stream `simctl recordVideo` to stdout.
+use serde::Deserialize;
+
 use super::*;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]

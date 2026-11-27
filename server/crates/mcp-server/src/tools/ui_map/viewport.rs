@@ -1,10 +1,17 @@
-//! Identify a macOS scroll container and fingerprint its visible slice.
+//! Identify a native scroll container and fingerprint its visible slice.
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use robot_core::{Bounds, Point, UiElement};
 
 pub(super) const MAX_STEPS_PER_DIRECTION: u8 = 4;
 pub(super) const SCROLL_SETTLE_MS: u64 = 180;
+
+#[derive(Clone, Copy)]
+enum ScrollKind {
+    Ax,
+    Flutter,
+    Android,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Locator {
@@ -18,6 +25,7 @@ pub(super) struct Viewport {
     pub bounds: Bounds,
     slice: u64,
     anchors: Vec<(String, [i64; 4])>,
+    kind: ScrollKind,
 }
 
 #[derive(Clone)]
@@ -44,8 +52,13 @@ impl Viewport {
     }
 
     pub fn step(&self) -> i32 {
-        ((i64::from(self.bounds.bottom) - i64::from(self.bounds.top)) * 7 / 10).clamp(80, 900)
-            as i32
+        let height = i64::from(self.bounds.bottom) - i64::from(self.bounds.top);
+        match self.kind {
+            // The Android driver converts the delta to a swipe starting at
+            // the viewport center. Both points must stay inside the viewport.
+            ScrollKind::Android => (height * 35 / 100).clamp(1, 900) as i32,
+            _ => (height * 7 / 10).clamp(80, 900) as i32,
+        }
     }
 
     pub fn same_container(&self, other: &Self) -> bool {
@@ -83,16 +96,27 @@ impl Viewport {
 
 pub(super) fn inspect(elements: &[UiElement], flutter: bool) -> Result<Option<Viewport>, ()> {
     let kind = if flutter {
-        "scrollView "
+        ScrollKind::Flutter
     } else {
-        "AXScrollArea"
+        ScrollKind::Ax
     };
-    let matches_kind = |e: &UiElement| {
-        if flutter {
-            e.class_name.starts_with(kind)
-        } else {
-            e.class_name == kind
-        }
+    inspect_kind(elements, kind)
+}
+
+pub(super) fn inspect_android(elements: &[UiElement]) -> Result<Option<Viewport>, ()> {
+    inspect_kind(elements, ScrollKind::Android)
+}
+
+fn inspect_kind(elements: &[UiElement], kind: ScrollKind) -> Result<Option<Viewport>, ()> {
+    let matches_kind = |e: &UiElement| match kind {
+        ScrollKind::Flutter => e.class_name.starts_with("scrollView "),
+        ScrollKind::Ax => e.class_name == "AXScrollArea",
+        ScrollKind::Android => matches!(
+            e.class_name.as_str(),
+            "android.widget.ScrollView"
+                | "androidx.core.widget.NestedScrollView"
+                | "android.widget.ListView"
+        ),
     };
     let area = |b: &Bounds| {
         let width = i64::from(b.right) - i64::from(b.left);
@@ -180,5 +204,6 @@ pub(super) fn inspect(elements: &[UiElement], flutter: bool) -> Result<Option<Vi
         bounds: b.clone(),
         slice: hash.finish(),
         anchors,
+        kind,
     }))
 }

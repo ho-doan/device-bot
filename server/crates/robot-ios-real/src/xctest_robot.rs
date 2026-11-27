@@ -1149,6 +1149,14 @@ impl Robot for IosXCTestRobot {
             .map(|_| ())
     }
 
+    async fn terminate_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
+        validate_device_id(device_id)?;
+        validate_app_id(app_id)?;
+        self.dispatch(device_id, "terminate", json!({ "bundleId": app_id }))
+            .await
+            .map(|_| ())
+    }
+
     async fn open_url(
         &self,
         device_id: &str,

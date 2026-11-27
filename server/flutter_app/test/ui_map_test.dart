@@ -197,4 +197,43 @@ void main() {
     expect(starts.last['deviceId'], 'macos:51:52');
     expect(starts.last.containsKey('resetAppId'), isFalse);
   });
+
+  testWidgets('allows an explicit iOS fixture reset without a time cap', (
+    tester,
+  ) async {
+    final requests = <Map<String, dynamic>>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: UiMapPage(
+          deviceId: 'ios-fixture',
+          deviceName: 'Test iPhone',
+          devicePlatform: 'ios',
+          call: (args) async {
+            requests.add(args);
+            return switch (args['action']) {
+              'list' => {'maps': []},
+              'start' => {'mapId': 'mobile-map'},
+              'status' => {..._map, 'id': 'mobile-map'},
+              'route' => {'steps': []},
+              _ => throw StateError('Unexpected request'),
+            };
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('ui-map-start')));
+    await tester.pumpAndSettle();
+    final bundle = find.widgetWithText(
+      TextFormField,
+      'Fixture bundle ID (optional)',
+    );
+    await tester.ensureVisible(bundle);
+    await tester.enterText(bundle, 'com.example.fixture');
+    await tester.tap(find.text('Map UI'));
+    await tester.pumpAndSettle();
+    final start = requests.singleWhere((r) => r['action'] == 'start');
+    expect(start['resetAppId'], 'com.example.fixture');
+    expect(start.containsKey('maxTimeSeconds'), isFalse);
+  });
 }

@@ -43,14 +43,16 @@ viewport. This happens before generating actions for the screen. Generated
 YAML uses `scroll_into_view: true` so the runner can measure again and find
 the control after scrolling.
 
-On macOS, the crawler checks for a unique, visible vertical scroll container
-in the selected window, using native AX first or the same Flutter tree already
-selected for the scan. It probes up to four observed positions per direction,
+On macOS and Android, the crawler checks for a unique, visible vertical scroll
+container. It uses AX or the scan's Flutter tree on macOS and native
+ScrollView/ListView nodes on Android. It probes up to four observed positions per direction,
 reads the tree after each scroll, and verifies the original viewport before
 trying controls. Controls first seen elsewhere in that viewport are kept on
-the original screen and marked `initiallyOffscreen`. Their action YAML wheels
-inside the measured container before resolving and tapping the control.
-`nativeViewport` records the visible desktop bounds and number of newly
+the original screen and marked `initiallyOffscreen`. Their action YAML scrolls
+inside the measured container before resolving and tapping the control. On
+Android, the driver turns each scroll delta into a swipe within the viewport
+and verifies that the selected app is still in the foreground.
+`nativeViewport` records the visible bounds and number of newly
 revealed controls. It does not estimate the full content height.
 
 ## Exploration behavior and limits
@@ -68,8 +70,10 @@ screen cannot be restored and the app is still in scope, the crawler reports
 that screen's untried controls and continues with other branches. Native
 navigation can use one unique accessible Back, Close,
 or Cancel control, or an exact configured `backControl`. For a mobile
-fixture that supports relaunch, `resetAppId` must match the open app and
-lets the scanner restart it before replaying a branch. If a native screen
+fixture that supports relaunch, **Fixture bundle ID** in QC or `resetAppId`
+in MCP must match the open app and
+lets the scanner restart it before replaying a branch. On a physical iPhone,
+the XCTest helper only terminates its currently selected app bundle. If a native screen
 cannot be restored, the scan reports partial coverage rather than sending
 input to an unverified screen. Desktop maps use an explicitly selected
 process/window, just like desktop Live.
@@ -93,16 +97,20 @@ scan and records it in the action YAML. For a bound macOS fixture it can
 discover the sandbox's Flutter registration again after reopening. Unbound
 sandboxed apps may need a configured endpoint. See the
 [Orbit macOS example](../../examples/flutter_app/README.md#macos-ui-map).
-The default scan budget is 24 screens, 45 actions, 5 levels and 8 minutes.
-Use **Scan limits** to change it for larger test targets.
+The default scan budget is 24 screens, 45 actions and 5 levels. There is no
+total elapsed-time limit unless `maxTimeSeconds` or **Scan limits → Time
+limit in seconds** is set. Driver and individual-action timeouts still report
+stalled operations.
 
 This is an inventory of reachable and observable UI states, not proof of
-exhaustive app coverage or a test verdict. Beyond the bounded macOS viewport
+exhaustive app coverage or a test verdict. Beyond the bounded native viewport
 probe, lazy content, independent scroll panes, items hidden from accessibility,
 permissions, external origins and conditional data may need a separate scan or
 flow. If a visible scroll container is ambiguous or the scroll cap is reached,
 the map reports that limitation.
 Fingerprinting uses accessible control state, headings, dialogs and location.
+XCTest's per-snapshot numeric and UUID handles are not durable selectors or
+screen identifiers. Stable accessibility identifiers and labels are retained.
 For configured editors it tracks whether the exposed value matches the
 synthetic input, which lets a filled form lead to new actions. Actual field
 values, focus and geometry are excluded. Similar-looking screens can be

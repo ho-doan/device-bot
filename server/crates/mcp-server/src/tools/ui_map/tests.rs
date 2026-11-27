@@ -57,6 +57,8 @@ struct FixtureState {
     delay_android_foreground_on_launch: bool,
     foreground_reads_until_ready: u8,
     xctest_generation: Option<usize>,
+    xctest_uuid: bool,
+    tree_delay_ms: u64,
     focus: bool,
     entered: bool,
     checked: bool,
@@ -281,7 +283,13 @@ impl Robot for Fixture {
         let mut state = self.0.lock().unwrap();
         assert!(state.viewport_fixture);
         Self::assert_current_macos_device(&state, id);
-        assert_eq!((at.x, at.y, dx), (-850., 100., 0.));
+        assert_eq!(
+            (at.x, at.y, dx),
+            (if state.android { 150. } else { -850. }, 100., 0.)
+        );
+        if state.android {
+            assert!((0.0..=200.0).contains(&(at.y - dy)));
+        }
         state.scrolls.push(dy as i32);
         if state.page == 0 && !(state.no_scroll_restore && dy < 0.) {
             state.slice = (state.slice + dy.signum() as i32).clamp(0, 1);
@@ -318,6 +326,10 @@ impl Robot for Fixture {
     }
 
     async fn list_elements(&self, device: &str) -> Result<Vec<UiElement>, RobotError> {
+        let delay = self.0.lock().unwrap().tree_delay_ms;
+        if delay != 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
         let mut s = self.0.lock().unwrap();
         if s.macos_flutter && device == "macos:41:42" {
             s.native_window_reads += 1;
@@ -349,13 +361,15 @@ impl Robot for Fixture {
                     toggle,
                 ];
                 if let Some(generation) = xctest_generation {
-                    rows[0].resource_id = Some(format!("ios-{generation}-0"));
-                    let mut banner = node(
-                        "Banner",
-                        &format!("ios-{generation}-1"),
-                        90,
-                        ElementType::StaticText,
-                    );
+                    let snapshot_id = |slot| {
+                        if s.xctest_uuid {
+                            format!("ios-{}", Uuid::from_u128((generation as u128) * 2 + slot))
+                        } else {
+                            format!("ios-{generation}-{slot}")
+                        }
+                    };
+                    rows[0].resource_id = Some(snapshot_id(0));
+                    let mut banner = node("Banner", &snapshot_id(1), 90, ElementType::StaticText);
                     banner.clickable = true;
                     rows.push(banner);
                 }
@@ -379,10 +393,14 @@ impl Robot for Fixture {
             2 => vec![node("Back", "back", 10, ElementType::Button)],
             _ => panic!("must stop before inspecting outside origin"),
         };
-        if s.macos_flutter {
+        if s.macos_flutter || s.android {
             if s.viewport_fixture {
                 let mut viewport = node("", "fixture-viewport", 150, ElementType::StaticText);
-                viewport.class_name = "scrollView Scrollable".into();
+                viewport.class_name = if s.android {
+                    "android.widget.ScrollView".into()
+                } else {
+                    "scrollView Scrollable".into()
+                };
                 viewport.element_type = None;
                 let left = if s.page == 1 {
                     s.viewport_slide_reads.as_mut().map_or(0, |reads| {
@@ -411,6 +429,8 @@ impl Robot for Fixture {
                     }
                 }
             }
+        }
+        if s.macos_flutter {
             for row in &mut rows {
                 row.bounds.left -= 1000;
                 row.bounds.right -= 1000;
@@ -487,6 +507,37 @@ async fn macos_viewport_reveals_controls_and_exports_scroll_before_tap() {
         map.screens[1].native_viewport.as_ref().unwrap().bounds.left,
         -1000
     );
+    assert_eq!(fixture.0.lock().unwrap().taps, ["below"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn android_viewport_reveals_and_taps_control_outside_entry_tree() {
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+        android: true,
+        viewport_fixture: true,
+        ..Default::default()
+    })));
+    let robot: Arc<dyn Robot> = fixture.clone();
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId": "android-fixture", "allowedTaps": ["below"]
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    let target = map.screens[0]
+        .controls
+        .iter()
+        .find(|row| row.label == "Below fold")
+        .unwrap();
+    assert_eq!(target.initially_offscreen, Some(true));
+    assert_eq!(target.status, "observed", "{:?}", target.note);
+    let yaml =
+        std::fs::read_to_string(dir.0.join(&target.evidence.as_ref().unwrap().yaml)).unwrap();
+    assert!(yaml.find("scroll:").unwrap() < yaml.find("tap_element:").unwrap());
+    assert!(yaml.contains("android.widget.ScrollView"));
     assert_eq!(fixture.0.lock().unwrap().taps, ["below"]);
 }
 
@@ -971,6 +1022,83 @@ async fn xctest_snapshot_ids_do_not_prevent_stable_label_replay() {
             .any(|c| c.label == "Left" && c.resource_id.is_none() && c.status == "observed")
     );
     assert!(!controls.iter().any(|c| c.label == "Banner"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn physical_ios_snapshot_uuids_do_not_prevent_entry_settling() {
+    let dir = Temp::new();
+    let robot: Arc<dyn Robot> = Arc::new(Fixture(Mutex::new(FixtureState {
+        ios: true,
+        xctest_uuid: true,
+        xctest_generation: Some(0),
+        ..Default::default()
+    })));
+    let mut map = graph();
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId":"ios-fixture", "allowedTaps":["Left"]
+    }))
+    .unwrap();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    let root = &map.screens[0];
+    assert!(
+        root.controls
+            .iter()
+            .any(|c| c.label == "Left" && c.resource_id.is_none() && c.status == "observed")
+    );
+    assert!(!root.controls.iter().any(|c| c.label == "Banner"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn omitted_scan_time_limit_allows_a_scan_longer_than_eight_minutes() {
+    let dir = Temp::new();
+    let robot: Arc<dyn Robot> = Arc::new(Fixture(Mutex::new(FixtureState {
+        tree_delay_ms: 500_000,
+        ..Default::default()
+    })));
+    let opt: Options = serde_json::from_value(json!({"deviceId":"chrome:fixture"})).unwrap();
+    let mut map = graph();
+    let start = tokio::time::Instant::now();
+    scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+        .await
+        .unwrap();
+    assert!(start.elapsed() > Duration::from_secs(480));
+    assert!(map.screens[0].screenshot);
+}
+
+#[tokio::test(start_paused = true)]
+async fn ios_scoped_scan_reuses_post_action_snapshot_for_unchanged_screen() {
+    let dir = Temp::new();
+    let robot: Arc<dyn Robot> = Arc::new(Fixture(Mutex::new(FixtureState {
+        ios: true,
+        tree_delay_ms: 30,
+        ..Default::default()
+    })));
+    let opt: Options = serde_json::from_value(json!({
+        "deviceId":"ios-fixture", "resetAppId":"fixture.app",
+        "allowedTaps":["delete","toggle"]
+    }))
+    .unwrap();
+    let mut map = graph();
+    let timing = timing::TimingLog::new();
+    crawl::scan(
+        &robot,
+        &opt,
+        &AtomicBool::new(false),
+        &mut map,
+        &dir.0,
+        &timing,
+    )
+    .await
+    .unwrap();
+    assert_eq!(map.attempted, 2);
+    timing.save(&dir.0).await.unwrap();
+    let timings: Value =
+        serde_json::from_slice(&std::fs::read(dir.0.join("timing.json")).unwrap()).unwrap();
+    let restore = &timings["phases"]["restore_branch"];
+    assert_eq!(restore["calls"], 2);
+    assert_eq!(restore["totalMs"], 30);
 }
 
 #[tokio::test(start_paused = true)]

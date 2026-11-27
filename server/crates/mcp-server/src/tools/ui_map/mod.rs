@@ -102,7 +102,7 @@ pub(super) fn definition() -> ToolDefinition {
                 "maxActions":{"type":"integer","minimum":1,"maximum":crawl::MAX_ACTIONS},
                 "maxDepth":{"type":"integer","minimum":1,"maximum":crawl::MAX_DEPTH},
                 "settleMs":{"type":"integer","minimum":100,"maximum":2500},
-                "maxTimeSeconds":{"type":"integer","minimum":30,"maximum":crawl::MAX_TIME_SECONDS},
+                "maxTimeSeconds":{"type":"integer","minimum":30,"maximum":crawl::MAX_TIME_SECONDS,"description":"Optional elapsed-time limit. Omit to scan without a total time limit."},
                 "sourceRoutes":{"type":"array","maxItems":100,"items":{
                     "type":"object","required":["title","route","sourcePath","line","status"],
                     "properties":{"title":{"type":"string"},"route":{"type":"string"},
@@ -265,13 +265,16 @@ impl Jobs {
         let task = tokio::spawn(async move {
             let _lease = lease;
             let timing = timing::TimingLog::new();
-            let outcome = tokio::time::timeout(
-                Duration::from_secs(options.time_seconds() + 30),
-                crawl::scan(&robot, &options, &cancel, &mut map, &dir, &timing),
-            )
-            .await;
+            let scan = crawl::scan(&robot, &options, &cancel, &mut map, &dir, &timing);
+            let outcome = if let Some(seconds) = options.max_time_seconds {
+                tokio::time::timeout(Duration::from_secs(seconds + 30), scan)
+                    .await
+                    .unwrap_or_else(|_| Err("Scan time limit reached.".into()))
+            } else {
+                scan.await
+            };
             match outcome {
-                Ok(Ok(())) => {
+                Ok(()) => {
                     let untested = map.screens.iter().flat_map(|s| &s.controls).any(|c| {
                         matches!(c.status.as_str(), "pending" | "failed")
                             || c.status == "skipped" && c.note.as_deref() != Some("Disabled")
@@ -283,7 +286,7 @@ impl Jobs {
                     }
                     .into();
                 }
-                Ok(Err(e)) => {
+                Err(e) => {
                     map.status = if cancel.load(Ordering::Acquire) {
                         "cancelled"
                     } else if map.screens.is_empty() {
@@ -293,15 +296,6 @@ impl Jobs {
                     }
                     .into();
                     map.notes.push(e);
-                }
-                Err(_) => {
-                    map.status = if map.screens.is_empty() {
-                        "failed"
-                    } else {
-                        "partial"
-                    }
-                    .into();
-                    map.notes.push("Scan time limit reached.".into());
                 }
             }
             if let Err(error) = timing.save(&dir).await {

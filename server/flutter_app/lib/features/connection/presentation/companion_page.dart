@@ -229,6 +229,7 @@ class _CompanionHomeState extends State<_CompanionView> {
         builder: (_) => UiMapPage(
           deviceId: id,
           deviceName: name,
+          devicePlatform: device?.platform,
           call: (arguments) async =>
               (await client.callTool(
                 'mobile_ui_map',

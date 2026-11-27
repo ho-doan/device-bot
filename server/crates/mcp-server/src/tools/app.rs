@@ -17,7 +17,7 @@ pub(super) fn definitions() -> [ToolDefinition; 5] {
         ToolDefinition {
             name: TERMINATE_NAME.into(),
             title: Some("Stop an app".into()),
-            description: "Stop an Android package or iOS Simulator app. Omit appId to stop the foreground app when the driver can identify it. Does not clear application data.".into(),
+            description: "Stop an Android package, iOS Simulator app, or the currently selected iPhone XCTest target. Omit appId to stop the foreground app when the driver can identify it. Does not clear application data.".into(),
             input_schema: json!({"type":"object", "properties":{
                 "deviceId":{"type":"string", "minLength":1},
                 "appId":{"type":"string", "minLength":3}

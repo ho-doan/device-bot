@@ -157,7 +157,7 @@ struct ScopedMcp {
 #[async_trait]
 impl Mcp for ScopedMcp {
     async fn request(&mut self, method: &str, params: Value) -> McpResult<Value> {
-        if method == "tools/call" {
+        if method == "tools/call" && params["name"] != "mobile_list_available_devices" {
             self.scope.location(&*self.robot, &self.device).await?;
         }
         self.session.request(method, params).await

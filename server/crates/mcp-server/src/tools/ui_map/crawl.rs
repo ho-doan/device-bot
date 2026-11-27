@@ -75,7 +75,9 @@ impl Options {
             || !(1..=MAX_ACTIONS).contains(&self.actions())
             || !(1..=MAX_DEPTH).contains(&self.depth())
             || !(100..=2500).contains(&self.delay())
-            || !(30..=MAX_TIME_SECONDS).contains(&self.time_seconds())
+            || self
+                .max_time_seconds
+                .is_some_and(|seconds| !(30..=MAX_TIME_SECONDS).contains(&seconds))
         {
             return Err("Invalid scan options. Limits: screens 1..250, actions 1..600, depth 1..16, settleMs 100..2500, maxTimeSeconds 30..1800. Use exact nonempty labels or resource IDs and synthetic single-line input.".into());
         }
@@ -93,9 +95,6 @@ impl Options {
     }
     fn delay(&self) -> u64 {
         self.settle_ms.unwrap_or(350)
-    }
-    pub(super) fn time_seconds(&self) -> u64 {
-        self.max_time_seconds.unwrap_or(480)
     }
 }
 
@@ -206,6 +205,26 @@ impl Scope {
         matches!(self, Self::Mobile { .. })
     }
 
+    fn is_android(&self) -> bool {
+        matches!(
+            self,
+            Self::Mobile {
+                platform: Platform::Android,
+                ..
+            }
+        )
+    }
+
+    fn is_scoped_ios(&self) -> bool {
+        matches!(
+            self,
+            Self::Mobile {
+                platform: Platform::Ios,
+                ..
+            }
+        )
+    }
+
     pub(super) async fn location(
         &self,
         robot: &dyn Robot,
@@ -247,8 +266,9 @@ struct Engine<'a> {
     stop: &'a AtomicBool,
     timing: &'a TimingLog,
     flutter: OnceLock<bool>,
-    deadline: Instant,
+    deadline: Option<Instant>,
     input_budget: usize,
+    last_same_screen: Option<Observation>,
 }
 
 impl Engine<'_> {
@@ -256,7 +276,10 @@ impl Engine<'_> {
         if self.stop.load(Ordering::Acquire) {
             return Err("Scan stopped by the operator.".into());
         }
-        if Instant::now() >= self.deadline {
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
             return Err("Scan time limit reached.".into());
         }
         if self.input_budget == 0 {
@@ -351,6 +374,8 @@ impl Engine<'_> {
         prepare_elements(&mut elements);
         let viewport = if self.device.starts_with("macos:") {
             viewport::inspect(&elements, self.flutter.get() == Some(&true))
+        } else if self.scope.is_android() {
+            viewport::inspect_android(&elements)
         } else {
             Ok(None)
         };
@@ -472,6 +497,9 @@ impl Engine<'_> {
 
     async fn scroll_slice(&self, viewport: &Viewport, dy: i32) -> Result<Observation, String> {
         self.check()?;
+        if self.scope.is_android() {
+            self.context().await?;
+        }
         self.timing
             .measure(
                 "viewport_scroll",
@@ -724,12 +752,20 @@ impl Engine<'_> {
         Ok(here)
     }
 
-    async fn wait_for_mobile_relaunch(&self) -> Result<(), String> {
+    async fn wait_for_mobile_relaunch(&self, accepted: &[u64]) -> Result<Observation, String> {
+        tokio::time::sleep(Duration::from_millis(self.options.delay())).await;
         let ready_by = Instant::now() + Duration::from_secs(10);
+        let mut remaining = 3;
         loop {
             self.check()?;
-            match self.context().await {
-                Ok(_) => return Ok(()),
+            match self.observe().await {
+                Ok(here) if accepted.contains(&here.fingerprint) || remaining == 0 => {
+                    return Ok(here);
+                }
+                Ok(_) => {
+                    remaining -= 1;
+                    tokio::time::sleep(Duration::from_millis(140)).await;
+                }
                 Err(error) if Instant::now() >= ready_by => {
                     return Err(format!("Could not verify the relaunched fixture: {error}"));
                 }
@@ -799,10 +835,19 @@ impl Engine<'_> {
         // A tap can change the layout without changing the screen signature.
         // For an opted-in window fixture, reuse the normal relaunch path if a
         // recorded scroll action cannot start at the current viewport slice.
-        let require_anchor = matches!(self.scope, Scope::WindowFixture) && control.reveal.is_some();
+        let require_anchor = control.reveal.is_some()
+            && (matches!(self.scope, Scope::WindowFixture) || self.options.reset_app_id.is_some());
         let ready = |here: &Observation| {
             here.fingerprint == expected && (!require_anchor || at_scroll_anchor(control, here))
         };
+        // The previous action already verified this unchanged screen. The
+        // action runner still checks the foreground and resolves its selector
+        // against a fresh tree before sending input.
+        if let Some(previous) = self.last_same_screen.take()
+            && ready(&previous)
+        {
+            return Ok(previous);
+        }
         let mut here = self.observe().await?;
         if ready(&here) {
             return Ok(here);
@@ -859,21 +904,19 @@ impl Engine<'_> {
             self.check()?;
             self.input_budget -= 1;
             let device = &self.device;
-            self.timing
-                .measure("app_relaunch", async {
-                    self.robot
-                        .terminate_app(device, app)
-                        .await
-                        .map_err(|error| format!("Could not stop the fixture app: {error}"))?;
-                    self.robot
-                        .launch_app(device, app)
-                        .await
-                        .map_err(|error| format!("Could not relaunch the fixture app: {error}"))?;
-                    self.wait_for_mobile_relaunch().await?;
-                    Ok::<(), String>(())
-                })
-                .await?;
-            here = self.observe_known(&[root, expected]).await?;
+            here =
+                self.timing
+                    .measure("app_relaunch", async {
+                        self.robot
+                            .terminate_app(device, app)
+                            .await
+                            .map_err(|error| format!("Could not stop the fixture app: {error}"))?;
+                        self.robot.launch_app(device, app).await.map_err(|error| {
+                            format!("Could not relaunch the fixture app: {error}")
+                        })?;
+                        self.wait_for_mobile_relaunch(&[root, expected]).await
+                    })
+                    .await?;
         } else {
             let mut visited = HashSet::new();
             while here.fingerprint != root
@@ -1004,13 +1047,14 @@ fn candidate(value: &Option<String>) -> Option<String> {
 }
 
 fn is_xctest_node_id(id: &str) -> bool {
-    id.strip_prefix("ios-")
-        .and_then(|part| part.split_once('-'))
-        .is_some_and(|(generation, index)| {
-            [generation, index]
-                .into_iter()
-                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
-        })
+    id.strip_prefix("ios-").is_some_and(|part| {
+        (part.len() == 36 && uuid::Uuid::parse_str(part).is_ok())
+            || part.split_once('-').is_some_and(|(generation, index)| {
+                [generation, index]
+                    .into_iter()
+                    .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+            })
+    })
 }
 
 fn live_control(element: &UiElement, opt: &Options) -> Option<LiveControl> {
@@ -1272,7 +1316,7 @@ async fn record(
         _ => false,
     };
     if obs.ambiguous_viewport {
-        map.notes.push(format!("{id}: Could not identify a unique macOS scroll viewport. Only visible controls were inventoried."));
+        map.notes.push(format!("{id}: Could not identify a unique native scroll viewport. Only visible controls were inventoried."));
     }
     let native_viewport = if same_controls_as.is_none() {
         if let Some(bounds) = obs.native_viewport.as_ref().map(|v| v.bounds.clone()) {
@@ -1385,8 +1429,11 @@ pub(super) async fn scan(
         stop,
         timing,
         flutter: OnceLock::new(),
-        deadline: Instant::now() + Duration::from_secs(opt.time_seconds()),
+        deadline: opt
+            .max_time_seconds
+            .map(|seconds| Instant::now() + Duration::from_secs(seconds)),
         input_budget: opt.actions() * (opt.depth() + 2) + 20,
+        last_same_screen: None,
     };
     let mut root = timing
         .measure("entry_observation", engine.settled_entry())
@@ -1557,6 +1604,9 @@ pub(super) async fn scan(
                     "no_change",
                     Some("No new screen signature observed.".into()),
                 );
+                if engine.scope.is_scoped_ios() {
+                    engine.last_same_screen = Some(next);
+                }
             } else {
                 let step = Arc::new(PathStep {
                     key: original.key.clone(),

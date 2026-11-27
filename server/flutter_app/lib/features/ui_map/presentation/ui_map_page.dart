@@ -13,17 +13,22 @@ class UiMapPage extends StatelessWidget {
     required this.deviceId,
     required this.deviceName,
     required this.call,
+    this.devicePlatform,
   });
 
   final String? deviceId;
   final String deviceName;
+  final String? devicePlatform;
   final UiMapCall call;
 
   Future<void> _configure(BuildContext context, UiMapCubit cubit) async {
     final options = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (_) => _ScanOptionsDialog(
-        canRelaunchFixture: deviceId?.startsWith('macos:') == true,
+        canRelaunchFixture:
+            deviceId?.startsWith('macos:') == true ||
+            (deviceId != null &&
+                (devicePlatform == 'ios' || devicePlatform == 'android')),
       ),
     );
     if (options != null && !cubit.isClosed) await cubit.start(options);
@@ -412,10 +417,10 @@ class _ScanOptionsDialogState extends State<_ScanOptionsDialog> {
     'maxActions': (label: 'Actions', min: 1, max: 600, defaultValue: 45),
     'maxDepth': (label: 'Depth', min: 1, max: 16, defaultValue: 5),
     'maxTimeSeconds': (
-      label: 'Time (seconds)',
+      label: 'Time limit in seconds (optional)',
       min: 30,
       max: 1800,
-      defaultValue: 480,
+      defaultValue: 'No time limit',
     ),
     'settleMs': (
       label: 'Settle delay (ms)',

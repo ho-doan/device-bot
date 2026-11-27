@@ -15,10 +15,52 @@ enum DumpError: Error, CustomStringConvertible {
   }
 }
 
+private func readUiSnapshot<T>(_ read: () throws -> T) rethrows -> T {
+  do {
+    return try read()
+  } catch {
+    let failure = error as NSError
+    guard failure.domain == "com.apple.dt.xctest.ui-testing.error", failure.code == 10008 else {
+      throw error
+    }
+    // The status changed between checking existence and taking a snapshot.
+    // Discard that partial tree and read the current UI again, without input.
+    return try read()
+  }
+}
+
 final class MobileMcpRealRunnerUITests: XCTestCase {
   /// Kept alive so the Bonjour browse still triggers Local Network privacy
   /// after `requestLocalNetworkPermission` returns into the command loop.
   private var localNetworkBrowser: NWBrowser?
+
+  func testSnapshotRetriesOnlyAStaleElementRead() throws {
+    var reads = 0
+    let tree = try readUiSnapshot {
+      reads += 1
+      if reads == 1 {
+        throw NSError(domain: "com.apple.dt.xctest.ui-testing.error", code: 10008)
+      }
+      return ["current element"]
+    }
+    XCTAssertEqual(tree, ["current element"])
+    XCTAssertEqual(reads, 2)
+
+    reads = 0
+    XCTAssertThrowsError(try readUiSnapshot {
+      reads += 1
+      throw NSError(domain: "com.apple.dt.xctest.ui-testing.error", code: 44)
+    })
+    XCTAssertEqual(reads, 1)
+  }
+
+  func testTerminateRejectsAnUnselectedApplication() {
+    let agent = MobileMcpRealHostAgent(hosts: [], port: 0, token: nil)
+    let result = agent.execute(Command(
+      id: UUID().uuidString, method: "terminate", params: ["bundleId": "com.example.unselected"]
+    ))
+    XCTAssertEqual(result["ok"] as? Bool, false)
+  }
 
   /// Runs the real command dispatcher on a device without the LAN bridge.
   /// The fixture is Orbit; opt in with DEVICE_BOT_REGRESSION_APP_ID.
@@ -305,6 +347,13 @@ private final class MobileMcpRealHostAgent {
       currentBundleId = bundleId
       driver.launch()
       return ["ok": true, "message": "app_launched"]
+    case "terminate":
+      guard let bundleId = string(command.params["bundleId"]), bundleId == currentBundleId,
+            driver.app != nil else {
+        return ["ok": false, "message": "Termination requires the selected target bundle"]
+      }
+      driver.terminate()
+      return ["ok": true, "message": "app_terminated"]
     case "openUrl":
       guard let rawUrl = string(command.params["url"]),
             let url = URL(string: rawUrl),
@@ -337,11 +386,13 @@ private final class MobileMcpRealHostAgent {
       ensureApp()
       let elementType = string(command.params["elementType"])
       do {
-        let elements = try dumpUi(
-          filter: string(command.params["filter"]),
-          elementType: elementType,
-          maxResults: integer(command.params["maxResults"])
-        )
+        let elements = try readUiSnapshot {
+          try dumpUi(
+            filter: string(command.params["filter"]),
+            elementType: elementType,
+            maxResults: integer(command.params["maxResults"])
+          )
+        }
         var body: [String: Any] = ["ok": true, "elements": elements]
         if let elementType { body["appliedElementType"] = elementType }
         return body

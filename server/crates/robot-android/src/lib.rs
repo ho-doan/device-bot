@@ -537,18 +537,64 @@ impl<R: CommandRunner> Robot for AndroidRobot<R> {
     async fn launch_app(&self, device_id: &str, app_id: &str) -> Result<(), RobotError> {
         ensure_device_id(device_id)?;
         ensure_app_id(app_id)?;
-        self.run_adb(&[
-            "-s".into(),
-            device_id.into(),
-            "shell".into(),
-            "monkey".into(),
-            "-p".into(),
-            app_id.into(),
-            "-c".into(),
-            "android.intent.category.LAUNCHER".into(),
-            "1".into(),
-        ])
-        .await?;
+        let resolved = self
+            .run_adb(&[
+                "-s".into(),
+                device_id.into(),
+                "shell".into(),
+                "cmd".into(),
+                "package".into(),
+                "resolve-activity".into(),
+                "--brief".into(),
+                "-a".into(),
+                "android.intent.action.MAIN".into(),
+                "-c".into(),
+                "android.intent.category.LAUNCHER".into(),
+                "-p".into(),
+                app_id.into(),
+            ])
+            .await?;
+        let text = String::from_utf8_lossy(&resolved.stdout);
+        let component = text
+            .lines()
+            .map(str::trim)
+            .find(|line| {
+                line.split_once('/').is_some_and(|(package, activity)| {
+                    package == app_id
+                        && !activity.is_empty()
+                        && activity
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || b"._$".contains(&byte))
+                })
+            })
+            .ok_or_else(|| {
+                RobotError::CommandFailed(format!("No launcher activity for {app_id}"))
+            })?;
+        let launched = self
+            .run_adb(&[
+                "-s".into(),
+                device_id.into(),
+                "shell".into(),
+                "am".into(),
+                "start".into(),
+                "-a".into(),
+                "android.intent.action.MAIN".into(),
+                "-c".into(),
+                "android.intent.category.LAUNCHER".into(),
+                "-n".into(),
+                format!("'{component}'"),
+            ])
+            .await?;
+        let stdout = String::from_utf8_lossy(&launched.stdout);
+        let stderr = String::from_utf8_lossy(&launched.stderr);
+        if let Some(error) = stdout
+            .lines()
+            .chain(stderr.lines())
+            .map(str::trim)
+            .find(|line| line.starts_with("Error:") || line.starts_with("Error type "))
+        {
+            return Err(RobotError::CommandFailed(error.to_owned()));
+        }
         Ok(())
     }
 
@@ -1665,7 +1711,12 @@ mod tests {
 
     #[tokio::test]
     async fn uses_explicit_adb_commands_for_app_navigation_and_text() {
-        let runner = FakeRunner::new([successful(vec![]), successful(vec![]), successful(vec![])]);
+        let runner = FakeRunner::new([
+            successful("priority=0 match=0x108000\ncom.android.chrome/.Main\n"),
+            successful("Starting: Intent { cmp=com.android.chrome/.Main }"),
+            successful(""),
+            successful(""),
+        ]);
         let robot = AndroidRobot::with_runner("adb-test", runner);
 
         robot
@@ -1694,12 +1745,35 @@ mod tests {
                         "-s",
                         "emulator-5554",
                         "shell",
-                        "monkey",
-                        "-p",
-                        "com.android.chrome",
+                        "cmd",
+                        "package",
+                        "resolve-activity",
+                        "--brief",
+                        "-a",
+                        "android.intent.action.MAIN",
                         "-c",
                         "android.intent.category.LAUNCHER",
-                        "1"
+                        "-p",
+                        "com.android.chrome"
+                    ]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+                ),
+                (
+                    "adb-test".to_owned(),
+                    vec![
+                        "-s",
+                        "emulator-5554",
+                        "shell",
+                        "am",
+                        "start",
+                        "-a",
+                        "android.intent.action.MAIN",
+                        "-c",
+                        "android.intent.category.LAUNCHER",
+                        "-n",
+                        "'com.android.chrome/.Main'"
                     ]
                     .into_iter()
                     .map(str::to_owned)
@@ -1741,6 +1815,22 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn launch_rejects_missing_launcher_activity_even_if_adb_succeeds() {
+        let robot = AndroidRobot::with_runner(
+            "adb-test",
+            FakeRunner::new([successful("No activity found")]),
+        );
+
+        let error = robot
+            .launch_app("emulator-5554", "com.example.orbit")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("No launcher activity"), "{error}");
+        assert_eq!(robot.runner.calls.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

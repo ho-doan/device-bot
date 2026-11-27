@@ -3,6 +3,7 @@
 use super::windows::{DesktopWindow, running_apps_from_windows, windows_for_process};
 
 use super::*;
+use robot_core::{RunningApp, UiTarget};
 
 #[cfg(target_os = "macos")]
 #[tokio::test]

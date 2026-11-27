@@ -27,6 +27,18 @@ and Chrome app install/uninstall return `Unsupported`. macOS and Windows
 implement native drag through the swipe tool. Browser runtime and network
 observation are Chrome-only and scoped to the attached page.
 
+| Platform-specific operation | Drivers and prerequisites |
+| --- | --- |
+| Boot a managed target | Android AVD, iOS Simulator, or Chrome browser |
+| Enumerate and select native windows and displays | macOS and Windows host drivers |
+| Press a named IME action | Android checks the focused editor. iOS Simulator and physical iOS require a compatible XCTest runner. Windows requires a Flutter bridge on the desktop host target. |
+| Observe browser runtime or network events | Chrome CDP page target |
+
+The portable `Robot` interface defines the default `Unsupported` response for
+optional operations. A supported operation can still fail if a native
+prerequisite is missing. The driver reports that prerequisite through
+`mobile_get_capabilities` when the operation has a readiness check.
+
 ## Element query contract
 
 Match case-insensitive text and normalized element type before applying

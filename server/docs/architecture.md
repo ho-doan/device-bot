@@ -146,16 +146,30 @@ dispatch table rather than a business-logic container.
 Platform capabilities, implementation limits, and the checks for shared MCP
 behavior are tracked in [platform-parity.md](platform-parity.md).
 
-Inside `robot-macos`, `lib.rs` owns the driver, process commands and session
-state. Native implementation details live behind private modules:
+### Platform adapter layout
+
+Each driver keeps its `impl Robot` in `adapter.rs` and delegates to private
+modules that own native operations. The crate root owns the public driver type,
+construction, and re-exports. The registered physical iOS driver follows this
+layout inside `xctest_robot/`.
+
+- Portable traits, enums, and errors live in their owning `robot-core` modules.
+  Drivers keep native payload types with their decoder. Android and iOS use
+  `protocol.rs`. Chrome owns CDP transport in `connection.rs` and DOM
+  normalization in `dom.rs`. Windows owns UIA and MSAA in `accessibility/`.
+- Driver tests live in `tests/` alongside the adapter or beside a private
+  native module when they exercise its implementation. Cross-platform tests
+  call the shared `Robot` interface through the server test suite.
+
+Inside `robot-macos`, native implementation details live behind private modules:
 
 - `ffi.rs` declares framework bindings and `CfOwned` reference cleanup.
 - `accessibility.rs` owns AX attribute reads, traversal, focus and hit testing.
 - `windows.rs` owns native window discovery and portable app/window projections.
 - `live.rs`, `screenshot.rs` and `pointer.rs` own their respective capture/input
   lifecycles and import native dependencies explicitly.
-- `tests.rs` exercises driver behavior; `screenshot_tests.rs` retains the real
-  desktop checks, which require an interactive session and OS permissions.
+- `tests/` exercises driver behavior. The real desktop checks in
+  `tests/screenshot.rs` require an interactive session and OS permissions.
 
 The `ffi` and `accessibility` modules compile only on macOS. Window projection
 helpers also compile under tests on other hosts. Keep this distinction when
@@ -166,8 +180,8 @@ target check to verify the non-macOS configuration.
 Inside `robot-windows`, `src/accessibility/` contains the UIA PowerShell
 template and the optional MSAA provider. Both project native nodes into the
 same payload for the Rust decoder. `live.rs` pins window-scoped reads to the
-selected HWND and its owner. `lib.rs` assembles the driver and applies the
-portable query on the decoded snapshot.
+selected HWND and its owner. The driver applies the portable query on the
+decoded snapshot.
 
 ### Browser observation
 

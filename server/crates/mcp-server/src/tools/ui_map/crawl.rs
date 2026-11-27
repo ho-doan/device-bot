@@ -207,6 +207,10 @@ impl Scope {
         matches!(self, Self::Mobile { .. })
     }
 
+    pub(super) fn is_native_mobile(&self) -> bool {
+        self.is_mobile() || matches!(self, Self::IosNative)
+    }
+
     fn is_android(&self) -> bool {
         matches!(
             self,
@@ -711,7 +715,7 @@ impl Engine<'_> {
         reverse: i32,
     ) -> Result<(), String> {
         let viewport = anchor.native_viewport.as_ref().expect("viewport anchor");
-        let mobile = self.scope.is_mobile() || matches!(self.scope, Scope::IosNative);
+        let mobile = self.scope.is_native_mobile();
         let mut visited = HashSet::new();
         for step in 0usize.. {
             if same_slice(anchor, &current) {
@@ -750,7 +754,7 @@ impl Engine<'_> {
         let mut inventory = anchor.controls.clone();
         let mut hit_limit = false;
         let mut stopped = None;
-        let mobile = self.scope.is_mobile() || matches!(self.scope, Scope::IosNative);
+        let mobile = self.scope.is_native_mobile();
         'directions: for delta in [viewport.step(), -viewport.step()] {
             let mut previous = viewport.clone();
             let mut slices: Vec<(u64, Viewport)> = Vec::new();
@@ -871,6 +875,53 @@ impl Engine<'_> {
             hit_limit,
             stopped,
         })
+    }
+
+    async fn reveal_mobile_control(
+        &mut self,
+        original: &LiveControl,
+        here: &Observation,
+    ) -> Result<LiveControl, String> {
+        let plan = original.reveal.as_ref().expect("recorded reveal");
+        let viewport = here
+            .native_viewport
+            .as_ref()
+            .filter(|viewport| plan.anchor.same_container(viewport))
+            .ok_or("The recorded viewport is no longer available.")?;
+        let mut actual = Reveal {
+            anchor: viewport.clone(),
+            delta: plan.delta,
+            slices: Vec::new(),
+        };
+        if let Some(row) = visible_reveal_target(original, here) {
+            let mut row = row.clone();
+            row.reveal = Some(actual);
+            return Ok(row);
+        }
+        if !at_scroll_anchor(original, here) {
+            return Err("Could not verify the recorded scroll position before input.".into());
+        }
+
+        let mut previous = viewport.clone();
+        let mut visited = HashSet::from([viewport.layout_signature()]);
+        loop {
+            self.check()?;
+            let next = self.scroll_slice(&previous, plan.delta).await?;
+            self.input_budget -= 1;
+            let slice = next.native_viewport.as_ref().expect("validated viewport");
+            actual.slices.push((next.fingerprint, slice.clone()));
+            if let Some(row) = visible_reveal_target(original, &next) {
+                let mut row = row.clone();
+                row.reveal = Some(actual);
+                return Ok(row);
+            }
+            if !visited.insert(slice.layout_signature()) {
+                return Err(
+                    "The viewport stopped progressing before the control became visible.".into(),
+                );
+            }
+            previous = slice.clone();
+        }
     }
 
     async fn reset_after_reveal(
@@ -1059,9 +1110,13 @@ impl Engine<'_> {
                 && (matches!(self.scope, Scope::WindowFixture)
                     || self.options.reset_app_id.is_some())
         });
+        let native_mobile = self.scope.is_native_mobile();
         let ready = |here: &Observation| {
             here.fingerprint == expected
-                && anchor.is_none_or(|control| at_scroll_anchor(control, here))
+                && anchor.is_none_or(|control| {
+                    at_scroll_anchor(control, here)
+                        || native_mobile && visible_reveal_target(control, here).is_some()
+                })
         };
         // The previous action already verified this unchanged screen. The
         // action runner still checks the foreground and resolves its selector
@@ -1199,8 +1254,14 @@ impl Engine<'_> {
             if here.fingerprint != step.before {
                 return Err("The recorded route now leads to a different screen.".into());
             }
+            let revealed;
             let row = if let Some(row) = &step.revealed_control {
-                at_scroll_anchor(row, &here).then_some(row)
+                if self.scope.is_native_mobile() {
+                    revealed = self.reveal_mobile_control(row, &here).await?;
+                    Some(&revealed)
+                } else {
+                    at_scroll_anchor(row, &here).then_some(row)
+                }
             } else {
                 here.controls
                     .iter()
@@ -1279,6 +1340,20 @@ fn at_scroll_anchor(row: &LiveControl, here: &Observation) -> bool {
         here.native_viewport
             .as_ref()
             .is_some_and(|viewport| plan.anchor.same_replay_anchor(viewport))
+    })
+}
+
+fn visible_reveal_target<'a>(
+    original: &LiveControl,
+    here: &'a Observation,
+) -> Option<&'a LiveControl> {
+    let plan = original.reveal.as_ref()?;
+    let viewport = here
+        .native_viewport
+        .as_ref()
+        .filter(|viewport| plan.anchor.same_container(viewport))?;
+    here.controls.iter().find(|row| {
+        row.key == original.key && row.action == original.action && viewport.contains(row.center())
     })
 }
 
@@ -1801,7 +1876,28 @@ pub(super) async fn scan(
                 Err(error) => return Err(error),
             };
             let action = original.action.unwrap();
-            let row = if original.reveal.is_some() {
+            let revealed;
+            let row = if original.reveal.is_some() && engine.scope.is_native_mobile() {
+                revealed = match engine.reveal_mobile_control(original, &here).await {
+                    Ok(row) => row,
+                    Err(error) => {
+                        map.attempted += 1;
+                        mark(
+                            map,
+                            &from,
+                            &original.control.id,
+                            "failed",
+                            Some(error.clone()),
+                        );
+                        save_map(dir, map).await?;
+                        if !engine.recover_at(map, &from, &error).await? {
+                            engine.check()?;
+                        }
+                        continue;
+                    }
+                };
+                Some(&revealed)
+            } else if original.reveal.is_some() {
                 at_scroll_anchor(original, &here).then_some(original)
             } else {
                 here.controls
@@ -1939,7 +2035,7 @@ pub(super) async fn scan(
                     before: fingerprint,
                     after: next.fingerprint,
                     initially_offscreen: original.control.initially_offscreen,
-                    revealed_control: row.reveal.as_ref().map(|_| row.clone()),
+                    revealed_control: original.reveal.as_ref().map(|_| original.clone()),
                 });
                 let to = if let Some(to) = seen.get(&next.fingerprint) {
                     to.clone()

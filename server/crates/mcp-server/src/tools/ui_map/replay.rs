@@ -57,6 +57,7 @@ impl Action<'_> {
         name: &str,
         settle_ms: u64,
         capture: bool,
+        include_scroll: bool,
     ) -> Result<String, String> {
         let mut selector = if matches!(scope, Scope::Mobile { .. } | Scope::IosNative) {
             // Use the flow runner's normal selector wait and the driver's
@@ -95,7 +96,7 @@ impl Action<'_> {
         }
         escape_templates(&mut selector);
         let mut steps = vec![json!({"select_device":{"id":format!("${{env:{DEVICE}}}")}})];
-        if let Some(plan) = self.reveal {
+        if include_scroll && let Some(plan) = self.reveal {
             let mut scroll = json!({
                 "class_contains": plan.anchor.locator.class_name,
                 "source": if self.flutter { "flutter" } else { "native" },
@@ -197,14 +198,21 @@ pub(super) async fn run(
     tokio::fs::create_dir_all(&directory)
         .await
         .map_err(|e| e.to_string())?;
-    let yaml = action.yaml(scope, name, settle_ms, true)?;
+    let yaml = action.yaml(scope, name, settle_ms, true, true)?;
     let yaml_path = format!("{relative}/scenario.yaml");
     tokio::fs::write(dir.join(&yaml_path), &yaml)
         .await
         .map_err(|e| e.to_string())?;
 
     let scratch = directory.join(".runner");
-    let report = execute(robot, scope, device, &scratch, &yaml, action.input).await?;
+    // For mobile, the crawler already applied and verified the scrolls.
+    // Export those gestures, then run only the remaining steps for evidence.
+    let execution = if scope.is_native_mobile() && action.reveal.is_some() {
+        action.yaml(scope, name, settle_ms, true, false)?
+    } else {
+        yaml
+    };
+    let report = execute(robot, scope, device, &scratch, &execution, action.input).await?;
     let screenshot = scratch.join("result.png");
     let mut evidence = ActionEvidence {
         yaml: yaml_path,
@@ -247,7 +255,13 @@ pub(super) async fn restore(
     action: Action<'_>,
     settle_ms: u64,
 ) -> Result<(), String> {
-    let yaml = action.yaml(scope, "restore_ui_map_branch", settle_ms, false)?;
+    let yaml = action.yaml(
+        scope,
+        "restore_ui_map_branch",
+        settle_ms,
+        false,
+        !scope.is_native_mobile(),
+    )?;
     let scratch = dir.join(".restore");
     let report = execute(robot, scope, device, &scratch, &yaml, action.input).await?;
     tokio::fs::remove_dir_all(scratch)

@@ -45,6 +45,9 @@ struct FixtureState {
     macos_flutter: bool,
     viewport_fixture: bool,
     viewport_last_slice: Option<i32>,
+    android_discovery_stride: Option<i32>,
+    android_replay_stalls: bool,
+    scroll_count_at_below_tap: Option<usize>,
     no_scroll_restore: bool,
     viewport_slide_reads: Option<usize>,
     viewport_content_shift_on_delete: Option<bool>,
@@ -291,6 +294,7 @@ impl Robot for Fixture {
                 if state.viewport_fixture
                     && state.slice == state.viewport_last_slice.unwrap_or(1) =>
             {
+                state.scroll_count_at_below_tap = Some(state.scrolls.len());
                 state.page = 1;
                 state.slice = 0;
                 "below"
@@ -396,10 +400,16 @@ impl Robot for Fixture {
         assert_eq!((from.x, to.x, duration), (150., 150., Some(420)));
         assert!((from.y == 160. && to.y == 80.) || (from.y == 80. && to.y == 160.));
         let delta = (from.y - to.y) as i32;
+        let replaying = delta > 0 && state.scrolls.iter().any(|&previous| previous < 0);
         state.scrolls.push(delta);
-        if state.page == 0 {
-            state.slice =
-                (state.slice + delta.signum()).clamp(0, state.viewport_last_slice.unwrap_or(1));
+        if state.page == 0 && !(replaying && state.android_replay_stalls) {
+            let stride = if replaying {
+                1
+            } else {
+                state.android_discovery_stride.unwrap_or(1)
+            };
+            state.slice = (state.slice + delta.signum() * stride)
+                .clamp(0, state.viewport_last_slice.unwrap_or(1));
         }
         Ok(())
     }
@@ -687,6 +697,60 @@ async fn mobile_native_viewports_reveal_and_tap_controls_outside_entry_tree() {
         );
         assert!(!map.screens[0].native_viewport.as_ref().unwrap().hit_limit);
         assert_eq!(fixture.0.lock().unwrap().taps, ["below"]);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn android_reveal_uses_live_progress_instead_of_the_discovery_swipe_count() {
+    for stalls in [false, true] {
+        let dir = Temp::new();
+        let fixture = Arc::new(Fixture(Mutex::new(FixtureState {
+            android: true,
+            viewport_fixture: true,
+            viewport_last_slice: Some(6),
+            android_discovery_stride: Some(2),
+            android_replay_stalls: stalls,
+            ..Default::default()
+        })));
+        let robot: Arc<dyn Robot> = fixture.clone();
+        let mut map = graph();
+        let opt: Options = serde_json::from_value(json!({
+            "deviceId": "android-fixture", "allowedTaps": ["below"]
+        }))
+        .unwrap();
+        scan(&robot, &opt, &AtomicBool::new(false), &mut map, &dir.0)
+            .await
+            .unwrap();
+
+        let target = map.screens[0]
+            .controls
+            .iter()
+            .find(|row| row.resource_id.as_deref() == Some("below"))
+            .unwrap();
+        let state = fixture.0.lock().unwrap();
+        let scrolls = &state.scrolls[..state
+            .scroll_count_at_below_tap
+            .unwrap_or(state.scrolls.len())];
+        let forward = scrolls.iter().rev().take_while(|&&dy| dy > 0).count();
+        if stalls {
+            assert_eq!(forward, 1);
+            assert!(state.taps.is_empty());
+            assert_eq!(target.status, "failed");
+            assert!(
+                target
+                    .note
+                    .as_deref()
+                    .unwrap()
+                    .contains("stopped progressing")
+            );
+        } else {
+            assert_eq!(forward, 6);
+            assert_eq!(state.taps, ["below"]);
+            assert_eq!(target.status, "observed", "{:?}", target.note);
+            let yaml = std::fs::read_to_string(dir.0.join(&target.evidence.as_ref().unwrap().yaml))
+                .unwrap();
+            assert_eq!(yaml.matches("gesture:").count(), forward);
+        }
     }
 }
 

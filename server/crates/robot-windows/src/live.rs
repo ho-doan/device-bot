@@ -249,7 +249,6 @@ impl WindowsRobot {
     pub(super) async fn live_elements(
         &self,
         id: &str,
-        filter: Option<&str>,
         max: Option<usize>,
     ) -> Result<Vec<UiElement>, RobotError> {
         let target = Target::parse(id)?.ok_or_else(|| failure("missing window target"))?;
@@ -262,12 +261,12 @@ impl WindowsRobot {
                 .as_deref(),
         )? {
             return self
-                .msaa_elements(Some(target.pid), Some(target.hwnd), filter, max)
+                .msaa_elements(Some(target.pid), Some(target.hwnd), max)
                 .await;
         }
         // Validate ownership and traverse exactly this HWND, never the first
         // window found for a PID (one process may own several app windows).
-        let script=build_uia_script(Some(target.pid),filter,max)
+        let script=build_uia_script(Some(target.pid),max)
             .replace("$target = $root.FindFirst([System.Windows.Automation.TreeScope]::Subtree, $condition)",
                 &format!("$target = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]([int64]{}))\nif ($null -eq $target -or $target.Current.ProcessId -ne {}) {{ throw 'The selected window no longer belongs to the selected app.' }}",target.hwnd,target.pid));
         let output = tokio::time::timeout(UIA_QUERY_TIMEOUT, self.powershell(script))
@@ -645,12 +644,48 @@ mod process_tests {
         let (directory, helper) = fixture("sleep 3\nprintf '[]'").await;
         let mut robot = WindowsRobot::new(&directory);
         robot.powershell_path = helper.to_string_lossy().into_owned();
-        let elements = robot.live_elements("windows:42:123", None, Some(10)).await;
+        let elements = robot.live_elements("windows:42:123", Some(10)).await;
         tokio::fs::remove_dir_all(directory).await.unwrap();
         assert!(
             elements.is_ok(),
             "PowerShell startup must not consume the entire inspection budget: {elements:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn native_queries_match_type_and_value_before_the_result_limit() {
+        let (directory, helper) = fixture(
+            r#"
+case "$*" in
+  *'[int]5000'*|*', 5000, 5000, 128)'*) ;;
+  *) printf 'Snapshot stopped at the result limit before matching' >&2; exit 1 ;;
+esac
+cat <<'JSON'
+[
+  {"className":"button","text":"SAVE","left":0,"top":0,"right":10,"bottom":10},
+  {"className":"textField","text":"Name","value":"Other","left":10,"top":0,"right":20,"bottom":10},
+  {"className":"textField","text":"Editor","value":"SavE","left":20,"top":0,"right":30,"bottom":10},
+  {"className":"textField","text":"Another editor","value":"saved","left":30,"top":0,"right":40,"bottom":10}
+]
+JSON
+"#,
+        )
+        .await;
+        let mut robot = WindowsRobot::new(&directory);
+        robot.powershell_path = helper.to_string_lossy().into_owned();
+        let query = ElementQuery {
+            filter: Some("SAVE".into()),
+            element_type: Some(robot_core::ElementType::TextField),
+            max_results: Some(1),
+            ..Default::default()
+        };
+        let host = robot.query_native_elements(DEVICE_ID, query.clone()).await;
+        let window = robot.query_native_elements("windows:42:123", query).await;
+        tokio::fs::remove_dir_all(directory).await.unwrap();
+        for elements in [host.unwrap(), window.unwrap()] {
+            assert_eq!(elements.len(), 1);
+            assert_eq!(elements[0].text.as_deref(), Some("Editor"));
+        }
     }
 
     #[tokio::test]

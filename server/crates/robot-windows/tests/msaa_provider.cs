@@ -39,8 +39,8 @@ public static class MsaaProviderTests {
     System.Array.Copy(all, start, result, 0, size);
     return result;
   }
-  private static DeviceBotMsaa.Reader Read(MsaaTestProvider provider, string filter, int max, int budget, int depth) {
-    DeviceBotMsaa.Reader reader = new DeviceBotMsaa.Reader(filter, max, budget, depth, Enumerate);
+  private static DeviceBotMsaa.Reader Read(MsaaTestProvider provider, int max, int budget, int depth) {
+    DeviceBotMsaa.Reader reader = new DeviceBotMsaa.Reader(max, budget, depth, Enumerate);
     reader.Visit(provider, 0, 0);
     return reader;
   }
@@ -49,30 +49,28 @@ public static class MsaaProviderTests {
     MsaaTestProvider root = new MsaaTestProvider();
     MsaaTestProvider box = new MsaaTestProvider { Role = 44, State = 0x10 | 4 | 1 };
     root.Children = new object[] { 7, box, root }; // child ID, object, cycle
-    var nodes = Read(root, "", 20, 100, 10).Nodes;
+    var nodes = Read(root, 20, 100, 10).Nodes;
     Check(nodes.Count == 3, "simple children, object children and cycle deduplication");
     Check(nodes[1].text == "Simple child" && nodes[1].className == "textField", "child ID metadata");
     Check(nodes[2].@checked == true && nodes[2].focused == true && !nodes[2].enabled, "state mapping");
     Check(nodes[0].left == -120 && nodes[0].right == -20 && nodes[0].value == "", "negative coordinates and empty value");
     Check(nodes[0].resourceId == null, "MSAA must not invent stable resource IDs");
-    Check(Read(root, "sImPlE", 20, 100, 10).Nodes.Count == 1, "case insensitive filter traverses unmatched parent");
-    Check(Read(root, "", 1, 100, 10).Nodes.Count == 1, "max results");
-    Check(Read(root, "", 20, 2, 10).Nodes.Count == 2, "visit budget");
-    Check(Read(root, "", 20, 100, 0).Nodes.Count == 1, "depth budget");
-    Check(Read(root, "missing", 20, 2, 10).Full, "unmatched nodes consume visit budget");
+    Check(Read(root, 1, 100, 10).Nodes.Count == 1, "max results");
+    Check(Read(root, 20, 2, 10).Nodes.Count == 2, "visit budget");
+    Check(Read(root, 20, 100, 0).Nodes.Count == 1, "depth budget");
     box.State = 0x20;
-    Check(Read(box, "", 10, 10, 10).Nodes[0].@checked == null, "mixed state is unknown");
+    Check(Read(box, 10, 10, 10).Nodes[0].@checked == null, "mixed state is unknown");
     box.State = 0x200002;
-    Check(Read(box, "", 10, 10, 10).Nodes[0].selected == true, "selectable state");
+    Check(Read(box, 10, 10, 10).Nodes[0].selected == true, "selectable state");
     box.State = 0x8000;
-    Check(Read(box, "", 10, 10, 10).Nodes.Count == 0, "hidden nodes excluded");
+    Check(Read(box, 10, 10, 10).Nodes.Count == 0, "hidden nodes excluded");
     box.State = 0x10000;
-    Check(Read(box, "", 10, 10, 10).Nodes.Count == 0, "offscreen nodes excluded");
+    Check(Read(box, 10, 10, 10).Nodes.Count == 0, "offscreen nodes excluded");
     box.State = 0x20000000; box.NameReads = 0;
-    var password = Read(box, "", 10, 10, 10).Nodes[0];
+    var password = Read(box, 10, 10, 10).Nodes[0];
     Check(password.value == null && password.text == null && box.NameReads == 0, "protected text never queried");
     box.FailState = true;
-    var unknown = Read(box, "", 10, 10, 10).Nodes[0];
+    var unknown = Read(box, 10, 10, 10).Nodes[0];
     Check(unknown.focused == null && unknown.value == null && !unknown.enabled, "unknown state must not leak values");
     System.Console.WriteLine("MSAA provider contracts passed");
   }

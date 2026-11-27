@@ -15,8 +15,8 @@ use std::{
 
 use async_trait::async_trait;
 use robot_core::{
-    AppWindow, Bounds, DeviceState, ImeAction, Platform, Point, Robot, RobotDevice, RobotError,
-    RunningApp, UiElement, UiTarget,
+    AppWindow, Bounds, DeviceState, ElementQuery, ImeAction, Platform, Point, Robot, RobotDevice,
+    RobotError, RunningApp, UiElement, UiTarget, apply_element_query,
 };
 use serde_json::{Value, json};
 use tokio::{process::Command, sync::Mutex};
@@ -106,11 +106,7 @@ impl WindowsRobot {
         }
     }
 
-    async fn uia_elements(
-        &self,
-        filter: Option<&str>,
-        max_results: Option<usize>,
-    ) -> Result<Vec<UiElement>, RobotError> {
+    async fn uia_elements(&self, max_results: Option<usize>) -> Result<Vec<UiElement>, RobotError> {
         if max_results == Some(0) {
             return Ok(vec![]);
         }
@@ -123,16 +119,14 @@ impl WindowsRobot {
                 .ok()
                 .as_deref(),
         )? {
-            return self
-                .msaa_elements(process_id, window_id, filter, max_results)
-                .await;
+            return self.msaa_elements(process_id, window_id, max_results).await;
         }
         if let (Some(pid), Some(hwnd)) = (process_id, window_id) {
             return self
-                .live_elements(&format!("windows:{pid}:{hwnd}"), filter, max_results)
+                .live_elements(&format!("windows:{pid}:{hwnd}"), max_results)
                 .await;
         }
-        let script = build_uia_script(process_id, filter, max_results);
+        let script = build_uia_script(process_id, max_results);
         let output = tokio::time::timeout(UIA_QUERY_TIMEOUT, self.powershell(script))
             .await
             .map_err(|_| {
@@ -142,6 +136,26 @@ impl WindowsRobot {
                 ))
             })??;
         parse_uia_elements(&output)
+    }
+
+    async fn query_native_elements(
+        &self,
+        device_id: &str,
+        query: ElementQuery,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        // The helpers cap the native snapshot. Only an unfiltered request can
+        // stop at the caller's result limit before portable matching runs.
+        let max = query.max_results.filter(|&max| {
+            max == 0
+                || (query.element_type.is_none()
+                    && query.filter.as_deref().is_none_or(str::is_empty))
+        });
+        let elements = if live::Target::parse(device_id)?.is_some() {
+            self.live_elements(device_id, max).await?
+        } else {
+            self.uia_elements(max).await?
+        };
+        Ok(apply_element_query(elements, &query))
     }
 
     async fn foreground_process_id(&self) -> Result<u32, RobotError> {
@@ -330,11 +344,7 @@ fn parse_process_id(output: &[u8]) -> Result<u32, RobotError> {
         })
 }
 
-fn build_uia_script(
-    process_id: Option<u32>,
-    filter: Option<&str>,
-    max_results: Option<usize>,
-) -> String {
+fn build_uia_script(process_id: Option<u32>, max_results: Option<usize>) -> String {
     let mut script = r#"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName UIAutomationClient
@@ -371,7 +381,6 @@ if ($null -eq $target) {
 
 $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
 $nodes = New-Object 'System.Collections.Generic.List[object]'
-$filter = __FILTER__
 $maxResults = [int]__MAX_RESULTS__
 $maxNodes = [int]__MAX_NODES__
 $maxDepth = [int]__MAX_DEPTH__
@@ -457,17 +466,7 @@ function Add-Element([System.Windows.Automation.AutomationElement]$element, [int
     }
   } catch { }
 
-  $matches = [string]::IsNullOrEmpty($filter)
-  if (-not $matches) {
-    foreach ($field in @($role, $automationId, $name, $helpText)) {
-      if ($null -ne $field -and $field.ToLowerInvariant().Contains($filter)) {
-        $matches = $true
-        break
-      }
-    }
-  }
-
-  if ($matches -and $right -gt $left -and $bottom -gt $top -and $nodes.Count -lt $maxResults) {
+  if ($right -gt $left -and $bottom -gt $top -and $nodes.Count -lt $maxResults) {
     $contentDescription = $helpText
     if ($null -eq $contentDescription) { $contentDescription = $name }
     [void]$nodes.Add([pscustomobject]@{
@@ -505,10 +504,6 @@ if ($nodes.Count -eq 0) { '[]' } else { $nodes | ConvertTo-Json -Depth 4 -Compre
 "#
     .to_owned();
     script = script.replace("__PROCESS_ID__", &process_id.unwrap_or(0).to_string());
-    script = script.replace(
-        "__FILTER__",
-        &ps_quote(&filter.unwrap_or("").to_lowercase()),
-    );
     script = script.replace(
         "__MAX_RESULTS__",
         &max_results
@@ -641,9 +636,9 @@ impl Robot for WindowsRobot {
                 report.capabilities.screen_recording = blocked;
             } else {
                 let uia = if id == DEVICE_ID {
-                    self.uia_elements(None, Some(1)).await.is_ok()
+                    self.uia_elements(Some(1)).await.is_ok()
                 } else {
-                    self.live_elements(id, None, Some(1)).await.is_ok()
+                    self.live_elements(id, Some(1)).await.is_ok()
                 };
                 let ui_status = if uia {
                     robot_core::Capability::available(
@@ -1236,11 +1231,8 @@ public static class DeviceBotKeyboard {
     }
 
     async fn list_elements(&self, device_id: &str) -> Result<Vec<UiElement>, RobotError> {
-        self.require_device(device_id)?;
-        if live::Target::parse(device_id)?.is_some() {
-            return self.live_elements(device_id, None, None).await;
-        }
-        self.uia_elements(None, None).await
+        self.list_elements_query(device_id, ElementQuery::default())
+            .await
     }
 
     async fn list_elements_filtered(
@@ -1249,11 +1241,26 @@ public static class DeviceBotKeyboard {
         filter: Option<&str>,
         max_results: Option<usize>,
     ) -> Result<Vec<UiElement>, RobotError> {
+        self.list_elements_query(
+            device_id,
+            ElementQuery {
+                filter: filter.map(str::to_owned),
+                max_results,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    async fn list_elements_query(
+        &self,
+        device_id: &str,
+        query: ElementQuery,
+    ) -> Result<Vec<UiElement>, RobotError> {
+        query.reject_keyboard_exclusion()?;
+        query.reject_web_context(device_id)?;
         self.require_device(device_id)?;
-        if live::Target::parse(device_id)?.is_some() {
-            return self.live_elements(device_id, filter, max_results).await;
-        }
-        self.uia_elements(filter, max_results).await
+        self.query_native_elements(device_id, query).await
     }
 }
 
@@ -1328,7 +1335,7 @@ mod tests {
 
     #[test]
     fn uia_script_uses_raw_view_and_process_condition() {
-        let script = build_uia_script(Some(1234), None, None);
+        let script = build_uia_script(Some(1234), None);
         assert!(script.contains("UIAutomationClient"));
         assert!(script.contains("TreeWalker]::RawViewWalker"));
         assert!(script.contains("ProcessIdProperty"));
@@ -1336,9 +1343,8 @@ mod tests {
     }
 
     #[test]
-    fn uia_script_embeds_case_insensitive_filter_and_bounded_results() {
-        let script = build_uia_script(None, Some("Save\' As"), Some(20));
-        assert!(script.contains("$filter = 'save'' as'"));
+    fn uia_script_bounds_native_results() {
+        let script = build_uia_script(None, Some(20));
         assert!(script.contains("$maxResults = [int]20"));
         assert!(script.contains("$maxNodes = [int]5000"));
         assert!(script.contains("$maxDepth = [int]128"));
@@ -1387,7 +1393,7 @@ mod tests {
     #[tokio::test]
     async fn zero_max_results_does_not_start_powershell() {
         let robot = WindowsRobot::new("artifacts");
-        assert!(robot.uia_elements(None, Some(0)).await.unwrap().is_empty());
+        assert!(robot.uia_elements(Some(0)).await.unwrap().is_empty());
     }
 
     // Run against a started, visible examples/flutter_app Windows build:

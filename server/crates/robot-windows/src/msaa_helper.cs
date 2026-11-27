@@ -54,15 +54,14 @@ public static class DeviceBotMsaa {
   internal sealed class Reader {
     internal readonly List<Node> Nodes = new List<Node>();
     private readonly HashSet<string> seen = new HashSet<string>();
-    private readonly string filter;
     private readonly int max, budget, maxDepth;
     private readonly Func<IAccessible, int, int, object[]> enumerate;
     private int visited;
     internal bool Full { get { return visited >= budget || Nodes.Count >= max; } }
-    internal Reader(string filter, int max, int budget, int maxDepth)
-      : this(filter, max, budget, maxDepth, Children) {}
-    internal Reader(string filter, int max, int budget, int maxDepth, Func<IAccessible, int, int, object[]> enumerate) {
-      this.filter = (filter ?? "").ToLowerInvariant(); this.max = max;
+    internal Reader(int max, int budget, int maxDepth)
+      : this(max, budget, maxDepth, Children) {}
+    internal Reader(int max, int budget, int maxDepth, Func<IAccessible, int, int, object[]> enumerate) {
+      this.max = max;
       this.budget = budget; this.maxDepth = maxDepth;
       this.enumerate = enumerate;
     }
@@ -73,15 +72,9 @@ public static class DeviceBotMsaa {
       Array.Resize(ref children, obtained);
       return children;
     }
-    private bool Matches(Node n) {
-      if (filter.Length == 0) return true;
-      foreach (string s in new string[] { n.className, n.text, n.contentDescription })
-        if (s != null && s.ToLowerInvariant().Contains(filter)) return true;
-      return false;
-    }
     internal void Visit(IAccessible acc, int childId, int depth) {
       if (acc == null || Full || depth > maxDepth) return;
-      // Count visits, not matches: a filter that matches nothing is still bounded.
+      // Count visits so a tree without usable nodes is still bounded.
       visited++;
       IntPtr identity = Marshal.GetIUnknownForObject(acc);
       string key;
@@ -120,7 +113,7 @@ public static class DeviceBotMsaa {
         acc.accLocation(out x, out y, out width, out height, childId);
         node.left = x; node.top = y;
         node.right = checked(x + width); node.bottom = checked(y + height);
-        if (width > 0 && height > 0 && Matches(node)) Nodes.Add(node);
+        if (width > 0 && height > 0) Nodes.Add(node);
       } catch (COMException) {} catch (ArgumentException) {} catch (OverflowException) {}
       if (Full || childId != 0 || depth == maxDepth) return;
       int count;
@@ -159,7 +152,7 @@ public static class DeviceBotMsaa {
     }
   }
 
-  public static Node[] Read(uint pid, long window, string filter, int max, int budget, int depth) {
+  public static Node[] Read(uint pid, long window, int max, int budget, int depth) {
     if (max <= 0) return new Node[0];
     IntPtr previous = IntPtr.Zero;
     try {
@@ -181,7 +174,7 @@ public static class DeviceBotMsaa {
       }
       if (hwnd == IntPtr.Zero || !IsWindowVisible(hwnd) || IsIconic(hwnd))
         throw new InvalidOperationException("MSAA requires a visible, restored window in the interactive desktop session.");
-      Reader reader = new Reader(filter, Math.Min(max, budget), budget, depth);
+      Reader reader = new Reader(Math.Min(max, budget), budget, depth);
       reader.Window(hwnd, pid);
       // Flutter's provider may live on its child HWND instead of the runner HWND.
       EnumChildWindows(hwnd, delegate(IntPtr h, IntPtr unused) { reader.Window(h, pid); return !reader.Full; }, IntPtr.Zero);

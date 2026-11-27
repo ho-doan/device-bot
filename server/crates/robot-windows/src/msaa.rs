@@ -12,25 +12,19 @@ pub(super) fn use_msaa(value: Option<&str>) -> Result<bool, RobotError> {
     }
 }
 
-pub(super) fn script(
-    pid: Option<u32>,
-    hwnd: Option<i64>,
-    filter: Option<&str>,
-    max: Option<usize>,
-) -> String {
+pub(super) fn script(pid: Option<u32>, hwnd: Option<i64>, max: Option<usize>) -> String {
     format!(
         r#"$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName Accessibility
 Add-Type -ReferencedAssemblies @('System.dll', 'System.Core.dll', [Accessibility.IAccessible].Assembly.Location) -TypeDefinition @'
 {helper}
 '@
-$rows = @([DeviceBotMsaa]::Read([uint32]{pid}, [int64]{hwnd}, {filter}, {max}, {nodes}, {depth}))
+$rows = @([DeviceBotMsaa]::Read([uint32]{pid}, [int64]{hwnd}, {max}, {nodes}, {depth}))
 ConvertTo-Json -InputObject $rows -Depth 4 -Compress
 "#,
         helper = include_str!("msaa_helper.cs"),
         pid = pid.unwrap_or(0),
         hwnd = hwnd.unwrap_or(0),
-        filter = ps_quote(filter.unwrap_or("")),
         max = max.unwrap_or(MAX_UI_NODES).min(MAX_UI_NODES),
         nodes = MAX_UI_NODES,
         depth = MAX_UI_DEPTH,
@@ -42,22 +36,20 @@ impl WindowsRobot {
         &self,
         pid: Option<u32>,
         hwnd: Option<i64>,
-        filter: Option<&str>,
         max: Option<usize>,
     ) -> Result<Vec<UiElement>, RobotError> {
         if max == Some(0) {
             return Ok(vec![]);
         }
-        let output = tokio::time::timeout(
-            UIA_QUERY_TIMEOUT,
-            self.powershell(script(pid, hwnd, filter, max)),
-        )
-        .await
-        .map_err(|_| {
-            RobotError::CommandFailed(
-                "Windows MSAA helper exceeded its 10 second startup/traversal deadline".into(),
-            )
-        })??;
+        let output =
+            tokio::time::timeout(UIA_QUERY_TIMEOUT, self.powershell(script(pid, hwnd, max)))
+                .await
+                .map_err(|_| {
+                    RobotError::CommandFailed(
+                        "Windows MSAA helper exceeded its 10 second startup/traversal deadline"
+                            .into(),
+                    )
+                })??;
         parse_uia_elements(&output).map_err(|e| {
             RobotError::CommandFailed(format!("Windows MSAA returned invalid elements: {e}"))
         })
@@ -80,7 +72,7 @@ mod tests {
     async fn empty_query_never_launches_helper() {
         assert!(
             WindowsRobot::new("artifacts")
-                .msaa_elements(Some(42), Some(123), None, Some(0))
+                .msaa_elements(Some(42), Some(123), Some(0))
                 .await
                 .unwrap()
                 .is_empty()
@@ -131,7 +123,7 @@ Add-Type -ReferencedAssemblies @('System.dll', 'System.Core.dll', [Accessibility
             "at least one control label is required"
         );
         let elements = WindowsRobot::new("artifacts")
-            .msaa_elements(Some(pid), Some(hwnd), None, None)
+            .msaa_elements(Some(pid), Some(hwnd), None)
             .await
             .unwrap();
         for label in expected {

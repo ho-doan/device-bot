@@ -18,7 +18,7 @@ BUTTONS = {
     "Overview": (None, ("Overview",)),
     "View your profile": ("view-profile-button", ("View your profile",)),
     "Avatar": ("account-avatar-button", ("Your account", "AL")),
-    "Sign out": ("sign-out-button", ("Sign out",)),
+    "Sign out": ("sign-out-button", ()),
     "Task 1": ("task-1-checkbox", ("Make space for a fresh start",)),
     "Task 2": ("task-2-checkbox", ("Choose your most important task",)),
     "Task 3": ("task-3-checkbox", ("Take a mindful break",)),

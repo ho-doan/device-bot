@@ -38,7 +38,7 @@ class CoverageGateTest(unittest.TestCase):
         tap = [("tap_element", "passed")]
         fill = [("focus_field", "passed"), ("type_text", "passed")]
         buttons = {
-            key: self.control(labels[0], identifier, actions=tap)
+            key: self.control(labels[0] if labels else key, identifier, actions=tap)
             for key, (identifier, labels) in BUTTONS.items()
         }
         self.screen(
@@ -68,6 +68,7 @@ class CoverageGateTest(unittest.TestCase):
     def test_seen_and_wrong_context_do_not_cover_an_action(self):
         self.screen(
             self.control("Sign out", "rail-sign-out-button", actions=[("tap_element", "passed")]),
+            self.control("Sign out", None, actions=[("tap_element", "passed")]),
             self.control("Sign in", "sign-in-button", actions=[("tap_element", "failed")], status="failed"),
             self.control("Try demo workspace", "demo-button", status="pending"),
         )

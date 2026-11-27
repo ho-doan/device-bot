@@ -69,8 +69,21 @@ pub struct ElementQuery {
     pub web_context: Option<WebContext>,
     /// Live inspection opts into descendant frames. Unscoped queries stay on the root document.
     pub include_frames: bool,
-    /// Omit nodes owned by the system keyboard in drivers that expose them.
+    /// Omit system keyboard nodes. Sources without this capability return
+    /// `RobotError::Unsupported` for an explicit request.
     pub exclude_system_keyboard: bool,
+}
+
+impl ElementQuery {
+    /// Call before reading from a source that cannot exclude keyboard nodes.
+    pub fn reject_keyboard_exclusion(&self) -> Result<(), RobotError> {
+        if self.exclude_system_keyboard {
+            return Err(RobotError::Unsupported(
+                "system keyboard exclusion is not supported by this element source".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// A normalized accessibility node from the platform UI tree.

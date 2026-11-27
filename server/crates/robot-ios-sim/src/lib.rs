@@ -1521,26 +1521,15 @@ impl Robot for IosSimulatorRobot {
         filter: Option<&str>,
         max_results: Option<usize>,
     ) -> Result<Vec<UiElement>, RobotError> {
-        let app_id = self.active_app(device_id).await?;
-        let mut values = Vec::new();
-        if let Some(filter) = filter {
-            values.push(("DEVICE_BOT_ELEMENT_FILTER", filter.to_owned()));
-        }
-        if let Some(max_results) = max_results {
-            values.push(("DEVICE_BOT_MAX_RESULTS", max_results.to_string()));
-        }
-        let result = self
-            .run_xctest(device_id, &app_id, "list-elements", &values, None)
-            .await?;
-        let mut elements = decode_agent_elements(&result)?;
-        let filter = filter.map(str::to_ascii_lowercase);
-        if let Some(filter) = filter.as_deref() {
-            elements.retain(|element| robot_core::element_matches_filter(element, filter));
-        }
-        if let Some(max_results) = max_results {
-            elements.truncate(max_results);
-        }
-        Ok(elements)
+        self.list_elements_query(
+            device_id,
+            ElementQuery {
+                filter: filter.map(str::to_owned),
+                max_results,
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     async fn list_elements_query(
@@ -1550,15 +1539,11 @@ impl Robot for IosSimulatorRobot {
     ) -> Result<Vec<UiElement>, RobotError> {
         if let Some(context) = query
             .web_context
-            .clone()
+            .as_ref()
             .filter(|context| !context.is_empty())
         {
-            return self.webview_elements(device_id, &context, &query).await;
-        }
-        if query.element_type.is_none() && !query.exclude_system_keyboard {
-            return self
-                .list_elements_filtered(device_id, query.filter.as_deref(), query.max_results)
-                .await;
+            query.reject_keyboard_exclusion()?;
+            return self.webview_elements(device_id, context, &query).await;
         }
         let app_id = self.active_app(device_id).await?;
         let mut values = Vec::new();

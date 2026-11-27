@@ -73,6 +73,16 @@ drivers and transports. Run `cargo test -p robot-core` from `server/` for those
 contracts; use `cargo check --workspace --all-targets` to verify consumers after
 changing a public contract.
 
+`ElementQuery` applies document scope, text, and element type before
+`max_results`, preserving the order returned by the source. Adapters can push
+filters into a bounded native traversal and use `apply_element_query` on the
+normalized results. The iOS adapters use that path for typed and untyped
+queries. The native iOS Simulator query forwards system keyboard exclusion
+to XCTest and checks its acknowledgment. Other element sources return
+`RobotError::Unsupported` for that explicit request before reading the tree.
+The option controls tree membership. Keyboard visibility is managed separately
+by the app and OS.
+
 `robot-flow::runner` owns flow lifecycle, cancellation, step deadlines, device
 scope and the MCP session. Its private modules share that state while keeping
 different reasons for change separate:

@@ -1694,6 +1694,7 @@ impl Robot for ChromeRobot {
         device_id: &str,
         query: ElementQuery,
     ) -> Result<Vec<UiElement>, RobotError> {
+        query.reject_keyboard_exclusion()?;
         if let Some(context) = query.web_context.clone() {
             context.validate()?;
             if !context.is_empty() {

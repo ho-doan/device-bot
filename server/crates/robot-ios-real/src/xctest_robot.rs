@@ -1367,27 +1367,15 @@ impl Robot for IosXCTestRobot {
         filter: Option<&str>,
         max_results: Option<usize>,
     ) -> Result<Vec<UiElement>, RobotError> {
-        validate_device_id(device_id)?;
-        let mut params = serde_json::Map::new();
-        if let Some(filter) = filter {
-            params.insert("filter".into(), Value::String(filter.into()));
-        }
-        if let Some(max_results) = max_results {
-            params.insert("maxResults".into(), Value::from(max_results));
-        }
-        let result = self
-            .dispatch(device_id, "dump", Value::Object(params))
-            .await?;
-        let elements = result.get("elements").cloned().ok_or_else(|| {
-            RobotError::CommandFailed("iOS XCTest agent returned no element list".into())
-        })?;
-        let elements: Vec<XCTestElement> = serde_json::from_value(elements).map_err(|error| {
-            RobotError::CommandFailed(format!("invalid iOS XCTest element payload: {error}"))
-        })?;
-        Ok(elements
-            .into_iter()
-            .map(XCTestElement::into_ui_element)
-            .collect())
+        self.list_elements_query(
+            device_id,
+            ElementQuery {
+                filter: filter.map(str::to_owned),
+                max_results,
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     async fn list_elements_query(
@@ -1395,34 +1383,35 @@ impl Robot for IosXCTestRobot {
         device_id: &str,
         query: ElementQuery,
     ) -> Result<Vec<UiElement>, RobotError> {
+        query.reject_keyboard_exclusion()?;
         if let Some(context) = query
             .web_context
-            .clone()
+            .as_ref()
             .filter(|context| !context.is_empty())
         {
-            return self.webview_elements(device_id, &context, &query).await;
+            return self.webview_elements(device_id, context, &query).await;
         }
-        let Some(element_type) = query.element_type else {
-            return self
-                .list_elements_filtered(device_id, query.filter.as_deref(), query.max_results)
-                .await;
-        };
         validate_device_id(device_id)?;
         let mut params = serde_json::Map::new();
         if let Some(filter) = query.filter.as_ref() {
             params.insert("filter".into(), Value::String(filter.clone()));
         }
-        params.insert(
-            "elementType".into(),
-            Value::String(element_type.as_str().into()),
-        );
+        if let Some(element_type) = query.element_type {
+            params.insert(
+                "elementType".into(),
+                Value::String(element_type.as_str().into()),
+            );
+        }
         if let Some(max_results) = query.max_results {
             params.insert("maxResults".into(), Value::from(max_results));
         }
         let result = self
             .dispatch(device_id, "dump", Value::Object(params))
             .await?;
-        if result.get("appliedElementType").and_then(Value::as_str) != Some(element_type.as_str()) {
+        if let Some(element_type) = query.element_type
+            && result.get("appliedElementType").and_then(Value::as_str)
+                != Some(element_type.as_str())
+        {
             return Err(RobotError::Unsupported(
                 "iOS XCTest agent did not apply elementType; rebuild and reinstall the runner before querying by type".into(),
             ));

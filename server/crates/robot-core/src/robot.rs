@@ -419,11 +419,13 @@ pub trait Robot: Send + Sync {
     /// Queries without a type keep the driver's `list_elements_filtered` path.
     /// A typed query loads the tree and filters before truncating. Drivers that
     /// cap `list_elements` must override this so the cap is not applied first.
+    /// Unsupported requested features are rejected before reading the tree.
     async fn list_elements_query(
         &self,
         device_id: &str,
         query: ElementQuery,
     ) -> Result<Vec<UiElement>, RobotError> {
+        query.reject_keyboard_exclusion()?;
         if query
             .web_context
             .as_ref()

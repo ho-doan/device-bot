@@ -1417,51 +1417,42 @@ mod tests {
         assert_eq!(elements[0].value.as_deref(), Some("Search"));
     }
 
-    #[test]
-    fn type_filter_keeps_a_password_field_that_follows_other_controls() {
-        let elements = parse_uiautomator_xml(
-            r#"<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+    #[tokio::test]
+    async fn type_filter_keeps_a_password_field_that_follows_other_controls() {
+        let xml = r#"<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
             <hierarchy>
               <node text="Save" class="android.widget.Button" clickable="true" enabled="true" bounds="[0,0][10,10]" />
               <node text="" class="android.widget.EditText" password="true" resource-id="password" focused="true" bounds="[0,20][10,40]" />
-              <node text="user@example.com" class="android.widget.EditText" checked="false" selected="false" bounds="[0,50][10,70]" />
-            </hierarchy>"#,
-        )
-        .unwrap();
-        let found = robot_core::apply_element_query(
-            elements,
-            &robot_core::ElementQuery {
-                filter: None,
-                element_type: Some(ElementType::TextField),
-                max_results: Some(1),
-                web_context: None,
-                include_frames: false,
-                exclude_system_keyboard: false,
-            },
+              <node text="user@example.com" class="android.widget.EditText" selected="false" bounds="[0,50][10,70]" />
+            </hierarchy>"#;
+        let robot = AndroidRobot::with_runner(
+            "adb",
+            FakeRunner::new((0..2).flat_map(|_| [successful(""), successful(xml), successful("")])),
         );
+        let query = robot_core::ElementQuery {
+            element_type: Some(ElementType::TextField),
+            max_results: Some(1),
+            ..Default::default()
+        };
+        let found = robot
+            .list_elements_query("emulator-5554", query.clone())
+            .await
+            .unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].resource_id.as_deref(), Some("password"));
         assert_eq!(found[0].focused, Some(true));
         assert_eq!(found[0].value, None);
 
-        let email = robot_core::apply_element_query(
-            parse_uiautomator_xml(
-                r#"<hierarchy>
-                  <node text="Save" class="android.widget.Button" bounds="[0,0][10,10]" />
-                  <node text="" class="android.widget.EditText" password="true" resource-id="password" bounds="[0,20][10,40]" />
-                  <node text="user@example.com" class="android.widget.EditText" selected="false" bounds="[0,50][10,70]" />
-                </hierarchy>"#,
+        let email = robot
+            .list_elements_query(
+                "emulator-5554",
+                robot_core::ElementQuery {
+                    filter: Some("USER@example.com".into()),
+                    ..query
+                },
             )
-            .unwrap(),
-            &robot_core::ElementQuery {
-                filter: Some("user@example.com".into()),
-                element_type: Some(ElementType::TextField),
-                max_results: Some(2),
-                        web_context: None,
-            include_frames: false,
-            exclude_system_keyboard: false,
-},
-        );
+            .await
+            .unwrap();
         assert_eq!(email.len(), 1);
         assert_eq!(email[0].text.as_deref(), Some("user@example.com"));
         assert_eq!(email[0].selected, Some(false));
